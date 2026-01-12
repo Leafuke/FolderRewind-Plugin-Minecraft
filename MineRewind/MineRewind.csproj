@@ -1,0 +1,15 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net8.0-windows10.0.19041.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <Platforms>x64;ANYCPU</Platforms>
+    <GenerateDependencyFile>false</GenerateDependencyFile>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\..\FolderRewind\FolderRewind\FolderRewind.csproj">
+      <Private>false</Private>
+      <ExcludeAssets>runtime</ExcludeAssets>
+    </ProjectReference>
+  </ItemGroup>
+</Project>
