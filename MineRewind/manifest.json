@@ -1,11 +1,19 @@
 {
-  "Id": "com.folderrewind.minecraft",
-  "Name": "Minecraft存档增强",
+  "Id": "com.folderrewind.minerewind",
+  "Name": "MineRewind",
+  "LocalizedName": {
+    "en-US": "MineRewind",
+    "zh-CN": "MineRewind"
+  },
   "Version": "1.0.0",
-  "Author": "FolderRewind Team",
-  "Description": "Minecraft存档备份增强插件：支持热备份、批量扫描.minecraft目录、自动发现存档",
-  "EntryAssembly": "MinecraftPlugin.dll",
-  "EntryType": "MinecraftPlugin.MinecraftSavesPlugin",
+  "Author": "Leafuke",
+  "Description": "Enhanced Minecraft saves backup: hot snapshot backup, batch discovery under .minecraft",
+  "LocalizedDescription": {
+    "en-US": "Enhanced Minecraft saves backup: hot snapshot backup, batch discovery under .minecraft",
+    "zh-CN": "Minecraft存档备份增强插件：支持热备份、批量扫描.minecraft目录、自动发现存档"
+  },
+  "EntryAssembly": "MineRewind.dll",
+  "EntryType": "MineRewind.MinecraftSavesPlugin",
   "MinHostVersion": "1.0.0",
-  "Homepage": "https://github.com/FolderRewind/MinecraftPlugin"
+  "Homepage": "https://github.com/Leafuke/FolderRewind-Plugin-Minecraft"
 }

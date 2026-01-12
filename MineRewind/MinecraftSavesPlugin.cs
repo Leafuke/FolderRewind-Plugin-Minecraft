@@ -8,6 +8,7 @@ using System.IO;
 using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
+using System.Globalization;
 
 namespace MineRewind
 {
@@ -34,15 +35,35 @@ namespace MineRewind
         // 临时快照路径映射: 原始路径 -> 快照路径
         private readonly Dictionary<string, string> _activeSnapshots = new();
 
+        private static bool IsZh()
+        {
+            try
+            {
+                var name = CultureInfo.CurrentUICulture?.Name;
+                if (!string.IsNullOrWhiteSpace(name) && name.StartsWith("zh", StringComparison.OrdinalIgnoreCase)) return true;
+            }
+            catch
+            {
+                
+            }
+
+            // 兜底 --- Host 侧通常会设置 PrimaryLanguageOverride，但插件不强依赖 WinRT API
+            return false;
+        }
+
+        private static string T(string zh, string en) => IsZh() ? zh : en;
+
         public PluginInstallManifest Manifest { get; } = new()
         {
-            Id = "com.folderrewind.minecraft",
-            Name = "Minecraft存档增强",
+            Id = "com.folderrewind.minerewind",
+            Name = T("MineRewind", "MineRewind"),
             Version = "1.0.0",
-            Author = "FolderRewind Team",
-            Description = "Minecraft存档备份增强插件：支持热备份、批量扫描.minecraft目录、自动发现存档",
-            EntryAssembly = "MinecraftPlugin.dll",
-            EntryType = "MinecraftPlugin.MinecraftSavesPlugin",
+            Author = "Leafuke",
+            Description = T(
+                "Minecraft存档备份增强插件：支持热备份、批量扫描.minecraft目录、自动发现存档",
+                "Enhanced Minecraft saves backup: hot snapshot backup, batch discovery under .minecraft"),
+            EntryAssembly = "MineRewind.dll",
+            EntryType = "MineRewind.MinecraftSavesPlugin",
             MinHostVersion = "1.0.0"
         };
 
@@ -53,8 +74,10 @@ namespace MineRewind
                 new()
                 {
                     Key = HotBackupSettingKey,
-                    DisplayName = "启用热备份",
-                    Description = "备份前使用 xcopy 创建存档快照，避免游戏运行时文件被占用导致备份失败",
+                    DisplayName = T("启用热备份", "Enable hot backup"),
+                    Description = T(
+                        "备份前使用 xcopy 创建存档快照，避免游戏运行时文件被占用导致备份失败",
+                        "Create a snapshot via xcopy before backup to avoid file locks while the game is running"),
                     Type = PluginSettingType.Boolean,
                     DefaultValue = "true",
                     IsRequired = false
@@ -62,8 +85,10 @@ namespace MineRewind
                 new()
                 {
                     Key = SnapshotPathSettingKey,
-                    DisplayName = "快照存储路径",
-                    Description = "热备份快照的临时存储路径，留空则使用系统临时目录",
+                    DisplayName = T("快照存储路径", "Snapshot storage path"),
+                    Description = T(
+                        "热备份快照的临时存储路径，留空则使用系统临时目录",
+                        "Temporary snapshot path. Leave empty to use system temp folder"),
                     Type = PluginSettingType.Path,
                     DefaultValue = "",
                     IsRequired = false
@@ -71,8 +96,10 @@ namespace MineRewind
                 new()
                 {
                     Key = CleanupSnapshotSettingKey,
-                    DisplayName = "备份后清理快照",
-                    Description = "备份完成后自动删除临时快照目录",
+                    DisplayName = T("备份后清理快照", "Clean up snapshot after backup"),
+                    Description = T(
+                        "备份完成后自动删除临时快照目录",
+                        "Automatically delete the temporary snapshot folder after backup"),
                     Type = PluginSettingType.Boolean,
                     DefaultValue = "true",
                     IsRequired = false
@@ -80,8 +107,10 @@ namespace MineRewind
                 new()
                 {
                     Key = SnapshotDelaySettingKey,
-                    DisplayName = "快照延迟(毫秒)",
-                    Description = "创建快照后等待的时间，确保文件系统操作完成",
+                    DisplayName = T("快照延迟(毫秒)", "Snapshot delay (ms)"),
+                    Description = T(
+                        "创建快照后等待的时间，确保文件系统操作完成",
+                        "Wait time after creating snapshot to ensure file system operations complete"),
                     Type = PluginSettingType.Integer,
                     DefaultValue = "500",
                     IsRequired = false
@@ -187,7 +216,9 @@ namespace MineRewind
             {
                 Handled = true,
                 CreatedConfigs = configs,
-                Message = $"已创建 {configs.Count} 个 Minecraft 存档配置"
+                Message = IsZh()
+                    ? $"已创建 {configs.Count} 个 Minecraft 存档配置"
+                    : $"Created {configs.Count} Minecraft saves configs"
             };
         }
 
@@ -230,11 +261,19 @@ namespace MineRewind
 
                     if (isLocked)
                     {
-                        LogService.LogInfo($"[MinecraftPlugin] 检测到 level.dat 被占用，已启用热备份快照：{folder.DisplayName}", "MinecraftPlugin");
+                        LogService.LogInfo(
+                            T(
+                                $"[MineRewind] 检测到 level.dat 被占用，已启用热备份快照：{folder.DisplayName}",
+                                $"[MineRewind] Detected level.dat is locked; hot-backup snapshot enabled: {folder.DisplayName}"),
+                            "MineRewind");
                     }
                     else
                     {
-                        LogService.LogInfo($"[MinecraftPlugin] 已创建热备份快照：{folder.DisplayName}", "MinecraftPlugin");
+                        LogService.LogInfo(
+                            T(
+                                $"[MineRewind] 已创建热备份快照：{folder.DisplayName}",
+                                $"[MineRewind] Hot-backup snapshot created: {folder.DisplayName}"),
+                            "MineRewind");
                     }
 
                     return snapshotPath;
@@ -242,7 +281,12 @@ namespace MineRewind
             }
             catch (Exception ex)
             {
-                LogService.LogError($"[MinecraftPlugin] 创建快照失败：{ex.Message}", "MinecraftPlugin", ex);
+                LogService.LogError(
+                    T(
+                        $"[MineRewind] 创建快照失败：{ex.Message}",
+                        $"[MineRewind] Failed to create snapshot: {ex.Message}"),
+                    "MineRewind",
+                    ex);
             }
 
             return null;
@@ -269,12 +313,20 @@ namespace MineRewind
                     if (Directory.Exists(snapshotPath))
                     {
                         Directory.Delete(snapshotPath, recursive: true);
-                        LogService.LogInfo($"[MinecraftPlugin] 已清理热备份快照：{folder.DisplayName}", "MinecraftPlugin");
+                        LogService.LogInfo(
+                            T(
+                                $"[MineRewind] 已清理热备份快照：{folder.DisplayName}",
+                                $"[MineRewind] Hot-backup snapshot cleaned up: {folder.DisplayName}"),
+                            "MineRewind");
                     }
                 }
                 catch (Exception ex)
                 {
-                    LogService.LogWarning($"[MinecraftPlugin] 清理快照失败：{ex.Message}", "MinecraftPlugin");
+                    LogService.LogWarning(
+                        T(
+                            $"[MineRewind] 清理快照失败：{ex.Message}",
+                            $"[MineRewind] Failed to cleanup snapshot: {ex.Message}"),
+                        "MineRewind");
                 }
             }
         }
@@ -538,7 +590,11 @@ namespace MineRewind
                     }
                     catch (Exception ex)
                     {
-                        LogService.LogWarning($"[MinecraftPlugin] 清理旧快照失败：{ex.Message}", "MinecraftPlugin");
+                        LogService.LogWarning(
+                            T(
+                                $"[MineRewind] 清理旧快照失败：{ex.Message}",
+                                $"[MineRewind] Failed to cleanup old snapshot: {ex.Message}"),
+                            "MineRewind");
                     }
                 }
 
@@ -565,7 +621,11 @@ namespace MineRewind
                 using var process = Process.Start(psi);
                 if (process == null)
                 {
-                    LogService.LogError("[MinecraftPlugin] 无法启动 xcopy 进程", "MinecraftPlugin");
+                    LogService.LogError(
+                        T(
+                            "[MineRewind] 无法启动 xcopy 进程",
+                            "[MineRewind] Unable to start xcopy process"),
+                        "MineRewind");
                     return null;
                 }
 
@@ -575,7 +635,11 @@ namespace MineRewind
                 if (!completed)
                 {
                     try { process.Kill(); } catch { }
-                    LogService.LogError("[MinecraftPlugin] xcopy 超时", "MinecraftPlugin");
+                    LogService.LogError(
+                        T(
+                            "[MineRewind] xcopy 超时",
+                            "[MineRewind] xcopy timed out"),
+                        "MineRewind");
                     return null;
                 }
 
@@ -583,7 +647,11 @@ namespace MineRewind
                 var stdErr = process.StandardError.ReadToEnd();
                 if (!string.IsNullOrWhiteSpace(stdErr))
                 {
-                    LogService.LogWarning($"[MinecraftPlugin] xcopy stderr: {stdErr}", "MinecraftPlugin");
+                    LogService.LogWarning(
+                        T(
+                            $"[MineRewind] xcopy 标准错误输出：{stdErr}",
+                            $"[MineRewind] xcopy stderr: {stdErr}"),
+                        "MineRewind");
                 }
 
                 // 等待文件系统操作完成
@@ -598,12 +666,21 @@ namespace MineRewind
                     return snapshotDir;
                 }
 
-                LogService.LogWarning("[MinecraftPlugin] 快照创建后验证失败", "MinecraftPlugin");
+                LogService.LogWarning(
+                    T(
+                        "[MineRewind] 快照创建后验证失败",
+                        "[MineRewind] Snapshot verification failed after creation"),
+                    "MineRewind");
                 return null;
             }
             catch (Exception ex)
             {
-                LogService.LogError($"[MinecraftPlugin] CreateSnapshot 异常：{ex.Message}", "MinecraftPlugin", ex);
+                LogService.LogError(
+                    T(
+                        $"[MineRewind] CreateSnapshot 异常：{ex.Message}",
+                        $"[MineRewind] CreateSnapshot exception: {ex.Message}"),
+                    "MineRewind",
+                    ex);
                 return null;
             }
         }
