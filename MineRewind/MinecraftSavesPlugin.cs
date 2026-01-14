@@ -8,7 +8,6 @@ using System.IO;
 using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
-using System.Globalization;
 
 namespace MineRewind
 {
@@ -19,13 +18,15 @@ namespace MineRewind
     /// 2. 批量扫描 - 自动发现 .minecraft 目录下的存档
     /// 3. 配置类型 - 定义 "Minecraft Saves" 类型
     /// </summary>
-    public class MinecraftSavesPlugin : IFolderRewindPlugin
+    public class MinecraftSavesPlugin : IFolderRewindPlugin, IFolderRewindHotkeyProvider
     {
         private const string ConfigTypeName = "Minecraft Saves";
         private const string HotBackupSettingKey = "EnableHotBackup";
         private const string SnapshotPathSettingKey = "SnapshotPath";
         private const string CleanupSnapshotSettingKey = "CleanupSnapshot";
         private const string SnapshotDelaySettingKey = "SnapshotDelayMs";
+
+        private const string Hotkey_ActiveWorldHotBackup = "hotbackup.active_world";
 
         private bool _enableHotBackup = true;
         private string _snapshotPath = string.Empty;
@@ -35,33 +36,23 @@ namespace MineRewind
         // 临时快照路径映射: 原始路径 -> 快照路径
         private readonly Dictionary<string, string> _activeSnapshots = new();
 
-        private static bool IsZh()
-        {
-            try
-            {
-                var name = CultureInfo.CurrentUICulture?.Name;
-                if (!string.IsNullOrWhiteSpace(name) && name.StartsWith("zh", StringComparison.OrdinalIgnoreCase)) return true;
-            }
-            catch
-            {
-                
-            }
-
-            // 兜底 --- Host 侧通常会设置 PrimaryLanguageOverride，但插件不强依赖 WinRT API
-            return false;
-        }
-
-        private static string T(string zh, string en) => IsZh() ? zh : en;
-
         public PluginInstallManifest Manifest { get; } = new()
         {
             Id = "com.folderrewind.minerewind",
-            Name = T("MineRewind", "MineRewind"),
-            Version = "1.0.0",
+            Name = "MineRewind",
+            Version = "1.1.0",
             Author = "Leafuke",
-            Description = T(
-                "Minecraft存档备份增强插件：支持热备份、批量扫描.minecraft目录、自动发现存档",
-                "Enhanced Minecraft saves backup: hot snapshot backup, batch discovery under .minecraft"),
+            Description = "Enhanced Minecraft saves backup: hot snapshot backup, batch discovery under .minecraft",
+            LocalizedName = new Dictionary<string, string>
+            {
+                ["zh-CN"] = "MineRewind",
+                ["en-US"] = "MineRewind",
+            },
+            LocalizedDescription = new Dictionary<string, string>
+            {
+                ["zh-CN"] = "Minecraft 存档备份增强插件：支持热备份、批量扫描 .minecraft 目录、自动发现存档，以及全局热键触发备份",
+                ["en-US"] = "Enhanced Minecraft saves backup: hot snapshot backup, batch discovery under .minecraft, plus a global hotkey trigger",
+            },
             EntryAssembly = "MineRewind.dll",
             EntryType = "MineRewind.MinecraftSavesPlugin",
             MinHostVersion = "1.0.0"
@@ -74,10 +65,8 @@ namespace MineRewind
                 new()
                 {
                     Key = HotBackupSettingKey,
-                    DisplayName = T("启用热备份", "Enable hot backup"),
-                    Description = T(
-                        "备份前使用 xcopy 创建存档快照，避免游戏运行时文件被占用导致备份失败",
-                        "Create a snapshot via xcopy before backup to avoid file locks while the game is running"),
+                    DisplayName = I18n.GetString("MineRewind_Setting_EnableHotBackup_Name"),
+                    Description = I18n.GetString("MineRewind_Setting_EnableHotBackup_Desc"),
                     Type = PluginSettingType.Boolean,
                     DefaultValue = "true",
                     IsRequired = false
@@ -85,10 +74,8 @@ namespace MineRewind
                 new()
                 {
                     Key = SnapshotPathSettingKey,
-                    DisplayName = T("快照存储路径", "Snapshot storage path"),
-                    Description = T(
-                        "热备份快照的临时存储路径，留空则使用系统临时目录",
-                        "Temporary snapshot path. Leave empty to use system temp folder"),
+                    DisplayName = I18n.GetString("MineRewind_Setting_SnapshotPath_Name"),
+                    Description = I18n.GetString("MineRewind_Setting_SnapshotPath_Desc"),
                     Type = PluginSettingType.Path,
                     DefaultValue = "",
                     IsRequired = false
@@ -96,10 +83,8 @@ namespace MineRewind
                 new()
                 {
                     Key = CleanupSnapshotSettingKey,
-                    DisplayName = T("备份后清理快照", "Clean up snapshot after backup"),
-                    Description = T(
-                        "备份完成后自动删除临时快照目录",
-                        "Automatically delete the temporary snapshot folder after backup"),
+                    DisplayName = I18n.GetString("MineRewind_Setting_CleanupSnapshot_Name"),
+                    Description = I18n.GetString("MineRewind_Setting_CleanupSnapshot_Desc"),
                     Type = PluginSettingType.Boolean,
                     DefaultValue = "true",
                     IsRequired = false
@@ -107,10 +92,8 @@ namespace MineRewind
                 new()
                 {
                     Key = SnapshotDelaySettingKey,
-                    DisplayName = T("快照延迟(毫秒)", "Snapshot delay (ms)"),
-                    Description = T(
-                        "创建快照后等待的时间，确保文件系统操作完成",
-                        "Wait time after creating snapshot to ensure file system operations complete"),
+                    DisplayName = I18n.GetString("MineRewind_Setting_SnapshotDelay_Name"),
+                    Description = I18n.GetString("MineRewind_Setting_SnapshotDelay_Desc"),
                     Type = PluginSettingType.Integer,
                     DefaultValue = "500",
                     IsRequired = false
@@ -216,10 +199,120 @@ namespace MineRewind
             {
                 Handled = true,
                 CreatedConfigs = configs,
-                Message = IsZh()
-                    ? $"已创建 {configs.Count} 个 Minecraft 存档配置"
-                    : $"Created {configs.Count} Minecraft saves configs"
+                Message = I18n.Format("MineRewind_CreateConfigs_Result", configs.Count)
             };
+        }
+
+        #endregion
+
+        #region 插件热键
+
+        public IReadOnlyList<PluginHotkeyDefinition> GetHotkeyDefinitions()
+        {
+            return new List<PluginHotkeyDefinition>
+            {
+                new()
+                {
+                    Id = Hotkey_ActiveWorldHotBackup,
+                    DisplayName = I18n.GetString("MineRewind_Hotkey_ActiveWorldBackup_Name"),
+                    Description = I18n.GetString("MineRewind_Hotkey_ActiveWorldBackup_Desc"),
+                    DefaultGesture = "Alt+Ctrl+S",
+                    IsGlobalHotkey = true
+                }
+            };
+        }
+
+        public async Task OnHotkeyInvokedAsync(string hotkeyId, bool isGlobalHotkey, IReadOnlyDictionary<string, string> settingsValues, PluginHostContext hostContext)
+        {
+            if (!string.Equals(hotkeyId, Hotkey_ActiveWorldHotBackup, StringComparison.OrdinalIgnoreCase)) return;
+
+            try
+            {
+                Initialize(settingsValues);
+
+                var active = TryFindOccupiedWorld();
+                if (active == null)
+                {
+                    LogService.LogInfo(I18n.GetString("MineRewind_Hotkey_NoActiveWorld"), "MineRewind");
+                    try { hostContext?.BroadcastEvent("event=hotkey_backup_no_active_world;plugin=minerewind"); } catch { }
+                    return;
+                }
+
+                var (config, folder) = active.Value;
+
+                try
+                {
+                    hostContext?.BroadcastEvent($"event=hotkey_backup_triggered;plugin=minerewind;config={config.Id};world={Uri.EscapeDataString(folder.DisplayName ?? string.Empty)}");
+                }
+                catch
+                {
+                }
+
+                // 触发热备份：走 Host 的 BackupService 流程，MineRewind 的 OnBeforeBackupFolder 会自动创建快照
+                await BackupService.BackupFolderAsync(config, folder, "[热键] MineRewind");
+            }
+            catch (Exception ex)
+            {
+                LogService.LogError(I18n.Format("MineRewind_Hotkey_Failed", ex.Message), "MineRewind", ex);
+            }
+        }
+
+        private static (BackupConfig config, ManagedFolder folder)? TryFindOccupiedWorld()
+        {
+            try
+            {
+                var configs = ConfigService.CurrentConfig?.BackupConfigs;
+                if (configs == null) return null;
+
+                foreach (var cfg in configs)
+                {
+                    if (cfg == null) continue;
+                    if (!string.Equals(cfg.ConfigType, ConfigTypeName, StringComparison.OrdinalIgnoreCase)) continue;
+                    if (cfg.SourceFolders == null) continue;
+
+                    foreach (var folder in cfg.SourceFolders)
+                    {
+                        if (folder == null) continue;
+                        if (string.IsNullOrWhiteSpace(folder.Path)) continue;
+                        if (!Directory.Exists(folder.Path)) continue;
+
+                        if (IsWorldOccupied(folder.Path))
+                        {
+                            return (cfg, folder);
+                        }
+                    }
+                }
+            }
+            catch
+            {
+            }
+
+            return null;
+        }
+
+        private static bool IsWorldOccupied(string worldPath)
+        {
+            try
+            {
+                // Java 版：session.lock
+                var sessionLock = Path.Combine(worldPath, "session.lock");
+                if (File.Exists(sessionLock) && IsFileLocked(sessionLock)) return true;
+
+                // 基岩版：可能没有 session.lock，遍历 db 目录下的文件看看有没有被锁定
+                var dbDir = Path.Combine(worldPath, "db");
+                if (Directory.Exists(dbDir))
+                {
+                    foreach (var entry in Directory.EnumerateFiles(dbDir))
+                    {
+                        if (IsFileLocked(entry)) return true;
+                    }
+                }
+            }
+            catch
+            {
+            }
+
+            return false;
         }
 
         #endregion
@@ -262,17 +355,13 @@ namespace MineRewind
                     if (isLocked)
                     {
                         LogService.LogInfo(
-                            T(
-                                $"[MineRewind] 检测到 level.dat 被占用，已启用热备份快照：{folder.DisplayName}",
-                                $"[MineRewind] Detected level.dat is locked; hot-backup snapshot enabled: {folder.DisplayName}"),
+                            I18n.Format("MineRewind_Snapshot_Locked", folder.DisplayName),
                             "MineRewind");
                     }
                     else
                     {
                         LogService.LogInfo(
-                            T(
-                                $"[MineRewind] 已创建热备份快照：{folder.DisplayName}",
-                                $"[MineRewind] Hot-backup snapshot created: {folder.DisplayName}"),
+                            I18n.Format("MineRewind_Snapshot_Created", folder.DisplayName),
                             "MineRewind");
                     }
 
@@ -282,9 +371,7 @@ namespace MineRewind
             catch (Exception ex)
             {
                 LogService.LogError(
-                    T(
-                        $"[MineRewind] 创建快照失败：{ex.Message}",
-                        $"[MineRewind] Failed to create snapshot: {ex.Message}"),
+                    I18n.Format("MineRewind_Snapshot_CreateFailed", ex.Message),
                     "MineRewind",
                     ex);
             }
@@ -314,18 +401,14 @@ namespace MineRewind
                     {
                         Directory.Delete(snapshotPath, recursive: true);
                         LogService.LogInfo(
-                            T(
-                                $"[MineRewind] 已清理热备份快照：{folder.DisplayName}",
-                                $"[MineRewind] Hot-backup snapshot cleaned up: {folder.DisplayName}"),
+                            I18n.Format("MineRewind_Snapshot_Cleaned", folder.DisplayName),
                             "MineRewind");
                     }
                 }
                 catch (Exception ex)
                 {
                     LogService.LogWarning(
-                        T(
-                            $"[MineRewind] 清理快照失败：{ex.Message}",
-                            $"[MineRewind] Failed to cleanup snapshot: {ex.Message}"),
+                        I18n.Format("MineRewind_Snapshot_CleanupFailed", ex.Message),
                         "MineRewind");
                 }
             }
@@ -591,9 +674,7 @@ namespace MineRewind
                     catch (Exception ex)
                     {
                         LogService.LogWarning(
-                            T(
-                                $"[MineRewind] 清理旧快照失败：{ex.Message}",
-                                $"[MineRewind] Failed to cleanup old snapshot: {ex.Message}"),
+                            I18n.Format("MineRewind_Snapshot_CleanupOldFailed", ex.Message),
                             "MineRewind");
                     }
                 }
@@ -622,9 +703,7 @@ namespace MineRewind
                 if (process == null)
                 {
                     LogService.LogError(
-                        T(
-                            "[MineRewind] 无法启动 xcopy 进程",
-                            "[MineRewind] Unable to start xcopy process"),
+                        I18n.GetString("MineRewind_Xcopy_StartFailed"),
                         "MineRewind");
                     return null;
                 }
@@ -636,9 +715,7 @@ namespace MineRewind
                 {
                     try { process.Kill(); } catch { }
                     LogService.LogError(
-                        T(
-                            "[MineRewind] xcopy 超时",
-                            "[MineRewind] xcopy timed out"),
+                        I18n.GetString("MineRewind_Xcopy_Timeout"),
                         "MineRewind");
                     return null;
                 }
@@ -648,9 +725,7 @@ namespace MineRewind
                 if (!string.IsNullOrWhiteSpace(stdErr))
                 {
                     LogService.LogWarning(
-                        T(
-                            $"[MineRewind] xcopy 标准错误输出：{stdErr}",
-                            $"[MineRewind] xcopy stderr: {stdErr}"),
+                        I18n.Format("MineRewind_Xcopy_Stderr", stdErr),
                         "MineRewind");
                 }
 
@@ -667,18 +742,14 @@ namespace MineRewind
                 }
 
                 LogService.LogWarning(
-                    T(
-                        "[MineRewind] 快照创建后验证失败",
-                        "[MineRewind] Snapshot verification failed after creation"),
+                    I18n.GetString("MineRewind_Snapshot_VerifyFailed"),
                     "MineRewind");
                 return null;
             }
             catch (Exception ex)
             {
                 LogService.LogError(
-                    T(
-                        $"[MineRewind] CreateSnapshot 异常：{ex.Message}",
-                        $"[MineRewind] CreateSnapshot exception: {ex.Message}"),
+                    I18n.Format("MineRewind_Snapshot_Exception", ex.Message),
                     "MineRewind",
                     ex);
                 return null;

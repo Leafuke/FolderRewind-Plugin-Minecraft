@@ -7,7 +7,7 @@
     <GenerateDependencyFile>false</GenerateDependencyFile>
   </PropertyGroup>
   <ItemGroup>
-    <ProjectReference Include="..\..\FolderRewind\FolderRewind\FolderRewind.csproj">
+    <ProjectReference Include="..\..\FolderRewind\FolderRewind.csproj">
       <Private>false</Private>
       <ExcludeAssets>runtime</ExcludeAssets>
     </ProjectReference>
