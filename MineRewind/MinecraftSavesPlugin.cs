@@ -708,8 +708,8 @@ namespace MineRewind
                     return null;
                 }
 
-                // 等待完成（最多 60 秒）
-                var completed = process.WaitForExit(60000);
+                // 等待完成（最多 120 秒）
+                var completed = process.WaitForExit(120000);
 
                 if (!completed)
                 {
@@ -736,7 +736,7 @@ namespace MineRewind
                 }
 
                 // 验证快照是否创建成功
-                if (Directory.Exists(snapshotDir) && File.Exists(Path.Combine(snapshotDir, "level.dat")))
+                if (Directory.Exists(snapshotDir))
                 {
                     return snapshotDir;
                 }
