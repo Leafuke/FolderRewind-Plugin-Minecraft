@@ -673,9 +673,11 @@ namespace MineRewind
                     }
                     catch (Exception ex)
                     {
+                        // 如果无法删除旧快照，使用时间戳创建新目录，避免失败
                         LogService.LogWarning(
                             I18n.Format("MineRewind_Snapshot_CleanupOldFailed", ex.Message),
                             "MineRewind");
+                        snapshotDir = Path.Combine(snapshotBaseDir, $"{worldName}_{DateTime.Now:yyyyMMdd_HHmmss}");
                     }
                 }
 
@@ -708,20 +710,24 @@ namespace MineRewind
                     return null;
                 }
 
+                // 先异步读取输出，避免死锁（当缓冲区填满时WaitForExit会永久阻塞）
+                var stdOutTask = process.StandardOutput.ReadToEndAsync();
+                var stdErrTask = process.StandardError.ReadToEndAsync();
+
                 // 等待完成（最多 120 秒）
                 var completed = process.WaitForExit(120000);
 
                 if (!completed)
                 {
-                    try { process.Kill(); } catch { }
+                    try { process.Kill(entireProcessTree: true); } catch { }
                     LogService.LogError(
                         I18n.GetString("MineRewind_Xcopy_Timeout"),
                         "MineRewind");
                     return null;
                 }
 
-                var stdOut = process.StandardOutput.ReadToEnd();
-                var stdErr = process.StandardError.ReadToEnd();
+                var stdOut = stdOutTask.GetAwaiter().GetResult();
+                var stdErr = stdErrTask.GetAwaiter().GetResult();
                 if (!string.IsNullOrWhiteSpace(stdErr))
                 {
                     LogService.LogWarning(
@@ -766,11 +772,16 @@ namespace MineRewind
 
             try
             {
-                using var fs = new FileStream(filePath, FileMode.Open, FileAccess.Read, FileShare.None);
+                using var fs = new FileStream(filePath, FileMode.Open, FileAccess.ReadWrite, FileShare.Read);
                 return false;
             }
             catch (IOException)
             {
+                return true;
+            }
+            catch (UnauthorizedAccessException)
+            {
+                // 文件可能是只读或没有权限
                 return true;
             }
             catch
