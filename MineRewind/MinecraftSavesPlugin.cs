@@ -40,7 +40,7 @@ namespace MineRewind
         {
             Id = "com.folderrewind.minerewind",
             Name = "MineRewind",
-            Version = "1.1.0",
+            Version = "1.2.0",
             Author = "Leafuke",
             Description = "Enhanced Minecraft saves backup: hot snapshot backup, batch discovery under .minecraft",
             LocalizedName = new Dictionary<string, string>
@@ -55,7 +55,8 @@ namespace MineRewind
             },
             EntryAssembly = "MineRewind.dll",
             EntryType = "MineRewind.MinecraftSavesPlugin",
-            MinHostVersion = "1.0.0"
+            MinHostVersion = "1.1.0",
+            Repository = "Leafuke/FolderRewind-Plugin-Minecraft"
         };
 
         public IReadOnlyList<PluginSettingDefinition> GetSettingsDefinitions()
