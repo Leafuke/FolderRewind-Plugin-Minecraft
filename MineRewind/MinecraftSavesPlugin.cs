@@ -375,7 +375,8 @@ namespace MineRewind
                         }
                         catch { }
 
-                        await BackupService.BackupFolderAsync(cfg, folder, "[KnotLink] BACKUP_CURRENT");
+                        // 使用余下部分作为“注释”传入，如果注释为空，则会默认使用 "QuickSave"
+                        await BackupService.BackupFolderAsync(cfg, folder, string.IsNullOrWhiteSpace(args) ? "QuickSave" : args);
                     }
                     catch (Exception ex)
                     {
