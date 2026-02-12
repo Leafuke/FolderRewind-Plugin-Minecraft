@@ -18,7 +18,7 @@ namespace MineRewind
     /// 2. 批量扫描 - 自动发现 .minecraft 目录下的存档
     /// 3. 配置类型 - 定义 "Minecraft Saves" 类型
     /// </summary>
-    public class MinecraftSavesPlugin : IFolderRewindPlugin, IFolderRewindHotkeyProvider
+    public class MinecraftSavesPlugin : IFolderRewindPlugin, IFolderRewindHotkeyProvider, IFolderRewindKnotLinkCommandHandler
     {
         private const string ConfigTypeName = "Minecraft Saves";
         private const string HotBackupSettingKey = "EnableHotBackup";
@@ -27,6 +27,8 @@ namespace MineRewind
         private const string SnapshotDelaySettingKey = "SnapshotDelayMs";
 
         private const string Hotkey_ActiveWorldHotBackup = "hotbackup.active_world";
+
+        private const string KnotLinkCommand_BackupCurrent = "BACKUP_CURRENT";
 
         private bool _enableHotBackup = true;
         private string _snapshotPath = string.Empty;
@@ -314,6 +316,85 @@ namespace MineRewind
             }
 
             return false;
+        }
+
+        #endregion
+
+        #region KnotLink 指令扩展
+
+        public IReadOnlyList<PluginKnotLinkCommandDefinition> GetKnotLinkCommandDefinitions()
+        {
+            return new List<PluginKnotLinkCommandDefinition>
+            {
+                new()
+                {
+                    Command = KnotLinkCommand_BackupCurrent,
+                    Description = "Backup the currently running (occupied) Minecraft world detected by MineRewind"
+                }
+            };
+        }
+
+        public Task<string?> TryHandleKnotLinkCommandAsync(
+            string command,
+            string args,
+            string rawCommand,
+            IReadOnlyDictionary<string, string> settingsValues,
+            PluginHostContext hostContext)
+        {
+            if (!string.Equals(command, KnotLinkCommand_BackupCurrent, StringComparison.OrdinalIgnoreCase))
+            {
+                return Task.FromResult<string?>(null);
+            }
+
+            // 复用热键备份的逻辑：找到“被占用”的存档并触发 Host 侧 BackupService。
+            try
+            {
+                Initialize(settingsValues);
+
+                var active = TryFindOccupiedWorld();
+                if (active == null)
+                {
+                    try
+                    {
+                        hostContext?.BroadcastEvent("event=knotlink_backup_no_active_world;plugin=minerewind");
+                    }
+                    catch { }
+
+                    return Task.FromResult<string?>("ERROR:No active world.");
+                }
+
+                var (cfg, folder) = active.Value;
+
+                _ = Task.Run(async () =>
+                {
+                    try
+                    {
+                        try
+                        {
+                            hostContext?.BroadcastEvent($"event=knotlink_backup_triggered;plugin=minerewind;command={KnotLinkCommand_BackupCurrent};config={cfg.Id};world={Uri.EscapeDataString(folder.DisplayName ?? string.Empty)}");
+                        }
+                        catch { }
+
+                        await BackupService.BackupFolderAsync(cfg, folder, "[KnotLink] BACKUP_CURRENT");
+                    }
+                    catch (Exception ex)
+                    {
+                        LogService.LogError(I18n.Format("MineRewind_KnotLink_BackupCurrent_Failed", ex.Message), "MineRewind", ex);
+                        try
+                        {
+                            hostContext?.BroadcastEvent($"event=knotlink_backup_failed;plugin=minerewind;command={KnotLinkCommand_BackupCurrent};config={cfg.Id};world={Uri.EscapeDataString(folder.DisplayName ?? string.Empty)};error={Uri.EscapeDataString(ex.Message)}");
+                        }
+                        catch { }
+                    }
+                });
+
+                return Task.FromResult<string?>($"OK:Backup started for '{folder.DisplayName}'");
+            }
+            catch (Exception ex)
+            {
+                LogService.LogError(I18n.Format("MineRewind_KnotLink_BackupCurrent_Failed", ex.Message), "MineRewind", ex);
+                return Task.FromResult<string?>($"ERROR:{ex.Message}");
+            }
         }
 
         #endregion
