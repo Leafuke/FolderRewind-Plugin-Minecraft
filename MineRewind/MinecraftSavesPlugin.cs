@@ -1,13 +1,7 @@
 using FolderRewind.Models;
 using FolderRewind.Services;
 using FolderRewind.Services.Plugins;
-using System;
-using System.Collections.Generic;
 using System.Diagnostics;
-using System.IO;
-using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
 
 namespace MineRewind
 {
