@@ -30,6 +30,8 @@ namespace MineRewind
 
         private const string KnotLinkCommand_BackupCurrent = "BACKUP_CURRENT";
         private const string KnotLinkCommand_RestoreCurrentLatest = "RESTORE_CURRENT_LATEST";
+        private const string KnotLinkCommand_ListBackupsCurrent = "LIST_BACKUPS_CURRENT";
+        private const string KnotLinkCommand_RestoreCurrent = "RESTORE_CURRENT";
 
         // 伪装版本：联动模组只认 MineBackup 1.13.0+
         private const string FakeVersion = "1.13.0";

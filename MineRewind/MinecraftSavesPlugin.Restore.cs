@@ -57,7 +57,7 @@ namespace MineRewind
 
         #region 热还原主流程
 
-        private async Task TriggerHotRestoreAsync(BackupConfig config, ManagedFolder folder)
+        private async Task TriggerHotRestoreAsync(BackupConfig config, ManagedFolder folder, string? specificBackupFile = null)
         {
             if (Interlocked.CompareExchange(ref _hotRestoreState, RestoreWaitingForMod, RestoreIdle) != RestoreIdle)
             {
@@ -121,7 +121,26 @@ namespace MineRewind
 
                 Interlocked.Exchange(ref _hotRestoreState, RestoreRestoring);
 
-                var latestBackup = FindLatestBackupFileName(config, folder);
+                string? latestBackup;
+                if (!string.IsNullOrWhiteSpace(specificBackupFile))
+                {
+                    // RESTORE_CURRENT: 使用指定的备份文件名
+                    var backupDir = Path.Combine(config.DestinationPath, folder.DisplayName ?? string.Empty);
+                    var fullPath = Path.Combine(backupDir, specificBackupFile);
+                    if (!File.Exists(fullPath))
+                    {
+                        LogService.LogError($"Specified backup file not found: '{specificBackupFile}', aborting restore.", "MineRewind");
+                        await KnotLinkService.BroadcastEventAsync(
+                            $"event=restore_finished;status=failure;config={config.Id};world={Uri.EscapeDataString(worldName)}");
+                        return;
+                    }
+                    latestBackup = specificBackupFile;
+                }
+                else
+                {
+                    // RESTORE_CURRENT_LATEST: 查找最新备份文件
+                    latestBackup = FindLatestBackupFileName(config, folder);
+                }
                 if (string.IsNullOrEmpty(latestBackup))
                 {
                     LogService.LogError($"No backup found for '{worldName}', aborting restore.", "MineRewind");
