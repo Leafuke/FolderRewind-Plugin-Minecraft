@@ -180,6 +180,20 @@ namespace MineRewind
             return "Minecraft 存档";
         }
 
+        /// <summary>
+        /// 为 mods 文件夹创建 ManagedFolder
+        /// </summary>
+        private ManagedFolder CreateModsManagedFolder(string modsPath)
+        {
+            var parentName = Path.GetFileName(Path.GetDirectoryName(modsPath)) ?? "Unknown";
+            return new ManagedFolder
+            {
+                Path = modsPath,
+                DisplayName = $"mods ({parentName})",
+                Description = "Minecraft Mods"
+            };
+        }
+
         #endregion
 
         #region 私有方法 - 配置创建
@@ -202,6 +216,16 @@ namespace MineRewind
                 }
             }
 
+            // 收集每个版本目录下的 mods 文件夹路径
+            var versionModsMap = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+
+            // .minecraft/mods 对应 Default 配置
+            var directMods = Path.Combine(dotMinecraftPath, "mods");
+            if (Directory.Exists(directMods))
+            {
+                versionModsMap["Default"] = directMods;
+            }
+
             var versionsDir = Path.Combine(dotMinecraftPath, "versions");
             if (Directory.Exists(versionsDir))
             {
@@ -221,6 +245,13 @@ namespace MineRewind
                             versionSavesMap[versionName] = worlds;
                         }
                     }
+
+                    // 检查版本目录下的 mods 文件夹
+                    var versionMods = Path.Combine(versionDir, "mods");
+                    if (Directory.Exists(versionMods))
+                    {
+                        versionModsMap[versionName] = versionMods;
+                    }
                 }
             }
 
@@ -238,6 +269,12 @@ namespace MineRewind
                     config.SourceFolders.Add(CreateManagedFolder(worldPath));
                 }
 
+                // 添加对应版本的 mods 文件夹
+                if (versionModsMap.TryGetValue(kvp.Key, out var modsPath))
+                {
+                    config.SourceFolders.Add(CreateModsManagedFolder(modsPath));
+                }
+
                 config.ExtendedProperties["MinecraftVersion"] = kvp.Key;
                 config.ExtendedProperties["Plugin"] = Manifest.Id;
 
@@ -252,7 +289,12 @@ namespace MineRewind
             var versionName = Path.GetFileName(versionDirPath);
             var savesPath = Path.Combine(versionDirPath, "saves");
 
-            if (!Directory.Exists(savesPath))
+            // 如果没有 saves 也没有 mods，跳过
+            var modsPath = Path.Combine(versionDirPath, "mods");
+            bool hasSaves = Directory.Exists(savesPath);
+            bool hasMods = Directory.Exists(modsPath);
+
+            if (!hasSaves && !hasMods)
                 return null;
 
             var config = new BackupConfig
@@ -262,12 +304,21 @@ namespace MineRewind
                 IconGlyph = "\uE7FC",
             };
 
-            foreach (var worldDir in Directory.EnumerateDirectories(savesPath))
+            if (hasSaves)
             {
-                if (File.Exists(Path.Combine(worldDir, "level.dat")))
+                foreach (var worldDir in Directory.EnumerateDirectories(savesPath))
                 {
-                    config.SourceFolders.Add(CreateManagedFolder(worldDir));
+                    if (File.Exists(Path.Combine(worldDir, "level.dat")))
+                    {
+                        config.SourceFolders.Add(CreateManagedFolder(worldDir));
+                    }
                 }
+            }
+
+            // 添加 mods 文件夹
+            if (hasMods)
+            {
+                config.SourceFolders.Add(CreateModsManagedFolder(modsPath));
             }
 
             if (config.SourceFolders.Count == 0)
@@ -296,6 +347,17 @@ namespace MineRewind
                 if (File.Exists(Path.Combine(worldDir, "level.dat")))
                 {
                     config.SourceFolders.Add(CreateManagedFolder(worldDir));
+                }
+            }
+
+            // 检查 saves 的父目录下是否有 mods 文件夹
+            var parentDir = Directory.GetParent(savesPath)?.FullName;
+            if (parentDir != null)
+            {
+                var modsPath = Path.Combine(parentDir, "mods");
+                if (Directory.Exists(modsPath))
+                {
+                    config.SourceFolders.Add(CreateModsManagedFolder(modsPath));
                 }
             }
 
