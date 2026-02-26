@@ -202,6 +202,13 @@ namespace MineRewind
             if (string.IsNullOrWhiteSpace(args))
                 return Task.FromResult<string?>("ERROR:Missing mod version. Usage: HANDSHAKE_RESPONSE <mod_version>");
 
+            var pendingHandshake = _handshakeTcs;
+            if (pendingHandshake == null)
+            {
+                LogService.LogWarning("Received HANDSHAKE_RESPONSE with no pending handshake, ignored.", "MineRewind");
+                return Task.FromResult<string?>("ERROR:No pending handshake.");
+            }
+
             var modVersion = args.Trim();
             _modDetected = true;
             _modVersion = modVersion;
@@ -216,7 +223,7 @@ namespace MineRewind
             }
             catch { }
 
-            _handshakeTcs?.TrySetResult(_versionCompatible);
+            pendingHandshake.TrySetResult(_versionCompatible);
 
             var compatStr = _versionCompatible ? "compatible" : "incompatible";
             return Task.FromResult<string?>($"OK:Handshake received. Version {modVersion} ({compatStr})");

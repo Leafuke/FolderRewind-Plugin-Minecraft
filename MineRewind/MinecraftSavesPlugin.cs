@@ -37,7 +37,7 @@ namespace MineRewind
         private const string MinModVersion = "1.0.0";
 
         // 超时常量（参考 MineBackup C++ 实现）
-        private const int HandshakeTimeoutMs = 100;
+        private const int HandshakeTimeoutMs = 3_000;
         private const int WorldSaveTimeoutMs = 10_000;      // 等待 WORLD_SAVED: 10s
         private const int WorldExitTimeoutMs = 10_000;       // 等待 WORLD_SAVE_AND_EXIT_COMPLETE: 10s
         private const int FileReleaseTimeoutMs = 15_000;     // 等待文件释放: 15s

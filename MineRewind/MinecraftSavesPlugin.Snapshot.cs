@@ -43,18 +43,25 @@ namespace MineRewind
                 {
                     Thread.Sleep(PostHandshakeDelayMs);
 
+                    var pendingWorldSave = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+                    _worldSaveTcs = pendingWorldSave;
+
                     KnotLinkService.BroadcastEvent(
                         $"event=pre_hot_backup;config={config.Id};world={Uri.EscapeDataString(worldName)}");
 
-                    _worldSaveTcs = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
-                    var saved = _worldSaveTcs.Task.Wait(WorldSaveTimeoutMs);
-                    if (saved && _worldSaveTcs.Task.Result)
+                    var saved = pendingWorldSave.Task.Wait(WorldSaveTimeoutMs);
+                    if (saved && pendingWorldSave.Task.Result)
                     {
                         LogService.LogInfo($"Mod confirmed world save for '{worldName}'", "MineRewind");
                     }
                     else
                     {
                         LogService.LogWarning($"WORLD_SAVED timed out for '{worldName}', proceeding with direct backup", "MineRewind");
+                    }
+
+                    if (ReferenceEquals(_worldSaveTcs, pendingWorldSave))
+                    {
+                        _worldSaveTcs = null;
                     }
                 }
                 else

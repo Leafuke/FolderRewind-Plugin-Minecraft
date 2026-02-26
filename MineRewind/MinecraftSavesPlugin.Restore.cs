@@ -23,7 +23,8 @@ namespace MineRewind
             _modDetected = false;
             _modVersion = string.Empty;
             _versionCompatible = false;
-            _handshakeTcs = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+            var pendingHandshake = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+            _handshakeTcs = pendingHandshake;
 
             var payload = $"event=handshake;version={FakeVersion};action={action};world={Uri.EscapeDataString(worldName)};min_mod_version={MinModVersion}";
 
@@ -40,14 +41,21 @@ namespace MineRewind
             try
             {
                 var delayTask = Task.Delay(timeoutMs);
-                var completedTask = await Task.WhenAny(_handshakeTcs.Task, delayTask).ConfigureAwait(false);
+                var completedTask = await Task.WhenAny(pendingHandshake.Task, delayTask).ConfigureAwait(false);
 
-                if (completedTask == _handshakeTcs.Task)
+                if (completedTask == pendingHandshake.Task)
                 {
-                    return _handshakeTcs.Task.Result;
+                    return pendingHandshake.Task.Result;
                 }
             }
             catch { }
+            finally
+            {
+                if (ReferenceEquals(_handshakeTcs, pendingHandshake))
+                {
+                    _handshakeTcs = null;
+                }
+            }
 
             LogService.LogInfo("Mod handshake timed out, no mod detected.", "MineRewind");
             return false;
