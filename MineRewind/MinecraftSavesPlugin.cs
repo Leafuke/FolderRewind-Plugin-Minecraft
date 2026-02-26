@@ -23,6 +23,7 @@ namespace MineRewind
 
         private const string ConfigTypeName = "Minecraft Saves";
         private const string HotBackupSettingKey = "EnableHotBackup";
+        private const string PreservePlayerDataSettingKey = "PreservePlayerData";
         private static readonly string[] RequiredFilterEntries = { "session.lock", "voxy" };
 
         private const string Hotkey_ActiveWorldHotBackup = "hotbackup.active_world";
@@ -59,6 +60,7 @@ namespace MineRewind
         #region 私有字段
 
         private bool _enableHotBackup = true;
+        private bool _preservePlayerData = false;
 
         // 宿主上下文（持久缓存，用于主动发起 KnotLink 操作）
         private PluginHostContext? _hostContext;
@@ -89,7 +91,7 @@ namespace MineRewind
         {
             Id = "com.folderrewind.minerewind",
             Name = "MineRewind",
-            Version = "1.4.1",
+            Version = "1.5.0",
             Author = "Leafuke",
             Description = "Enhanced Minecraft saves backup: lock-friendly backup, batch discovery under .minecraft",
             LocalizedName = new Dictionary<string, string>
@@ -104,7 +106,7 @@ namespace MineRewind
             },
             EntryAssembly = "MineRewind.dll",
             EntryType = "MineRewind.MinecraftSavesPlugin",
-            MinHostVersion = "1.4.0",
+            MinHostVersion = "1.4.2",
             Repository = "Leafuke/FolderRewind-Plugin-Minecraft"
         };
 
@@ -124,6 +126,15 @@ namespace MineRewind
                     Type = PluginSettingType.Boolean,
                     DefaultValue = "true",
                     IsRequired = false
+                },
+                new()
+                {
+                    Key = PreservePlayerDataSettingKey,
+                    DisplayName = I18n.GetString("MineRewind_Setting_PreservePlayerData_Name"),
+                    Description = I18n.GetString("MineRewind_Setting_PreservePlayerData_Desc"),
+                    Type = PluginSettingType.Boolean,
+                    DefaultValue = "false",
+                    IsRequired = false
                 }
             };
         }
@@ -135,6 +146,7 @@ namespace MineRewind
         public void Initialize(IReadOnlyDictionary<string, string> settingsValues)
         {
             _enableHotBackup = GetBoolSetting(settingsValues, HotBackupSettingKey, true);
+            _preservePlayerData = GetBoolSetting(settingsValues, PreservePlayerDataSettingKey, false);
 
             if (EnsureExistingMinecraftConfigFilters())
             {

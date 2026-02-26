@@ -8,6 +8,58 @@ namespace MineRewind
 {
     public partial class MinecraftSavesPlugin
     {
+        #region 还原钩子 - 保留玩家数据
+
+        /// <summary>
+        /// 还原前钩子：提取当前 level.dat 中的玩家数据（位置、物品栏等）。
+        /// </summary>
+        public object? OnBeforeRestoreFolder(BackupConfig config, ManagedFolder folder, string archiveFileName, IReadOnlyDictionary<string, string> settingsValues)
+        {
+            Initialize(settingsValues);
+
+            if (!CanHandleConfigType(config.ConfigType))
+                return null;
+
+            if (!_preservePlayerData)
+                return null;
+
+            var levelDatPath = Path.Combine(folder.Path, "level.dat");
+            if (!File.Exists(levelDatPath))
+                return null;
+
+            LogService.LogInfo($"[MineRewind] Extracting player data before restore for '{folder.DisplayName}'...", "MineRewind");
+            var snapshot = NbtHelper.ExtractPlayerData(folder.Path);
+            return snapshot;
+        }
+
+        /// <summary>
+        /// 还原后钩子：将之前保存的玩家数据写回 level.dat。
+        /// </summary>
+        public void OnAfterRestoreFolder(BackupConfig config, ManagedFolder folder, bool success, string archiveFileName, object? state, IReadOnlyDictionary<string, string> settingsValues)
+        {
+            if (!success || state == null)
+                return;
+
+            if (!CanHandleConfigType(config.ConfigType))
+                return;
+
+            if (state is not NbtHelper.PlayerDataSnapshot snapshot)
+                return;
+
+            LogService.LogInfo($"[MineRewind] Applying preserved player data after restore for '{folder.DisplayName}'...", "MineRewind");
+            var applied = NbtHelper.ApplyPlayerData(folder.Path, snapshot);
+            if (applied)
+            {
+                LogService.LogInfo($"[MineRewind] Player data preserved successfully for '{folder.DisplayName}'.", "MineRewind");
+            }
+            else
+            {
+                LogService.LogWarning($"[MineRewind] Failed to apply preserved player data for '{folder.DisplayName}'.", "MineRewind");
+            }
+        }
+
+        #endregion
+
         #region 模组握手与热还原
 
         #region 握手流程

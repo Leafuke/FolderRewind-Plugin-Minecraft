@@ -25,8 +25,8 @@ namespace MineRewind
                 new()
                 {
                     Id = Hotkey_QuickRestore,
-                    DisplayName = "快速还原当前存档",
-                    Description = "将当前正在运行的 Minecraft 存档还原到最新备份（需要联动模组支持）",
+                    DisplayName = I18n.GetString("MineRewind_Hotkey_QuickRestore_Name"),
+                    Description = I18n.GetString("MineRewind_Hotkey_QuickRestore_Desc"),
                     DefaultGesture = "Alt+Ctrl+Z",
                     IsGlobalHotkey = true
                 }
@@ -86,7 +86,7 @@ namespace MineRewind
                 var active = TryFindOccupiedWorld();
                 if (active == null)
                 {
-                    LogService.LogInfo("快速还原：未检测到活跃存档", "MineRewind");
+                    LogService.LogInfo(I18n.GetString("MineRewind_Hotkey_QuickRestore_NoActive"), "MineRewind");
                     try { hostContext?.BroadcastEvent("event=hotkey_restore_no_active_world;plugin=minerewind"); } catch { }
                     return;
                 }
@@ -96,7 +96,7 @@ namespace MineRewind
             }
             catch (Exception ex)
             {
-                LogService.LogError($"快速还原热键失败: {ex.Message}", "MineRewind", ex);
+                LogService.LogError(I18n.Format("MineRewind_Hotkey_QuickRestore_Failed", ex.Message), "MineRewind", ex);
             }
         }
 
