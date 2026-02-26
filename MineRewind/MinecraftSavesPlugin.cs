@@ -1,7 +1,8 @@
 using FolderRewind.Models;
 using FolderRewind.Services;
 using FolderRewind.Services.Plugins;
-using System.Diagnostics;
+using System.Collections.ObjectModel;
+using System.Linq;
 using System.Threading;
 
 namespace MineRewind
@@ -21,9 +22,7 @@ namespace MineRewind
 
         private const string ConfigTypeName = "Minecraft Saves";
         private const string HotBackupSettingKey = "EnableHotBackup";
-        private const string SnapshotPathSettingKey = "SnapshotPath";
-        private const string CleanupSnapshotSettingKey = "CleanupSnapshot";
-        private const string SnapshotDelaySettingKey = "SnapshotDelayMs";
+        private static readonly string[] RequiredFilterEntries = { "session.lock", "voxy" };
 
         private const string Hotkey_ActiveWorldHotBackup = "hotbackup.active_world";
         private const string Hotkey_QuickRestore = "hotrestore.active_world";
@@ -59,12 +58,6 @@ namespace MineRewind
         #region 私有字段
 
         private bool _enableHotBackup = true;
-        private string _snapshotPath = string.Empty;
-        private bool _cleanupSnapshot = true;
-        private int _snapshotDelayMs = 500;
-
-        // 临时快照路径映射: 原始路径 -> 快照路径
-        private readonly Dictionary<string, string> _activeSnapshots = new();
 
         // 宿主上下文（持久缓存，用于主动发起 KnotLink 操作）
         private PluginHostContext? _hostContext;
@@ -93,7 +86,7 @@ namespace MineRewind
             Name = "MineRewind",
             Version = "1.4.0",
             Author = "Leafuke",
-            Description = "Enhanced Minecraft saves backup: hot snapshot backup, batch discovery under .minecraft",
+            Description = "Enhanced Minecraft saves backup: lock-friendly backup, batch discovery under .minecraft",
             LocalizedName = new Dictionary<string, string>
             {
                 ["zh-CN"] = "MineRewind",
@@ -102,7 +95,7 @@ namespace MineRewind
             LocalizedDescription = new Dictionary<string, string>
             {
                 ["zh-CN"] = "Minecraft 存档备份增强插件：支持热备份、批量扫描 .minecraft 目录、自动发现存档，以及全局热键触发备份",
-                ["en-US"] = "Enhanced Minecraft saves backup: hot snapshot backup, batch discovery under .minecraft, plus a global hotkey trigger",
+                ["en-US"] = "Enhanced Minecraft saves backup: lock-friendly backup, batch discovery under .minecraft, plus a global hotkey trigger",
             },
             EntryAssembly = "MineRewind.dll",
             EntryType = "MineRewind.MinecraftSavesPlugin",
@@ -126,33 +119,6 @@ namespace MineRewind
                     Type = PluginSettingType.Boolean,
                     DefaultValue = "true",
                     IsRequired = false
-                },
-                new()
-                {
-                    Key = SnapshotPathSettingKey,
-                    DisplayName = I18n.GetString("MineRewind_Setting_SnapshotPath_Name"),
-                    Description = I18n.GetString("MineRewind_Setting_SnapshotPath_Desc"),
-                    Type = PluginSettingType.Path,
-                    DefaultValue = "",
-                    IsRequired = false
-                },
-                new()
-                {
-                    Key = CleanupSnapshotSettingKey,
-                    DisplayName = I18n.GetString("MineRewind_Setting_CleanupSnapshot_Name"),
-                    Description = I18n.GetString("MineRewind_Setting_CleanupSnapshot_Desc"),
-                    Type = PluginSettingType.Boolean,
-                    DefaultValue = "true",
-                    IsRequired = false
-                },
-                new()
-                {
-                    Key = SnapshotDelaySettingKey,
-                    DisplayName = I18n.GetString("MineRewind_Setting_SnapshotDelay_Name"),
-                    Description = I18n.GetString("MineRewind_Setting_SnapshotDelay_Desc"),
-                    Type = PluginSettingType.Integer,
-                    DefaultValue = "500",
-                    IsRequired = false
                 }
             };
         }
@@ -164,9 +130,11 @@ namespace MineRewind
         public void Initialize(IReadOnlyDictionary<string, string> settingsValues)
         {
             _enableHotBackup = GetBoolSetting(settingsValues, HotBackupSettingKey, true);
-            _snapshotPath = GetStringSetting(settingsValues, SnapshotPathSettingKey, string.Empty);
-            _cleanupSnapshot = GetBoolSetting(settingsValues, CleanupSnapshotSettingKey, true);
-            _snapshotDelayMs = GetIntSetting(settingsValues, SnapshotDelaySettingKey, 500);
+
+            if (EnsureExistingMinecraftConfigFilters())
+            {
+                ConfigService.Save();
+            }
         }
 
         /// <summary>
@@ -175,6 +143,55 @@ namespace MineRewind
         public void SetHostContext(PluginHostContext hostContext)
         {
             _hostContext = hostContext;
+        }
+
+        private static bool EnsureRequiredFilters(BackupConfig config)
+        {
+            if (config == null)
+                return false;
+
+            config.Filters ??= new FilterSettings();
+            config.Filters.Blacklist ??= new ObservableCollection<string>();
+            config.Filters.RestoreWhitelist ??= new ObservableCollection<string>();
+
+            bool changed = false;
+            foreach (var entry in RequiredFilterEntries)
+            {
+                if (!config.Filters.Blacklist.Any(x => string.Equals(x?.Trim(), entry, StringComparison.OrdinalIgnoreCase)))
+                {
+                    config.Filters.Blacklist.Add(entry);
+                    changed = true;
+                }
+
+                if (!config.Filters.RestoreWhitelist.Any(x => string.Equals(x?.Trim(), entry, StringComparison.OrdinalIgnoreCase)))
+                {
+                    config.Filters.RestoreWhitelist.Add(entry);
+                    changed = true;
+                }
+            }
+
+            return changed;
+        }
+
+        private bool EnsureExistingMinecraftConfigFilters()
+        {
+            var allConfigs = ConfigService.CurrentConfig?.BackupConfigs;
+            if (allConfigs == null || allConfigs.Count == 0)
+                return false;
+
+            bool changed = false;
+            foreach (var config in allConfigs)
+            {
+                if (config == null || !CanHandleConfigType(config.ConfigType))
+                    continue;
+
+                if (EnsureRequiredFilters(config))
+                {
+                    changed = true;
+                }
+            }
+
+            return changed;
         }
 
         #endregion

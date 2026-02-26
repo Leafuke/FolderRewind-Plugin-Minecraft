@@ -277,6 +277,7 @@ namespace MineRewind
 
                 config.ExtendedProperties["MinecraftVersion"] = kvp.Key;
                 config.ExtendedProperties["Plugin"] = Manifest.Id;
+                EnsureRequiredFilters(config);
 
                 configs.Add(config);
             }
@@ -326,6 +327,7 @@ namespace MineRewind
 
             config.ExtendedProperties["MinecraftVersion"] = versionName;
             config.ExtendedProperties["Plugin"] = Manifest.Id;
+            EnsureRequiredFilters(config);
 
             return config;
         }
@@ -366,6 +368,7 @@ namespace MineRewind
 
             config.ExtendedProperties["MinecraftVersion"] = versionName;
             config.ExtendedProperties["Plugin"] = Manifest.Id;
+            EnsureRequiredFilters(config);
 
             return config;
         }
