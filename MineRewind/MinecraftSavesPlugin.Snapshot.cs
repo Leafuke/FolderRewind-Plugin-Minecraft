@@ -25,9 +25,11 @@ namespace MineRewind
             if (!isMinecraftSave)
                 return null;
 
+            bool forceHotBackup = IsForceHotBackupRequested(folder.Path);
+
             bool isLocked = IsFileLocked(levelDatPath);
 
-            if (!isLocked)
+            if (!isLocked && !forceHotBackup)
                 return null;
 
             if (!KnotLinkService.IsEnabled || !KnotLinkService.IsInitialized)
@@ -41,6 +43,11 @@ namespace MineRewind
 
                 if (handshakeOk && _modDetected && _versionCompatible)
                 {
+                    if (forceHotBackup && !isLocked)
+                    {
+                        LogService.LogInfo($"Force hot-backup coordination for '{worldName}' before diff check.", "MineRewind");
+                    }
+
                     Thread.Sleep(PostHandshakeDelayMs);
 
                     var pendingWorldSave = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -107,6 +114,30 @@ namespace MineRewind
             {
                 return false;
             }
+        }
+
+        private void MarkForceHotBackup(string folderPath)
+        {
+            if (string.IsNullOrWhiteSpace(folderPath))
+                return;
+
+            _forceHotBackupFolders[folderPath] = 0;
+        }
+
+        private void ClearForceHotBackup(string folderPath)
+        {
+            if (string.IsNullOrWhiteSpace(folderPath))
+                return;
+
+            _forceHotBackupFolders.TryRemove(folderPath, out _);
+        }
+
+        private bool IsForceHotBackupRequested(string folderPath)
+        {
+            if (string.IsNullOrWhiteSpace(folderPath))
+                return false;
+
+            return _forceHotBackupFolders.ContainsKey(folderPath);
         }
 
         #endregion

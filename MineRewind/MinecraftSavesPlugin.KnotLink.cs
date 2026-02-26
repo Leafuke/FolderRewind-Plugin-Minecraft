@@ -67,13 +67,17 @@ namespace MineRewind
                 {
                     try
                     {
-                        try { hostContext?.BroadcastEvent($"event=knotlink_backup_triggered;plugin=minerewind;command={KnotLinkCommand_BackupCurrent};config={cfg.Id};world={Uri.EscapeDataString(folder.DisplayName ?? string.Empty)}"); } catch { }
+                        MarkForceHotBackup(folder.Path);
                         await BackupService.BackupFolderAsync(cfg, folder, string.IsNullOrWhiteSpace(args) ? "QuickSave" : args);
                     }
                     catch (Exception ex)
                     {
                         LogService.LogError(I18n.Format("MineRewind_KnotLink_BackupCurrent_Failed", ex.Message), "MineRewind", ex);
                         try { hostContext?.BroadcastEvent($"event=knotlink_backup_failed;plugin=minerewind;command={KnotLinkCommand_BackupCurrent};config={cfg.Id};world={Uri.EscapeDataString(folder.DisplayName ?? string.Empty)};error={Uri.EscapeDataString(ex.Message)}"); } catch { }
+                    }
+                    finally
+                    {
+                        ClearForceHotBackup(folder.Path);
                     }
                 });
 
@@ -232,7 +236,6 @@ namespace MineRewind
         private Task<string?> HandleWorldSavedAsync(PluginHostContext hostContext)
         {
             LogService.LogInfo("Mod reports: world save complete.", "MineRewind");
-            try { KnotLinkService.BroadcastEvent("event=world_save_acknowledged;"); } catch { }
             _worldSaveTcs?.TrySetResult(true);
             return Task.FromResult<string?>("OK:World save acknowledged.");
         }

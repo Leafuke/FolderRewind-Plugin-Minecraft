@@ -1,6 +1,7 @@
 using FolderRewind.Models;
 using FolderRewind.Services;
 using FolderRewind.Services.Plugins;
+using System.Collections.Concurrent;
 using System.Collections.ObjectModel;
 using System.Linq;
 using System.Threading;
@@ -61,6 +62,10 @@ namespace MineRewind
 
         // 宿主上下文（持久缓存，用于主动发起 KnotLink 操作）
         private PluginHostContext? _hostContext;
+
+        // 仅用于 BACKUP_CURRENT：强制在差异检测前执行一次热备份协同保存
+        private readonly ConcurrentDictionary<string, byte> _forceHotBackupFolders
+            = new(StringComparer.OrdinalIgnoreCase);
 
         // --- 联动模组状态 ---
         private volatile bool _modDetected;
