@@ -18,6 +18,7 @@ namespace MineRewind
                 new() { Command = KnotLinkCommand_RestoreCurrentLatest, Description = "Hot-restore the current world to its latest backup (requires mod)" },
                 new() { Command = KnotLinkCommand_ListBackupsCurrent, Description = "List all backups for the currently active (occupied) world" },
                 new() { Command = KnotLinkCommand_RestoreCurrent, Description = "Hot-restore the current world from a specified backup file (requires mod)" },
+                new() { Command = KnotLinkCommand_RestoreCurrentWithData, Description = "Hot-restore the current world while preserving player inventory and position (requires mod)" },
                 new() { Command = "HANDSHAKE_RESPONSE", Description = "Mod handshake response (internal)" },
                 new() { Command = "WORLD_SAVED", Description = "Mod notifies world save complete (internal)" },
                 new() { Command = "WORLD_SAVE_AND_EXIT_COMPLETE", Description = "Mod notifies world saved and exited (internal)" },
@@ -41,6 +42,7 @@ namespace MineRewind
                 "RESTORE_CURRENT_LATEST" => HandleRestoreCurrentLatestAsync(args, settingsValues, hostContext),
                 "LIST_BACKUPS_CURRENT" => HandleListBackupsCurrentAsync(hostContext),
                 "RESTORE_CURRENT" => HandleRestoreCurrentAsync(args, settingsValues, hostContext),
+                "RESTORE_CURRENT_WITH_DATA" => HandleRestoreCurrentWithDataAsync(args, settingsValues, hostContext),
                 "HANDSHAKE_RESPONSE" => HandleHandshakeResponseAsync(args, hostContext),
                 "WORLD_SAVED" => HandleWorldSavedAsync(hostContext),
                 "WORLD_SAVE_AND_EXIT_COMPLETE" => HandleWorldSaveAndExitCompleteAsync(hostContext),
@@ -197,6 +199,39 @@ namespace MineRewind
             catch (Exception ex)
             {
                 LogService.LogError($"RESTORE_CURRENT failed: {ex.Message}", "MineRewind", ex);
+                return $"ERROR:{ex.Message}";
+            }
+        }
+
+        /// <summary>
+        /// RESTORE_CURRENT_WITH_DATA: 对当前活跃世界执行热还原，并强制保留玩家位置与物品栏数据。
+        /// 参数 args 可选，为备份文件名；省略时使用最新备份。
+        /// </summary>
+        private async Task<string?> HandleRestoreCurrentWithDataAsync(string args, IReadOnlyDictionary<string, string> settingsValues, PluginHostContext hostContext)
+        {
+            try
+            {
+                var active = TryFindOccupiedWorld();
+                if (active == null)
+                {
+                    try { hostContext?.BroadcastEvent("event=knotlink_restore_no_active_world;plugin=minerewind"); } catch { }
+                    return "ERROR:No active world.";
+                }
+
+                var (config, folder) = active.Value;
+                var backupFile = string.IsNullOrWhiteSpace(args) ? null : args.Trim();
+
+                // 设置强制保留标志，TriggerHotRestoreAsync 内部会在 finally 中清除
+                _forcePreserveNextRestore = true;
+
+                _ = Task.Run(() => TriggerHotRestoreAsync(config, folder, backupFile));
+                var fileInfo = backupFile != null ? $" with backup '{backupFile}'" : " (latest)";
+                return $"OK:Hot restore with data preservation triggered for '{folder.DisplayName}'{fileInfo}";
+            }
+            catch (Exception ex)
+            {
+                _forcePreserveNextRestore = false;
+                LogService.LogError($"RESTORE_CURRENT_WITH_DATA failed: {ex.Message}", "MineRewind", ex);
                 return $"ERROR:{ex.Message}";
             }
         }

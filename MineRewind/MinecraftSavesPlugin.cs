@@ -33,6 +33,7 @@ namespace MineRewind
         private const string KnotLinkCommand_RestoreCurrentLatest = "RESTORE_CURRENT_LATEST";
         private const string KnotLinkCommand_ListBackupsCurrent = "LIST_BACKUPS_CURRENT";
         private const string KnotLinkCommand_RestoreCurrent = "RESTORE_CURRENT";
+        private const string KnotLinkCommand_RestoreCurrentWithData = "RESTORE_CURRENT_WITH_DATA";
 
         // 伪装版本：联动模组只认 MineBackup 1.13.0+
         private const string FakeVersion = "1.13.1";
@@ -61,6 +62,10 @@ namespace MineRewind
 
         private bool _enableHotBackup = true;
         private bool _preservePlayerData = false;
+
+        // 当 RESTORE_CURRENT_WITH_DATA 指令触发时，强制下一次还原保留玩家数据，
+        // 不管插件设置 PreservePlayerData 是否开启。
+        private volatile bool _forcePreserveNextRestore = false;
 
         // 宿主上下文（持久缓存，用于主动发起 KnotLink 操作）
         private PluginHostContext? _hostContext;

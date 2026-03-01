@@ -20,7 +20,7 @@ namespace MineRewind
             if (!CanHandleConfigType(config.ConfigType))
                 return null;
 
-            if (!_preservePlayerData)
+            if (!_preservePlayerData && !_forcePreserveNextRestore)
                 return null;
 
             var levelDatPath = Path.Combine(folder.Path, "level.dat");
@@ -268,6 +268,7 @@ namespace MineRewind
             }
             finally
             {
+                _forcePreserveNextRestore = false;
                 Interlocked.Exchange(ref _hotRestoreState, RestoreIdle);
             }
         }
