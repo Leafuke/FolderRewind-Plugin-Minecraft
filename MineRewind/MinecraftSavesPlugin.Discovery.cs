@@ -150,7 +150,7 @@ namespace MineRewind
                 Path = worldPath,
                 DisplayName = worldName,
                 Description = GetWorldDescription(worldPath),
-                CoverImagePath = coverImage
+                CoverImagePath = coverImage ?? string.Empty
             };
         }
 

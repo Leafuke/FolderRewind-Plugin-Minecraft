@@ -212,7 +212,7 @@ namespace MineRewind
                 LogService.LogInfo($"Restoring '{worldName}' from '{latestBackup}'...", "MineRewind");
                 try
                 {
-                    await BackupService.RestoreBackupAsync(config, folder, latestBackup);
+                    await BackupService.RestoreBackupAsync(config, folder, latestBackup, BackupService.RestoreMode.Clean);
                 }
                 catch (Exception ex)
                 {
