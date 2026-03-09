@@ -69,17 +69,12 @@ namespace MineRewind
                 {
                     try
                     {
-                        MarkForceHotBackup(folder.Path);
-                        await BackupService.BackupFolderAsync(cfg, folder, string.IsNullOrWhiteSpace(args) ? "QuickSave" : args);
+                        await RunForcedHotBackupAsync(cfg, folder, string.IsNullOrWhiteSpace(args) ? "QuickSave" : args);
                     }
                     catch (Exception ex)
                     {
                         LogService.LogError(I18n.Format("MineRewind_KnotLink_BackupCurrent_Failed", ex.Message), "MineRewind", ex);
                         try { hostContext?.BroadcastEvent($"event=knotlink_backup_failed;plugin=minerewind;command={KnotLinkCommand_BackupCurrent};config={cfg.Id};world={Uri.EscapeDataString(folder.DisplayName ?? string.Empty)};error={Uri.EscapeDataString(ex.Message)}"); } catch { }
-                    }
-                    finally
-                    {
-                        ClearForceHotBackup(folder.Path);
                     }
                 });
 
@@ -290,8 +285,17 @@ namespace MineRewind
 
         private Task<string?> HandleRejoinResultAsync(string args, PluginHostContext hostContext)
         {
-            var parts = args.Trim().Split(' ', 2);
-            var successStr = parts.Length > 0 ? parts[0].ToLowerInvariant() : "failure";
+            if (string.IsNullOrWhiteSpace(args))
+                return Task.FromResult<string?>("ERROR:Missing result. Usage: REJOIN_RESULT <success|failure> [reason]");
+
+            var parts = args.Trim().Split(' ', 2, StringSplitOptions.RemoveEmptyEntries);
+            if (parts.Length == 0)
+                return Task.FromResult<string?>("ERROR:Missing result. Usage: REJOIN_RESULT <success|failure> [reason]");
+
+            var successStr = parts[0].ToLowerInvariant();
+            if (successStr != "success" && successStr != "failure")
+                return Task.FromResult<string?>("ERROR:Invalid result. Usage: REJOIN_RESULT <success|failure> [reason]");
+
             var reason = parts.Length > 1 ? parts[1] : string.Empty;
             var success = successStr == "success";
 

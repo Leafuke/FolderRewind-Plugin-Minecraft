@@ -92,6 +92,19 @@ namespace MineRewind
 
         #region 私有方法 - 热备份
 
+        private async Task RunForcedHotBackupAsync(BackupConfig config, ManagedFolder folder, string comment)
+        {
+            MarkForceHotBackup(folder.Path);
+            try
+            {
+                await BackupService.BackupFolderAsync(config, folder, comment);
+            }
+            finally
+            {
+                ClearForceHotBackup(folder.Path);
+            }
+        }
+
         private static bool IsFileLocked(string filePath)
         {
             if (!File.Exists(filePath))
@@ -121,7 +134,7 @@ namespace MineRewind
             if (string.IsNullOrWhiteSpace(folderPath))
                 return;
 
-            _forceHotBackupFolders[folderPath] = 0;
+            _forceHotBackupFolders.AddOrUpdate(folderPath, 1, static (_, current) => current + 1);
         }
 
         private void ClearForceHotBackup(string folderPath)
@@ -129,7 +142,21 @@ namespace MineRewind
             if (string.IsNullOrWhiteSpace(folderPath))
                 return;
 
-            _forceHotBackupFolders.TryRemove(folderPath, out _);
+            while (true)
+            {
+                if (!_forceHotBackupFolders.TryGetValue(folderPath, out var current))
+                    return;
+
+                if (current <= 1)
+                {
+                    if (_forceHotBackupFolders.TryRemove(folderPath, out _))
+                        return;
+                }
+                else if (_forceHotBackupFolders.TryUpdate(folderPath, current - 1, current))
+                {
+                    return;
+                }
+            }
         }
 
         private bool IsForceHotBackupRequested(string folderPath)
@@ -137,7 +164,7 @@ namespace MineRewind
             if (string.IsNullOrWhiteSpace(folderPath))
                 return false;
 
-            return _forceHotBackupFolders.ContainsKey(folderPath);
+            return _forceHotBackupFolders.TryGetValue(folderPath, out var current) && current > 0;
         }
 
         #endregion

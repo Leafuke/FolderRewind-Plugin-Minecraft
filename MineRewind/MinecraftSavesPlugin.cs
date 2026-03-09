@@ -70,8 +70,9 @@ namespace MineRewind
         // 宿主上下文（持久缓存，用于主动发起 KnotLink 操作）
         private PluginHostContext? _hostContext;
 
-        // 仅用于 BACKUP_CURRENT：强制在差异检测前执行一次热备份协同保存
-        private readonly ConcurrentDictionary<string, byte> _forceHotBackupFolders
+        // 用于 BACKUP_CURRENT/热键备份：在差异检测前强制执行一次热备协同保存
+        // 使用引用计数，避免并发触发时提前清除标记。
+        private readonly ConcurrentDictionary<string, int> _forceHotBackupFolders
             = new(StringComparer.OrdinalIgnoreCase);
 
         // --- 联动模组状态 ---
