@@ -64,12 +64,13 @@ namespace MineRewind
                 }
 
                 var (cfg, folder) = active.Value;
+                var (comment, forceFullBackup) = ParseBackupArgsAndForceFull(args, "QuickSave");
 
                 _ = Task.Run(async () =>
                 {
                     try
                     {
-                        await RunForcedHotBackupAsync(cfg, folder, string.IsNullOrWhiteSpace(args) ? "QuickSave" : args);
+                        await RunForcedHotBackupAsync(cfg, folder, comment, forceFullBackup);
                     }
                     catch (Exception ex)
                     {
@@ -216,19 +217,42 @@ namespace MineRewind
                 var (config, folder) = active.Value;
                 var backupFile = string.IsNullOrWhiteSpace(args) ? null : args.Trim();
 
-                // 设置强制保留标志，TriggerHotRestoreAsync 内部会在 finally 中清除
-                _forcePreserveNextRestore = true;
-
-                _ = Task.Run(() => TriggerHotRestoreAsync(config, folder, backupFile));
+                _ = Task.Run(() => TriggerHotRestoreAsync(config, folder, backupFile, forcePreservePlayerData: true));
                 var fileInfo = backupFile != null ? $" with backup '{backupFile}'" : " (latest)";
                 return $"OK:Hot restore with data preservation triggered for '{folder.DisplayName}'{fileInfo}";
             }
             catch (Exception ex)
             {
-                _forcePreserveNextRestore = false;
                 LogService.LogError($"RESTORE_CURRENT_WITH_DATA failed: {ex.Message}", "MineRewind", ex);
                 return $"ERROR:{ex.Message}";
             }
+        }
+
+        private static (string Comment, bool ForceFullBackup) ParseBackupArgsAndForceFull(string args, string defaultComment)
+        {
+            if (string.IsNullOrWhiteSpace(args))
+                return (defaultComment, false);
+
+            var parts = args.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+            bool forceFullBackup = false;
+            var commentParts = new List<string>(parts.Length);
+
+            foreach (var part in parts)
+            {
+                if (string.Equals(part, "FORCE_FULL", StringComparison.OrdinalIgnoreCase))
+                {
+                    forceFullBackup = true;
+                    continue;
+                }
+
+                commentParts.Add(part);
+            }
+
+            var comment = string.Join(' ', commentParts).Trim();
+            if (string.IsNullOrWhiteSpace(comment))
+                comment = defaultComment;
+
+            return (comment, forceFullBackup);
         }
 
         private Task<string?> HandleHandshakeResponseAsync(string args, PluginHostContext hostContext)

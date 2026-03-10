@@ -92,12 +92,12 @@ namespace MineRewind
 
         #region 私有方法 - 热备份
 
-        private async Task RunForcedHotBackupAsync(BackupConfig config, ManagedFolder folder, string comment)
+        private async Task RunForcedHotBackupAsync(BackupConfig config, ManagedFolder folder, string comment, bool forceFullBackup = false)
         {
             MarkForceHotBackup(folder.Path);
             try
             {
-                await BackupService.BackupFolderAsync(config, folder, comment);
+                await BackupService.BackupFolderAsync(config, folder, comment, forceFullBackup);
             }
             finally
             {

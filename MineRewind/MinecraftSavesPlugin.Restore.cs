@@ -117,7 +117,7 @@ namespace MineRewind
 
         #region 热还原主流程
 
-        private async Task TriggerHotRestoreAsync(BackupConfig config, ManagedFolder folder, string? specificBackupFile = null)
+        private async Task TriggerHotRestoreAsync(BackupConfig config, ManagedFolder folder, string? specificBackupFile = null, bool forcePreservePlayerData = false)
         {
             if (Interlocked.CompareExchange(ref _hotRestoreState, RestoreWaitingForMod, RestoreIdle) != RestoreIdle)
             {
@@ -126,6 +126,7 @@ namespace MineRewind
             }
 
             var worldName = folder.DisplayName ?? Path.GetFileName(folder.Path);
+            _forcePreserveNextRestore = forcePreservePlayerData;
 
             try
             {
