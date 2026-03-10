@@ -131,14 +131,14 @@ namespace MineRewind
             try
             {
                 var sessionLock = Path.Combine(worldPath, "session.lock");
-                if (File.Exists(sessionLock) && IsFileLocked(sessionLock)) return true;
+                if (File.Exists(sessionLock) && FileLockService.IsFileLocked(sessionLock)) return true;
 
                 var dbDir = Path.Combine(worldPath, "db");
                 if (Directory.Exists(dbDir))
                 {
                     foreach (var entry in Directory.EnumerateFiles(dbDir))
                     {
-                        if (IsFileLocked(entry)) return true;
+                        if (FileLockService.IsFileLocked(entry)) return true;
                     }
                 }
             }

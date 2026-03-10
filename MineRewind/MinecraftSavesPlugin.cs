@@ -35,9 +35,9 @@ namespace MineRewind
         private const string KnotLinkCommand_RestoreCurrent = "RESTORE_CURRENT";
         private const string KnotLinkCommand_RestoreCurrentWithData = "RESTORE_CURRENT_WITH_DATA";
 
-        // 伪装版本：联动模组只认 MineBackup 1.13.0+
-        private const string FakeVersion = "1.13.1";
-        private const string MinModVersion = "1.1.0";
+        // 伪装版本：联动模组只认 MineBackup 1.14.0+
+        private const string FakeVersion = "1.14.0";
+        private const string MinModVersion = "1.1.2";
 
         // 超时常量（参考 MineBackup C++ 实现）
         private const int HandshakeTimeoutMs = 3_000;
@@ -97,7 +97,7 @@ namespace MineRewind
         {
             Id = "com.folderrewind.minerewind",
             Name = "MineRewind",
-            Version = "1.5.0",
+            Version = "1.6.0",
             Author = "Leafuke",
             Description = "Enhanced Minecraft saves backup: lock-friendly backup, batch discovery under .minecraft",
             LocalizedName = new Dictionary<string, string>
@@ -112,7 +112,7 @@ namespace MineRewind
             },
             EntryAssembly = "MineRewind.dll",
             EntryType = "MineRewind.MinecraftSavesPlugin",
-            MinHostVersion = "1.4.2",
+            MinHostVersion = "1.5.0",
             Repository = "Leafuke/FolderRewind-Plugin-Minecraft"
         };
 

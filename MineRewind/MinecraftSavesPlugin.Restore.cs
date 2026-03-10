@@ -295,7 +295,7 @@ namespace MineRewind
             var sw = Stopwatch.StartNew();
             while (sw.ElapsedMilliseconds < timeoutMs)
             {
-                if (!IsFileLocked(filePath))
+                if (!FileLockService.IsFileLocked(filePath))
                     return true;
 
                 await Task.Delay(intervalMs);

@@ -27,7 +27,7 @@ namespace MineRewind
 
             bool forceHotBackup = IsForceHotBackupRequested(folder.Path);
 
-            bool isLocked = IsFileLocked(levelDatPath);
+            bool isLocked = FileLockService.IsFileLocked(levelDatPath);
 
             if (!isLocked && !forceHotBackup)
                 return null;
@@ -102,30 +102,6 @@ namespace MineRewind
             finally
             {
                 ClearForceHotBackup(folder.Path);
-            }
-        }
-
-        private static bool IsFileLocked(string filePath)
-        {
-            if (!File.Exists(filePath))
-                return false;
-
-            try
-            {
-                using var fs = new FileStream(filePath, FileMode.Open, FileAccess.ReadWrite, FileShare.Read);
-                return false;
-            }
-            catch (IOException)
-            {
-                return true;
-            }
-            catch (UnauthorizedAccessException)
-            {
-                return true;
-            }
-            catch
-            {
-                return false;
             }
         }
 
