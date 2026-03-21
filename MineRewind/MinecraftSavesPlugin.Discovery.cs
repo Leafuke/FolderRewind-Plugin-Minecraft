@@ -88,7 +88,7 @@ namespace MineRewind
             {
                 Handled = true,
                 CreatedConfigs = configs,
-                Message = I18n.Format("MineRewind_CreateConfigs_Result", configs.Count)
+                Message = LocalizeFormat("MineRewind_CreateConfigs_Result", configs.Count)
             };
         }
 

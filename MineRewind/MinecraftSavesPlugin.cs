@@ -127,8 +127,8 @@ namespace MineRewind
                 new()
                 {
                     Key = HotBackupSettingKey,
-                    DisplayName = I18n.GetString("MineRewind_Setting_EnableHotBackup_Name"),
-                    Description = I18n.GetString("MineRewind_Setting_EnableHotBackup_Desc"),
+                    DisplayName = Localize("MineRewind_Setting_EnableHotBackup_Name"),
+                    Description = Localize("MineRewind_Setting_EnableHotBackup_Desc"),
                     Type = PluginSettingType.Boolean,
                     DefaultValue = "true",
                     IsRequired = false
@@ -136,8 +136,8 @@ namespace MineRewind
                 new()
                 {
                     Key = PreservePlayerDataSettingKey,
-                    DisplayName = I18n.GetString("MineRewind_Setting_PreservePlayerData_Name"),
-                    Description = I18n.GetString("MineRewind_Setting_PreservePlayerData_Desc"),
+                    DisplayName = Localize("MineRewind_Setting_PreservePlayerData_Name"),
+                    Description = Localize("MineRewind_Setting_PreservePlayerData_Desc"),
                     Type = PluginSettingType.Boolean,
                     DefaultValue = "false",
                     IsRequired = false

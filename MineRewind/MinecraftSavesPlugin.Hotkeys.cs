@@ -17,16 +17,16 @@ namespace MineRewind
                 new()
                 {
                     Id = Hotkey_ActiveWorldHotBackup,
-                    DisplayName = I18n.GetString("MineRewind_Hotkey_ActiveWorldBackup_Name"),
-                    Description = I18n.GetString("MineRewind_Hotkey_ActiveWorldBackup_Desc"),
+                    DisplayName = Localize("MineRewind_Hotkey_ActiveWorldBackup_Name"),
+                    Description = Localize("MineRewind_Hotkey_ActiveWorldBackup_Desc"),
                     DefaultGesture = "Alt+Ctrl+S",
                     IsGlobalHotkey = true
                 },
                 new()
                 {
                     Id = Hotkey_QuickRestore,
-                    DisplayName = I18n.GetString("MineRewind_Hotkey_QuickRestore_Name"),
-                    Description = I18n.GetString("MineRewind_Hotkey_QuickRestore_Desc"),
+                    DisplayName = Localize("MineRewind_Hotkey_QuickRestore_Name"),
+                    Description = Localize("MineRewind_Hotkey_QuickRestore_Desc"),
                     DefaultGesture = "Alt+Ctrl+Z",
                     IsGlobalHotkey = true
                 }
@@ -54,7 +54,7 @@ namespace MineRewind
                 var active = TryFindOccupiedWorld();
                 if (active == null)
                 {
-                    LogService.LogInfo(I18n.GetString("MineRewind_Hotkey_NoActiveWorld"), "MineRewind");
+                    LogService.LogInfo(Localize("MineRewind_Hotkey_NoActiveWorld"), "MineRewind");
                     try { hostContext?.BroadcastEvent("event=hotkey_backup_no_active_world;plugin=minerewind"); } catch { }
                     return;
                 }
@@ -66,7 +66,7 @@ namespace MineRewind
             }
             catch (Exception ex)
             {
-                LogService.LogError(I18n.Format("MineRewind_Hotkey_Failed", ex.Message), "MineRewind", ex);
+                LogService.LogError(LocalizeFormat("MineRewind_Hotkey_Failed", ex.Message), "MineRewind", ex);
             }
         }
 
@@ -79,7 +79,7 @@ namespace MineRewind
                 var active = TryFindOccupiedWorld();
                 if (active == null)
                 {
-                    LogService.LogInfo(I18n.GetString("MineRewind_Hotkey_QuickRestore_NoActive"), "MineRewind");
+                    LogService.LogInfo(Localize("MineRewind_Hotkey_QuickRestore_NoActive"), "MineRewind");
                     try { hostContext?.BroadcastEvent("event=hotkey_restore_no_active_world;plugin=minerewind"); } catch { }
                     return;
                 }
@@ -89,7 +89,7 @@ namespace MineRewind
             }
             catch (Exception ex)
             {
-                LogService.LogError(I18n.Format("MineRewind_Hotkey_QuickRestore_Failed", ex.Message), "MineRewind", ex);
+                LogService.LogError(LocalizeFormat("MineRewind_Hotkey_QuickRestore_Failed", ex.Message), "MineRewind", ex);
             }
         }
 
