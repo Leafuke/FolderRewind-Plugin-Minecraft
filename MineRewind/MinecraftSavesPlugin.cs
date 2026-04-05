@@ -24,7 +24,7 @@ namespace MineRewind
         private const string ConfigTypeName = "Minecraft Saves";
         private const string HotBackupSettingKey = "EnableHotBackup";
         private const string PreservePlayerDataSettingKey = "PreservePlayerData";
-        private static readonly string[] RequiredFilterEntries = { "session.lock", "voxy" };
+        private static readonly string[] RequiredFilterEntries = { "session.lock", "voxy", "DistantHorizons.sqlite", "DistantHorizons.sqlite-shm", "DistantHorizons.sqlite-wal" };
 
         private const string Hotkey_ActiveWorldHotBackup = "hotbackup.active_world";
         private const string Hotkey_QuickRestore = "hotrestore.active_world";
@@ -37,7 +37,7 @@ namespace MineRewind
 
         // 伪装版本：联动模组只认 MineBackup 1.14.0+
         private const string FakeVersion = "1.14.0";
-        private const string MinModVersion = "1.1.2";
+        private const string MinModVersion = "2.0.0";
 
         // 超时常量（参考 MineBackup C++ 实现）
         private const int HandshakeTimeoutMs = 3_000;
@@ -97,7 +97,7 @@ namespace MineRewind
         {
             Id = "com.folderrewind.minerewind",
             Name = "MineRewind",
-            Version = "1.6.0",
+            Version = "1.6.2",
             Author = "Leafuke",
             Description = "Enhanced Minecraft saves backup: lock-friendly backup, batch discovery under .minecraft",
             LocalizedName = new Dictionary<string, string>
