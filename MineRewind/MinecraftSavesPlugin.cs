@@ -36,7 +36,7 @@ namespace MineRewind
         private const string KnotLinkCommand_RestoreCurrentWithData = "RESTORE_CURRENT_WITH_DATA";
 
         // 伪装版本：联动模组只认 MineBackup 1.14.0+
-        private const string FakeVersion = "1.14.0";
+        private const string FakeVersion = "1.14.1";
         private const string MinModVersion = "2.0.0";
 
         // 超时常量（参考 MineBackup C++ 实现）
@@ -97,7 +97,7 @@ namespace MineRewind
         {
             Id = "com.folderrewind.minerewind",
             Name = "MineRewind",
-            Version = "1.6.2",
+            Version = "1.6.3",
             Author = "Leafuke",
             Description = "Enhanced Minecraft saves backup: lock-friendly backup, batch discovery under .minecraft",
             LocalizedName = new Dictionary<string, string>
@@ -112,7 +112,7 @@ namespace MineRewind
             },
             EntryAssembly = "MineRewind.dll",
             EntryType = "MineRewind.MinecraftSavesPlugin",
-            MinHostVersion = "1.5.0",
+            MinHostVersion = "1.6.0",
             Repository = "Leafuke/FolderRewind-Plugin-Minecraft"
         };
 
@@ -215,6 +215,12 @@ namespace MineRewind
             }
 
             return changed;
+        }
+
+        private static string FormatModInteropValue(string? value)
+        {
+            // MineBackup 联动协议使用原始 UTF-8 文本；对 world 做 URL 编码会导致模组无法匹配当前世界。
+            return value ?? string.Empty;
         }
 
         #endregion

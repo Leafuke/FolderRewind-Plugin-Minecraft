@@ -54,7 +54,7 @@ namespace MineRewind
                     _worldSaveTcs = pendingWorldSave;
 
                     KnotLinkService.BroadcastEvent(
-                        $"event=pre_hot_backup;config={config.Id};world={Uri.EscapeDataString(worldName)}");
+                        $"event=pre_hot_backup;config={config.Id};world={FormatModInteropValue(worldName)}");
 
                     var saved = pendingWorldSave.Task.Wait(WorldSaveTimeoutMs);
                     if (saved && pendingWorldSave.Task.Result)
