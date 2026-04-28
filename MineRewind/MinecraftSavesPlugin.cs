@@ -17,7 +17,7 @@ namespace MineRewind
     /// 4. 配置类型 - 定义 "Minecraft Saves" 类型
     /// 5. KnotLink 互联 - 与 MineBackup 联动模组握手、协调备份/还原
     /// </summary>
-    public partial class MinecraftSavesPlugin : IFolderRewindPlugin, IFolderRewindHotkeyProvider, IFolderRewindKnotLinkCommandHandler
+    public partial class MinecraftSavesPlugin : IFolderRewindPlugin, IFolderRewindHotkeyProvider, IFolderRewindKnotLinkCommandHandler, IFolderRewindParameterizedKnotLinkCommandHandler
     {
         #region 常量
 

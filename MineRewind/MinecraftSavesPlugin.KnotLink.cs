@@ -1,5 +1,6 @@
 using FolderRewind.Models;
 using FolderRewind.Services;
+using FolderRewind.Services.KnotLink;
 using FolderRewind.Services.Plugins;
 using System.Diagnostics;
 using System.Threading;
@@ -50,6 +51,68 @@ namespace MineRewind
                 "REJOIN_RESULT" => HandleRejoinResultAsync(args, hostContext),
                 _ => Task.FromResult<string?>(null)
             };
+        }
+
+        public Task<PluginParameterizedKnotLinkCommandResult?> TryHandleParameterizedKnotLinkCommandAsync(
+            KnotLinkCommandRequest request,
+            IReadOnlyDictionary<string, string> settingsValues,
+            PluginHostContext hostContext)
+        {
+            Initialize(settingsValues);
+
+            // MineRewind 的新版参数只在显式声明 current_save 时接管，避免影响宿主内置 BACKUP/RESTORE。
+            if (!request.GetBoolOrDefault("current_save"))
+            {
+                return Task.FromResult<PluginParameterizedKnotLinkCommandResult?>(null);
+            }
+
+            return request.Command switch
+            {
+                "BACKUP" => WrapParameterizedResponseAsync(
+                    HandleBackupCurrentAsync(BuildBackupCurrentArgs(request), settingsValues, hostContext)),
+                "LIST_BACKUPS" => WrapParameterizedResponseAsync(
+                    HandleListBackupsCurrentAsync(hostContext)),
+                "RESTORE" => WrapParameterizedResponseAsync(
+                    request.GetBoolOrDefault("preserve_player_data")
+                        ? HandleRestoreCurrentWithDataAsync(BuildRestoreCurrentArgs(request), settingsValues, hostContext)
+                        : HandleRestoreCurrentAsync(BuildRestoreCurrentArgs(request), settingsValues, hostContext)),
+                _ => Task.FromResult<PluginParameterizedKnotLinkCommandResult?>(null)
+            };
+        }
+
+        private static async Task<PluginParameterizedKnotLinkCommandResult?> WrapParameterizedResponseAsync(Task<string?> handlerTask)
+        {
+            var response = await handlerTask.ConfigureAwait(false);
+            return new PluginParameterizedKnotLinkCommandResult
+            {
+                Handled = true,
+                Response = string.IsNullOrWhiteSpace(response) ? "OK:" : response
+            };
+        }
+
+        private static string BuildBackupCurrentArgs(KnotLinkCommandRequest request)
+        {
+            var args = new List<string>();
+            var comment = request.GetString("comment");
+            if (!string.IsNullOrWhiteSpace(comment))
+            {
+                args.Add(comment);
+            }
+
+            if (request.GetBoolOrDefault("force_full"))
+            {
+                args.Add("FORCE_FULL");
+            }
+
+            return string.Join(' ', args);
+        }
+
+        private static string BuildRestoreCurrentArgs(KnotLinkCommandRequest request)
+        {
+            return request.GetString("file")
+                ?? request.GetString("backup_file")
+                ?? request.GetString("archive")
+                ?? string.Empty;
         }
 
         private Task<string?> HandleBackupCurrentAsync(string args, IReadOnlyDictionary<string, string> settingsValues, PluginHostContext hostContext)
