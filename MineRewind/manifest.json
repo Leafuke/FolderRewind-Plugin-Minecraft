@@ -14,7 +14,7 @@
   },
   "EntryAssembly": "MineRewind.dll",
   "EntryType": "MineRewind.MinecraftSavesPlugin",
-  "MinHostVersion": "1.6.0",
+  "MinHostVersion": "1.7.0",
   "Homepage": "https://github.com/Leafuke/FolderRewind-Plugin-Minecraft",
   "Repository": "Leafuke/FolderRewind-Plugin-Minecraft"
 }

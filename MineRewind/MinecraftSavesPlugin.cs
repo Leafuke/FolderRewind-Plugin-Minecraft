@@ -112,7 +112,7 @@ namespace MineRewind
             },
             EntryAssembly = "MineRewind.dll",
             EntryType = "MineRewind.MinecraftSavesPlugin",
-            MinHostVersion = "1.6.0",
+            MinHostVersion = "1.7.0",
             Repository = "Leafuke/FolderRewind-Plugin-Minecraft"
         };
 
