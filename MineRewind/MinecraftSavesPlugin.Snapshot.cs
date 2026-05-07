@@ -20,6 +20,7 @@ namespace MineRewind
                 return null;
 
             var levelDatPath = Path.Combine(folder.Path, "level.dat");
+            var sessionLockPath = Path.Combine(folder.Path, "session.lock");
             bool isMinecraftSave = File.Exists(levelDatPath);
 
             if (!isMinecraftSave)
@@ -27,7 +28,7 @@ namespace MineRewind
 
             bool forceHotBackup = IsForceHotBackupRequested(folder.Path);
 
-            bool isLocked = FileLockService.IsFileLocked(levelDatPath);
+            bool isLocked = FileLockService.IsFileLocked(levelDatPath) || FileLockService.IsFileLocked(sessionLockPath);
 
             if (!isLocked && !forceHotBackup)
                 return null;
