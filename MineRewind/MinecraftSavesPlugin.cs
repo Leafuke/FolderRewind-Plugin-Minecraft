@@ -17,7 +17,7 @@ namespace MineRewind
     /// 4. 配置类型 - 定义 "Minecraft Saves" 类型
     /// 5. KnotLink 互联 - 与 MineBackup 联动模组握手、协调备份/还原
     /// </summary>
-    public partial class MinecraftSavesPlugin : IFolderRewindPlugin, IFolderRewindHotkeyProvider, IFolderRewindKnotLinkCommandHandler, IFolderRewindParameterizedKnotLinkCommandHandler
+    public partial class MinecraftSavesPlugin : IFolderRewindPlugin, IFolderRewindHotkeyProvider, IFolderRewindKnotLinkCommandHandler, IFolderRewindParameterizedKnotLinkCommandHandler, IFolderRewindBackupScopeProvider
     {
         #region 常量
 
@@ -36,8 +36,8 @@ namespace MineRewind
         private const string KnotLinkCommand_RestoreCurrentWithData = "RESTORE_CURRENT_WITH_DATA";
 
         // 伪装版本：联动模组只认 MineBackup 1.14.0+
-        private const string FakeVersion = "1.14.1";
-        private const string MinModVersion = "2.0.0";
+        private const string FakeVersion = "1.15.0";
+        private const string MinModVersion = "2.1.1";
 
         // 超时常量（参考 MineBackup C++ 实现）
         private const int HandshakeTimeoutMs = 3_000;
@@ -97,7 +97,7 @@ namespace MineRewind
         {
             Id = "com.folderrewind.minerewind",
             Name = "MineRewind",
-            Version = "1.6.3",
+            Version = "1.7.0",
             Author = "Leafuke",
             Description = "Enhanced Minecraft saves backup: lock-friendly backup, batch discovery under .minecraft",
             LocalizedName = new Dictionary<string, string>
@@ -112,7 +112,7 @@ namespace MineRewind
             },
             EntryAssembly = "MineRewind.dll",
             EntryType = "MineRewind.MinecraftSavesPlugin",
-            MinHostVersion = "1.7.0",
+            MinHostVersion = "1.7.3",
             Repository = "Leafuke/FolderRewind-Plugin-Minecraft"
         };
 

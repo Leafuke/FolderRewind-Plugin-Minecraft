@@ -5,7 +5,7 @@
     "en-US": "MineRewind",
     "zh-CN": "MineRewind"
   },
-  "Version": "1.6.3",
+  "Version": "1.7.0",
   "Author": "Leafuke",
   "Description": "Enhanced Minecraft saves backup: hot snapshot backup, batch discovery under .minecraft",
   "LocalizedDescription": {
@@ -14,7 +14,7 @@
   },
   "EntryAssembly": "MineRewind.dll",
   "EntryType": "MineRewind.MinecraftSavesPlugin",
-  "MinHostVersion": "1.7.0",
+  "MinHostVersion": "1.7.3",
   "Homepage": "https://github.com/Leafuke/FolderRewind-Plugin-Minecraft",
   "Repository": "Leafuke/FolderRewind-Plugin-Minecraft"
 }

@@ -12,7 +12,7 @@
       <ExcludeAssets>runtime</ExcludeAssets>
     </ProjectReference>
   </ItemGroup>
-  <ItemGroup>
+  <ItemGroup>。
     <PackageReference Include="fNbt" Version="1.0.0" />
   </ItemGroup>
 </Project>
