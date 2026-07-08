@@ -235,7 +235,7 @@ namespace MineRewind
             CancellationToken cancellationToken)
         {
             cancellationToken.ThrowIfCancellationRequested();
-
+            
             if (folder == null || string.IsNullOrWhiteSpace(folder.Path))
             {
                 return Task.FromResult<IReadOnlyList<FolderDetailsSection>>(Array.Empty<FolderDetailsSection>());
@@ -244,8 +244,11 @@ namespace MineRewind
             var details = NbtHelper.TryGetWorldDetails(folder.Path);
             if (details == null)
             {
+                LogService.LogInfo($"[MineRewind] TryGetWorldDetails returned null for '{folder.Path}'. No level.dat or parse failed.", "MineRewind");
                 return Task.FromResult<IReadOnlyList<FolderDetailsSection>>(Array.Empty<FolderDetailsSection>());
             }
+
+            LogService.LogInfo($"[MineRewind] Successfully read world details: LevelName='{details.LevelName}', GameMode='{details.GameMode}', Seed='{details.Seed}'", "MineRewind");
 
             var section = new FolderDetailsSection
             {
@@ -258,7 +261,9 @@ namespace MineRewind
                     new FolderDetailsItem { Label = Localize("MineRewind_Details_WorldDays"), Value = FormatWorldDays(details.TotalTime) },
                     new FolderDetailsItem { Label = Localize("MineRewind_Details_TotalTime"), Value = FormatWorldTicks(details.TotalTime) },
                     new FolderDetailsItem { Label = Localize("MineRewind_Details_LastPlayed"), Value = FormatLastPlayed(details.LastPlayed) },
-                    new FolderDetailsItem { Label = Localize("MineRewind_Details_PlayerData"), Value = details.HasPlayerData ? Localize("MineRewind_Details_Yes") : Localize("MineRewind_Details_No") }
+                    new FolderDetailsItem { Label = Localize("MineRewind_Details_PlayerData"), Value = details.HasPlayerData ? Localize("MineRewind_Details_Yes") : Localize("MineRewind_Details_No") },
+                    new FolderDetailsItem { Label = Localize("MineRewind_Details_DataVersion"), Value = details.DataVersion?.ToString(CultureInfo.InvariantCulture) ?? string.Empty },
+                    new FolderDetailsItem { Label = Localize("MineRewind_Details_Format"), Value = details.IsNewFormat ? Localize("MineRewind_Details_Format_New") : Localize("MineRewind_Details_Format_Legacy") }
                 }
             };
 

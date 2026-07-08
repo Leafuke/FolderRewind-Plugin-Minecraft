@@ -219,10 +219,7 @@ namespace MineRewind
 
         private static Dictionary<MinecraftDimension, string> ResolveDimensionRoots(string saveRoot)
         {
-            bool usesNewFormat =
-                Directory.Exists(Path.Combine(saveRoot, "dimensions", "minecraft", "overworld"))
-                || Directory.Exists(Path.Combine(saveRoot, "dimensions", "minecraft", "the_nether"))
-                || Directory.Exists(Path.Combine(saveRoot, "dimensions", "minecraft", "the_end"));
+            bool usesNewFormat = NbtHelper.IsPost26_1Format(saveRoot);
 
             if (usesNewFormat)
             {

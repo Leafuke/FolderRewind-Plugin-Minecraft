@@ -38,6 +38,10 @@ namespace MineRewind
             ["MineRewind_Details_PlayerData"] = "Player data",
             ["MineRewind_Details_Yes"] = "Yes",
             ["MineRewind_Details_No"] = "No",
+            ["MineRewind_Details_DataVersion"] = "Data version",
+            ["MineRewind_Details_Format"] = "Format",
+            ["MineRewind_Details_Format_New"] = "Minecraft 26.1+",
+            ["MineRewind_Details_Format_Legacy"] = "Legacy (< 26.1)",
         };
 
         private static readonly IReadOnlyDictionary<string, string> ZhCnTexts = new Dictionary<string, string>(StringComparer.Ordinal)
@@ -74,6 +78,10 @@ namespace MineRewind
             ["MineRewind_Details_PlayerData"] = "玩家数据",
             ["MineRewind_Details_Yes"] = "是",
             ["MineRewind_Details_No"] = "否",
+            ["MineRewind_Details_DataVersion"] = "数据版本",
+            ["MineRewind_Details_Format"] = "存档格式",
+            ["MineRewind_Details_Format_New"] = "Minecraft 26.1+",
+            ["MineRewind_Details_Format_Legacy"] = "旧版 (< 26.1)",
         };
 
         private static string Localize(string key)
