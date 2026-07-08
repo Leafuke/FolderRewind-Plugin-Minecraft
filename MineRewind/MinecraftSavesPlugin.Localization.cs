@@ -28,6 +28,16 @@ namespace MineRewind
             ["MineRewind_Hotkey_QuickRestore_NoActive"] = "[MineRewind] Quick restore: no active save detected",
             ["MineRewind_Hotkey_QuickRestore_Failed"] = "[MineRewind] Quick restore hotkey failed: {0}",
             ["MineRewind_KnotLink_BackupCurrent_Failed"] = "[MineRewind] KnotLink BACKUP_CURRENT failed: {0}",
+            ["MineRewind_Details_SectionTitle"] = "Minecraft world info",
+            ["MineRewind_Details_WorldName"] = "World name",
+            ["MineRewind_Details_GameMode"] = "Game mode",
+            ["MineRewind_Details_Seed"] = "Seed",
+            ["MineRewind_Details_WorldDays"] = "World days",
+            ["MineRewind_Details_TotalTime"] = "World total time",
+            ["MineRewind_Details_LastPlayed"] = "Last played",
+            ["MineRewind_Details_PlayerData"] = "Player data",
+            ["MineRewind_Details_Yes"] = "Yes",
+            ["MineRewind_Details_No"] = "No",
         };
 
         private static readonly IReadOnlyDictionary<string, string> ZhCnTexts = new Dictionary<string, string>(StringComparer.Ordinal)
@@ -54,6 +64,16 @@ namespace MineRewind
             ["MineRewind_Hotkey_QuickRestore_NoActive"] = "[MineRewind] 快速还原：未检测到活跃存档",
             ["MineRewind_Hotkey_QuickRestore_Failed"] = "[MineRewind] 快速还原热键失败：{0}",
             ["MineRewind_KnotLink_BackupCurrent_Failed"] = "[MineRewind] KnotLink BACKUP_CURRENT 失败：{0}",
+            ["MineRewind_Details_SectionTitle"] = "Minecraft 世界信息",
+            ["MineRewind_Details_WorldName"] = "世界名称",
+            ["MineRewind_Details_GameMode"] = "游戏模式",
+            ["MineRewind_Details_Seed"] = "种子",
+            ["MineRewind_Details_WorldDays"] = "世界天数",
+            ["MineRewind_Details_TotalTime"] = "世界总时间",
+            ["MineRewind_Details_LastPlayed"] = "最近游玩",
+            ["MineRewind_Details_PlayerData"] = "玩家数据",
+            ["MineRewind_Details_Yes"] = "是",
+            ["MineRewind_Details_No"] = "否",
         };
 
         private static string Localize(string key)

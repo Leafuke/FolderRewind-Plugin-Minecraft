@@ -3,6 +3,7 @@ using FolderRewind.Services;
 using FolderRewind.Services.Plugins;
 using System.Collections.Concurrent;
 using System.Collections.ObjectModel;
+using System.Globalization;
 using System.Linq;
 using System.Threading;
 
@@ -17,7 +18,7 @@ namespace MineRewind
     /// 4. 配置类型 - 定义 "Minecraft Saves" 类型
     /// 5. KnotLink 互联 - 与 MineBackup 联动模组握手、协调备份/还原
     /// </summary>
-    public partial class MinecraftSavesPlugin : IFolderRewindPlugin, IFolderRewindHotkeyProvider, IFolderRewindKnotLinkCommandHandler, IFolderRewindParameterizedKnotLinkCommandHandler, IFolderRewindBackupScopeProvider
+    public partial class MinecraftSavesPlugin : IFolderRewindPlugin, IFolderRewindHotkeyProvider, IFolderRewindKnotLinkCommandHandler, IFolderRewindParameterizedKnotLinkCommandHandler, IFolderRewindBackupScopeProvider, IFolderRewindFolderDetailsProvider
     {
         #region 常量
 
@@ -221,6 +222,95 @@ namespace MineRewind
         {
             // MineBackup 联动协议使用原始 UTF-8 文本；对 world 做 URL 编码会导致模组无法匹配当前世界。
             return value ?? string.Empty;
+        }
+
+        #endregion
+
+        #region Folder details
+
+        public Task<IReadOnlyList<FolderDetailsSection>> GetFolderDetailsSectionsAsync(
+            BackupConfig config,
+            ManagedFolder folder,
+            IReadOnlyDictionary<string, string> settingsValues,
+            CancellationToken cancellationToken)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+
+            if (folder == null || string.IsNullOrWhiteSpace(folder.Path))
+            {
+                return Task.FromResult<IReadOnlyList<FolderDetailsSection>>(Array.Empty<FolderDetailsSection>());
+            }
+
+            var details = NbtHelper.TryGetWorldDetails(folder.Path);
+            if (details == null)
+            {
+                return Task.FromResult<IReadOnlyList<FolderDetailsSection>>(Array.Empty<FolderDetailsSection>());
+            }
+
+            var section = new FolderDetailsSection
+            {
+                Title = Localize("MineRewind_Details_SectionTitle"),
+                Items =
+                {
+                    new FolderDetailsItem { Label = Localize("MineRewind_Details_WorldName"), Value = details.LevelName },
+                    new FolderDetailsItem { Label = Localize("MineRewind_Details_GameMode"), Value = details.GameMode },
+                    new FolderDetailsItem { Label = Localize("MineRewind_Details_Seed"), Value = details.Seed },
+                    new FolderDetailsItem { Label = Localize("MineRewind_Details_WorldDays"), Value = FormatWorldDays(details.TotalTime) },
+                    new FolderDetailsItem { Label = Localize("MineRewind_Details_TotalTime"), Value = FormatWorldTicks(details.TotalTime) },
+                    new FolderDetailsItem { Label = Localize("MineRewind_Details_LastPlayed"), Value = FormatLastPlayed(details.LastPlayed) },
+                    new FolderDetailsItem { Label = Localize("MineRewind_Details_PlayerData"), Value = details.HasPlayerData ? Localize("MineRewind_Details_Yes") : Localize("MineRewind_Details_No") }
+                }
+            };
+
+            return Task.FromResult<IReadOnlyList<FolderDetailsSection>>([section]);
+        }
+
+        private static string FormatWorldTicks(long? totalTime)
+        {
+            if (totalTime is not long ticks)
+            {
+                return string.Empty;
+            }
+
+            try
+            {
+                // 20 ticks ≈ 1 秒，基于世界时间换算，非精确人类游玩时长
+                return TimeSpan.FromSeconds(ticks / 20.0).ToString(@"d\.hh\:mm\:ss", CultureInfo.InvariantCulture);
+            }
+            catch
+            {
+                return string.Empty;
+            }
+        }
+
+        private static string FormatWorldDays(long? totalTime)
+        {
+            if (totalTime is not long ticks)
+            {
+                return string.Empty;
+            }
+
+            // Minecraft 每 24000 ticks 为一个游戏日天
+            double days = ticks / 24000.0;
+            return days.ToString("F1", CultureInfo.InvariantCulture);
+        }
+
+        private static string FormatLastPlayed(long? lastPlayed)
+        {
+            if (lastPlayed is not long unixEpochMs)
+            {
+                return string.Empty;
+            }
+
+            try
+            {
+                var dt = DateTimeOffset.FromUnixTimeMilliseconds(unixEpochMs).ToLocalTime();
+                return dt.ToString("yyyy-MM-dd HH:mm:ss", CultureInfo.InvariantCulture);
+            }
+            catch
+            {
+                return string.Empty;
+            }
         }
 
         #endregion

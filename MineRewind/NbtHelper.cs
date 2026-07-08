@@ -1,5 +1,6 @@
 using fNbt;
 using FolderRewind.Services;
+using System.Globalization;
 
 namespace MineRewind
 {
@@ -79,6 +80,27 @@ namespace MineRewind
             public bool HasData =>
                 Pos != null || Inventory != null || EnderItems != null ||
                 XpLevel != null || Health != null || FoodLevel != null;
+        }
+
+        /// <summary>
+        /// Minecraft 世界基础详情，用于“文件夹详情”对话框展示。
+        /// 这里只返回数据，不做 UI 本地化。
+        /// </summary>
+        public sealed class MinecraftWorldDetails
+        {
+            public string LevelName { get; init; } = string.Empty;
+
+            public string GameMode { get; init; } = string.Empty;
+
+            public string Seed { get; init; } = string.Empty;
+
+            public long? TotalTime { get; init; }
+
+            public long? DayTime { get; init; }
+
+            public long? LastPlayed { get; init; }
+
+            public bool HasPlayerData { get; init; }
         }
 
         /// <summary>
@@ -235,13 +257,16 @@ namespace MineRewind
         }
 
         /// <summary>
-        /// 读取 level.dat 并返回存档的基本信息（用于 UI 展示/预览）。
+        /// 读取 level.dat 并返回 Minecraft 世界详情（用于详情对话框展示）。
+        /// 失败时返回 null，由调用方决定如何降级。
         /// </summary>
-        public static (string? LevelName, string? GameMode, long? DayTime, long? LastPlayed)? GetWorldInfo(string worldPath)
+        public static MinecraftWorldDetails? TryGetWorldDetails(string worldPath)
         {
             var levelDatPath = Path.Combine(worldPath, "level.dat");
             if (!File.Exists(levelDatPath))
+            {
                 return null;
+            }
 
             try
             {
@@ -249,30 +274,61 @@ namespace MineRewind
                 nbtFile.LoadFromFile(levelDatPath);
 
                 var data = nbtFile.RootTag["Data"] as NbtCompound;
-                if (data == null) return null;
-
-                var levelName = (data["LevelName"] as NbtString)?.Value;
-
-                int? gameType = (data["GameType"] as NbtInt)?.Value;
-                string? gameMode = gameType switch
+                if (data == null)
                 {
-                    0 => "Survival",
-                    1 => "Creative",
-                    2 => "Adventure",
-                    3 => "Spectator",
-                    _ => null
+                    return null;
+                }
+
+                long? directSeed = (data["RandomSeed"] as NbtLong)?.Value;
+                long? nestedSeed = ((data["WorldGenSettings"] as NbtCompound)?["seed"] as NbtLong)?.Value;
+                int? gameType = (data["GameType"] as NbtInt)?.Value;
+
+                return new MinecraftWorldDetails
+                {
+                    LevelName = (data["LevelName"] as NbtString)?.Value ?? string.Empty,
+                    GameMode = ResolveGameMode(gameType),
+                    Seed = (directSeed ?? nestedSeed)?.ToString(CultureInfo.InvariantCulture) ?? string.Empty,
+                    TotalTime = (data["Time"] as NbtLong)?.Value,
+                    DayTime = (data["DayTime"] as NbtLong)?.Value,
+                    LastPlayed = (data["LastPlayed"] as NbtLong)?.Value,
+                    HasPlayerData = data["Player"] is NbtCompound
                 };
-
-                long? dayTime = (data["DayTime"] as NbtLong)?.Value;
-                long? lastPlayed = (data["LastPlayed"] as NbtLong)?.Value;
-
-                return (levelName, gameMode, dayTime, lastPlayed);
             }
             catch (Exception ex)
             {
-                LogService.LogWarning($"[NbtHelper] Failed to read world info: {ex.Message}", "MineRewind");
+                LogService.LogWarning($"[NbtHelper] Failed to read world details: {ex.Message}", "MineRewind");
                 return null;
             }
+        }
+
+        /// <summary>
+        /// 兼容旧调用方的基础信息读取接口。
+        /// </summary>
+        public static (string? LevelName, string? GameMode, long? DayTime, long? LastPlayed)? GetWorldInfo(string worldPath)
+        {
+            var details = TryGetWorldDetails(worldPath);
+            if (details == null)
+            {
+                return null;
+            }
+
+            return (
+                string.IsNullOrWhiteSpace(details.LevelName) ? null : details.LevelName,
+                string.IsNullOrWhiteSpace(details.GameMode) ? null : details.GameMode,
+                details.DayTime,
+                details.LastPlayed);
+        }
+
+        private static string ResolveGameMode(int? gameType)
+        {
+            return gameType switch
+            {
+                0 => "Survival",
+                1 => "Creative",
+                2 => "Adventure",
+                3 => "Spectator",
+                _ => string.Empty
+            };
         }
 
         #region 私有辅助方法
