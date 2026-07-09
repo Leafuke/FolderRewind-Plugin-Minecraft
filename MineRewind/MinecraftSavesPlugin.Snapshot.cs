@@ -11,6 +11,15 @@ namespace MineRewind
 
         public string? OnBeforeBackupFolder(BackupConfig config, ManagedFolder folder, IReadOnlyDictionary<string, string> settingsValues)
         {
+            return OnBeforeBackupFolder(config, folder, BackupInvocationOptions.Default, settingsValues);
+        }
+
+        public string? OnBeforeBackupFolder(
+            BackupConfig config,
+            ManagedFolder folder,
+            BackupInvocationOptions invocationOptions,
+            IReadOnlyDictionary<string, string> settingsValues)
+        {
             Initialize(settingsValues);
 
             if (!CanHandleConfigType(config.ConfigType))
@@ -27,11 +36,20 @@ namespace MineRewind
 
             bool isLocked = FileLockService.IsFileLocked(levelDatPath) || FileLockService.IsFileLocked(sessionLockPath);
 
-            if (!isLocked && !forceHotBackup)
+            bool preferConsistentSnapshot = invocationOptions?.PreferApplicationConsistentSnapshot == true;
+            bool shouldCoordinate = forceHotBackup || isLocked || preferConsistentSnapshot;
+
+            if (!shouldCoordinate)
                 return null;
 
             if (!KnotLinkService.IsEnabled || !KnotLinkService.IsInitialized)
+            {
+                LogHotBackupFallback(
+                    folder,
+                    invocationOptions,
+                    "KnotLink is disabled or not initialized");
                 return null;
+            }
 
             try
             {
@@ -41,9 +59,9 @@ namespace MineRewind
 
                 if (handshakeOk && _modDetected && _versionCompatible)
                 {
-                    if (forceHotBackup && !isLocked)
+                    if ((forceHotBackup || preferConsistentSnapshot) && !isLocked)
                     {
-                        LogService.LogInfo($"Force hot-backup coordination for '{worldName}' before diff check.", "MineRewind");
+                        LogService.LogInfo($"Hot-backup coordination requested for '{worldName}' before diff check. source={invocationOptions?.Source}", "MineRewind");
                     }
 
                     Thread.Sleep(PostHandshakeDelayMs);
@@ -71,12 +89,18 @@ namespace MineRewind
                 }
                 else
                 {
-                    LogService.LogInfo("No compatible mod detected, proceeding with direct backup", "MineRewind");
+                    LogHotBackupFallback(
+                        folder,
+                        invocationOptions,
+                        "No compatible mod detected");
                 }
             }
             catch (Exception ex)
             {
-                LogService.LogWarning($"Mod coordination failed: {ex.Message}, proceeding with direct backup", "MineRewind");
+                LogHotBackupFallback(
+                    folder,
+                    invocationOptions,
+                    $"Mod coordination failed: {ex.Message}");
             }
 
             return null;
@@ -90,12 +114,33 @@ namespace MineRewind
 
         #region 私有方法 - 热备份
 
-        private async Task RunForcedHotBackupAsync(BackupConfig config, ManagedFolder folder, string comment, bool forceFullBackup = false)
+        private static void LogHotBackupFallback(
+            ManagedFolder folder,
+            BackupInvocationOptions? invocationOptions,
+            string reason)
+        {
+            var worldName = folder?.DisplayName ?? Path.GetFileName(folder?.Path ?? string.Empty);
+            LogService.LogWarning(
+                $"Hot-backup coordination unavailable for '{worldName}'. source={invocationOptions?.Source}, reason={reason}. Proceeding with direct backup.",
+                "MineRewind");
+        }
+
+        private async Task RunForcedHotBackupAsync(
+            BackupConfig config,
+            ManagedFolder folder,
+            string comment,
+            bool forceFullBackup = false,
+            BackupInvocationOptions? invocationOptions = null)
         {
             MarkForceHotBackup(folder.Path);
             try
             {
-                await BackupService.BackupFolderAsync(config, folder, comment, forceFullBackup);
+                await BackupService.BackupFolderAsync(
+                    config,
+                    folder,
+                    comment,
+                    forceFullBackup,
+                    invocationOptions ?? BackupInvocationOptions.ForRemote());
             }
             finally
             {

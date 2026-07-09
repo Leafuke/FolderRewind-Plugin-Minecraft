@@ -133,7 +133,12 @@ namespace MineRewind
                 {
                     try
                     {
-                        await RunForcedHotBackupAsync(cfg, folder, comment, forceFullBackup);
+                        await RunForcedHotBackupAsync(
+                            cfg,
+                            folder,
+                            comment,
+                            forceFullBackup,
+                            BackupInvocationOptions.ForRemote());
                     }
                     catch (Exception ex)
                     {

@@ -62,7 +62,11 @@ namespace MineRewind
                 var (config, folder) = active.Value;
 
                 // 与 BACKUP_CURRENT 对齐：无论锁检测结果如何，都先强制走一次热备协同流程。
-                await RunForcedHotBackupAsync(config, folder, "[热键] MineRewind");
+                await RunForcedHotBackupAsync(
+                    config,
+                    folder,
+                    "[Hotkey] MineRewind",
+                    invocationOptions: BackupInvocationOptions.ForPluginHotkey());
             }
             catch (Exception ex)
             {
