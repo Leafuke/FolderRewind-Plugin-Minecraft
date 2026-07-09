@@ -18,12 +18,12 @@ namespace MineRewind
     /// 4. 配置类型 - 定义 "Minecraft Saves" 类型
     /// 5. KnotLink 互联 - 与 MineBackup 联动模组握手、协调备份/还原
     /// </summary>
-    public partial class MinecraftSavesPlugin : IFolderRewindPlugin, IFolderRewindHotkeyProvider, IFolderRewindKnotLinkCommandHandler, IFolderRewindParameterizedKnotLinkCommandHandler, IFolderRewindBackupScopeProvider, IFolderRewindFolderDetailsProvider
+    public partial class MinecraftSavesPlugin : IFolderRewindPlugin, IFolderRewindConfigAugmenter, IFolderRewindHotkeyProvider, IFolderRewindKnotLinkCommandHandler, IFolderRewindParameterizedKnotLinkCommandHandler, IFolderRewindBackupScopeProvider, IFolderRewindFolderDetailsProvider
     {
         #region 常量
 
         private const string ConfigTypeName = "Minecraft Saves";
-        private const string HotBackupSettingKey = "EnableHotBackup";
+        private const string AutoDiscoverSavesSettingKey = "AutoDiscoverSaves";
         private const string PreservePlayerDataSettingKey = "PreservePlayerData";
         private static readonly string[] RequiredFilterEntries = { "session.lock", "voxy", "DistantHorizons.sqlite", "DistantHorizons.sqlite-shm", "DistantHorizons.sqlite-wal" };
 
@@ -61,7 +61,7 @@ namespace MineRewind
 
         #region 私有字段
 
-        private bool _enableHotBackup = true;
+        private bool _autoDiscoverSaves = true;
         private bool _preservePlayerData = false;
 
         // 当 RESTORE_CURRENT_WITH_DATA 指令触发时，强制下一次还原保留玩家数据，
@@ -127,9 +127,9 @@ namespace MineRewind
             {
                 new()
                 {
-                    Key = HotBackupSettingKey,
-                    DisplayName = Localize("MineRewind_Setting_EnableHotBackup_Name"),
-                    Description = Localize("MineRewind_Setting_EnableHotBackup_Desc"),
+                    Key = AutoDiscoverSavesSettingKey,
+                    DisplayName = Localize("MineRewind_Setting_AutoDiscoverSaves_Name"),
+                    Description = Localize("MineRewind_Setting_AutoDiscoverSaves_Desc"),
                     Type = PluginSettingType.Boolean,
                     DefaultValue = "true",
                     IsRequired = false
@@ -152,7 +152,7 @@ namespace MineRewind
 
         public void Initialize(IReadOnlyDictionary<string, string> settingsValues)
         {
-            _enableHotBackup = GetBoolSetting(settingsValues, HotBackupSettingKey, true);
+            _autoDiscoverSaves = GetBoolSetting(settingsValues, AutoDiscoverSavesSettingKey, true);
             _preservePlayerData = GetBoolSetting(settingsValues, PreservePlayerDataSettingKey, false);
 
             if (EnsureExistingMinecraftConfigFilters())
@@ -262,7 +262,7 @@ namespace MineRewind
                     new FolderDetailsItem { Label = Localize("MineRewind_Details_TotalTime"), Value = FormatWorldTicks(details.TotalTime) },
                     new FolderDetailsItem { Label = Localize("MineRewind_Details_LastPlayed"), Value = FormatLastPlayed(details.LastPlayed) },
                     new FolderDetailsItem { Label = Localize("MineRewind_Details_PlayerData"), Value = details.HasPlayerData ? Localize("MineRewind_Details_Yes") : Localize("MineRewind_Details_No") },
-                    new FolderDetailsItem { Label = Localize("MineRewind_Details_DataVersion"), Value = details.DataVersion?.ToString(CultureInfo.InvariantCulture) ?? string.Empty },
+                    // new FolderDetailsItem { Label = Localize("MineRewind_Details_DataVersion"), Value = details.DataVersion?.ToString(CultureInfo.InvariantCulture) ?? string.Empty },
                     new FolderDetailsItem { Label = Localize("MineRewind_Details_Format"), Value = details.IsNewFormat ? Localize("MineRewind_Details_Format_New") : Localize("MineRewind_Details_Format_Legacy") }
                 }
             };

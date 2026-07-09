@@ -16,9 +16,6 @@ namespace MineRewind
             if (!CanHandleConfigType(config.ConfigType))
                 return null;
 
-            if (!_enableHotBackup)
-                return null;
-
             var levelDatPath = Path.Combine(folder.Path, "level.dat");
             var sessionLockPath = Path.Combine(folder.Path, "session.lock");
             bool isMinecraftSave = File.Exists(levelDatPath);
