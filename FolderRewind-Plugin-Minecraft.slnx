@@ -1,9 +1,12 @@
 <Solution>
-  <Project Path="../FolderRewind/FolderRewind/FolderRewind.csproj">
-    <Platform Project="x64" />
+  <Configurations>
+    <Platform Name="x64" />
+  </Configurations>
+  <Project Path="../FolderRewind/FolderRewind.csproj">
+    <Platform Solution="*|x64" Project="x64" />
     <Deploy />
   </Project>
   <Project Path="MineRewind/MineRewind.csproj">
-    <Platform Project="x64" />
+    <Platform Solution="*|x64" Project="x64" />
   </Project>
 </Solution>
