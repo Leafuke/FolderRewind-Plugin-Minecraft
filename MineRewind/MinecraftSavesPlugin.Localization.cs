@@ -1,4 +1,5 @@
 using System.Globalization;
+using Windows.Globalization;
 
 namespace MineRewind
 {
@@ -84,7 +85,7 @@ namespace MineRewind
 
         private static string Localize(string key)
         {
-            var cultureName = CultureInfo.CurrentUICulture.Name;
+            var cultureName = ResolveLanguageName();
             var preferred = cultureName.StartsWith("zh", StringComparison.OrdinalIgnoreCase) ? ZhCnTexts : EnUsTexts;
 
             if (preferred.TryGetValue(key, out var value))
@@ -94,6 +95,17 @@ namespace MineRewind
                 return fallback;
 
             return key;
+        }
+
+        private static string ResolveLanguageName()
+        {
+            var overrideLanguage = ApplicationLanguages.PrimaryLanguageOverride;
+            if (!string.IsNullOrWhiteSpace(overrideLanguage))
+            {
+                return overrideLanguage.Trim().Replace('_', '-');
+            }
+
+            return CultureInfo.CurrentUICulture.Name;
         }
 
         private static string LocalizeFormat(string key, params object[] args)
