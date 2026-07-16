@@ -79,11 +79,16 @@ namespace MineRewind
             _handshakeTcs = pendingHandshake;
 
             var modWorldName = FormatModInteropValue(worldName);
-            var payload = $"event=handshake;version={FakeVersion};action={action};world={modWorldName};min_mod_version={MinModVersion}";
 
             try
             {
-                await KnotLinkService.BroadcastEventAsync(payload).ConfigureAwait(false);
+                await KnotLinkService.BroadcastEventAsync(null, "handshake", new Dictionary<string, string?>
+                {
+                    ["version"] = FakeVersion,
+                    ["action"] = action,
+                    ["world"] = modWorldName,
+                    ["min_mod_version"] = MinModVersion
+                }).ConfigureAwait(false);
             }
             catch (Exception ex)
             {
@@ -139,24 +144,33 @@ namespace MineRewind
                 if (!handshakeOk || !_modDetected || !_versionCompatible)
                 {
                     LogService.LogWarning("Hot restore requires a compatible mod. Aborting.", "MineRewind");
-                    KnotLinkService.BroadcastEvent(
-                        $"event=restore_cancelled;reason=no_mod;world={FormatModInteropValue(worldName)}");
+                    KnotLinkService.BroadcastEvent(null, "restore_cancelled", new Dictionary<string, string?>
+                    {
+                        ["reason"] = "no_mod",
+                        ["world"] = FormatModInteropValue(worldName)
+                    });
                     return;
                 }
 
                 await Task.Delay(PostHandshakeDelayMs);
 
                 _worldSaveAndExitTcs = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
-                await KnotLinkService.BroadcastEventAsync(
-                    $"event=pre_hot_restore;config={config.Id};world={FormatModInteropValue(worldName)}");
+                await KnotLinkService.BroadcastEventAsync(null, "pre_hot_restore", new Dictionary<string, string?>
+                {
+                    ["config"] = config.Id,
+                    ["world"] = FormatModInteropValue(worldName)
+                });
 
                 LogService.LogInfo("Waiting for mod to save and exit world...", "MineRewind");
                 var exitTask = await Task.WhenAny(_worldSaveAndExitTcs.Task, Task.Delay(WorldExitTimeoutMs));
                 if (exitTask != _worldSaveAndExitTcs.Task || !_worldSaveAndExitTcs.Task.Result)
                 {
                     LogService.LogWarning("World save and exit timed out, cancelling restore.", "MineRewind");
-                    await KnotLinkService.BroadcastEventAsync(
-                        $"event=restore_cancelled;reason=timeout;world={FormatModInteropValue(worldName)}");
+                    await KnotLinkService.BroadcastEventAsync(null, "restore_cancelled", new Dictionary<string, string?>
+                    {
+                        ["reason"] = "timeout",
+                        ["world"] = FormatModInteropValue(worldName)
+                    });
                     return;
                 }
 
@@ -164,8 +178,11 @@ namespace MineRewind
                 if (!await WaitForWorldReleaseAsync(folder.Path, FileReleaseTimeoutMs))
                 {
                     LogService.LogWarning("World files still occupied after timeout, cancelling restore.", "MineRewind");
-                    await KnotLinkService.BroadcastEventAsync(
-                        $"event=restore_cancelled;reason=world_occupied;world={FormatModInteropValue(worldName)}");
+                    await KnotLinkService.BroadcastEventAsync(null, "restore_cancelled", new Dictionary<string, string?>
+                    {
+                        ["reason"] = "world_occupied",
+                        ["world"] = FormatModInteropValue(worldName)
+                    });
                     return;
                 }
 
@@ -175,8 +192,11 @@ namespace MineRewind
                     if (!await WaitForFileUnlockedAsync(levelDat, LevelDatReleaseTimeoutMs, LevelDatCheckIntervalMs))
                     {
                         LogService.LogWarning("level.dat still locked, cancelling restore.", "MineRewind");
-                        await KnotLinkService.BroadcastEventAsync(
-                            $"event=restore_cancelled;reason=world_occupied;world={FormatModInteropValue(worldName)}");
+                        await KnotLinkService.BroadcastEventAsync(null, "restore_cancelled", new Dictionary<string, string?>
+                        {
+                            ["reason"] = "world_occupied",
+                            ["world"] = FormatModInteropValue(worldName)
+                        });
                         return;
                     }
                 }
@@ -188,28 +208,26 @@ namespace MineRewind
                 string? latestBackup;
                 if (!string.IsNullOrWhiteSpace(specificBackupFile))
                 {
-                    // RESTORE_CURRENT: 使用指定的备份文件名
+                    // RESTORE + current_save + file: 使用指定的备份文件名
                     var backupDir = Path.Combine(config.DestinationPath, folder.DisplayName ?? string.Empty);
                     var fullPath = Path.Combine(backupDir, specificBackupFile);
                     if (!File.Exists(fullPath))
                     {
                         LogService.LogError($"Specified backup file not found: '{specificBackupFile}', aborting restore.", "MineRewind");
-                        await KnotLinkService.BroadcastEventAsync(
-                            $"event=restore_finished;status=failure;config={config.Id};world={FormatModInteropValue(worldName)}");
+                        await BroadcastRestoreFinishedAsync("failure", config.Id, worldName);
                         return;
                     }
                     latestBackup = specificBackupFile;
                 }
                 else
                 {
-                    // RESTORE_CURRENT_LATEST: 查找最新备份文件
+                    // RESTORE + current_save without file: 查找最新备份文件
                     latestBackup = FindLatestBackupFileName(config, folder);
                 }
                 if (string.IsNullOrEmpty(latestBackup))
                 {
                     LogService.LogError($"No backup found for '{worldName}', aborting restore.", "MineRewind");
-                    await KnotLinkService.BroadcastEventAsync(
-                        $"event=restore_finished;status=failure;config={config.Id};world={FormatModInteropValue(worldName)}");
+                    await BroadcastRestoreFinishedAsync("failure", config.Id, worldName);
                     return;
                 }
 
@@ -221,20 +239,20 @@ namespace MineRewind
                 catch (Exception ex)
                 {
                     LogService.LogError($"Restore failed: {ex.Message}", "MineRewind", ex);
-                    await KnotLinkService.BroadcastEventAsync(
-                        $"event=restore_finished;status=failure;config={config.Id};world={FormatModInteropValue(worldName)}");
+                    await BroadcastRestoreFinishedAsync("failure", config.Id, worldName);
                     return;
                 }
 
                 await Task.Delay(100);
-                await KnotLinkService.BroadcastEventAsync(
-                    $"event=restore_finished;status=success;config={config.Id};world={FormatModInteropValue(worldName)}");
+                await BroadcastRestoreFinishedAsync("success", config.Id, worldName);
 
                 await Task.Delay(PostRestoreStabilizeMs);
 
                 _rejoinTcs = new TaskCompletionSource<(bool, string)>(TaskCreationOptions.RunContinuationsAsynchronously);
-                await KnotLinkService.BroadcastEventAsync(
-                    $"event=rejoin_world;world={FormatModInteropValue(worldName)}");
+                await KnotLinkService.BroadcastEventAsync(null, "rejoin_world", new Dictionary<string, string?>
+                {
+                    ["world"] = FormatModInteropValue(worldName)
+                });
 
                 LogService.LogInfo("Waiting for mod to rejoin world...", "MineRewind");
                 string hotRestoreStatus;
@@ -255,8 +273,11 @@ namespace MineRewind
                     LogService.LogWarning("Rejoin world timed out.", "MineRewind");
                 }
 
-                await KnotLinkService.BroadcastEventAsync(
-                    $"event=hot_restore_complete;status={hotRestoreStatus};world={FormatModInteropValue(worldName)}");
+                await KnotLinkService.BroadcastEventAsync(null, "hot_restore_complete", new Dictionary<string, string?>
+                {
+                    ["status"] = hotRestoreStatus,
+                    ["world"] = FormatModInteropValue(worldName)
+                });
 
                 LogService.LogInfo($"Hot restore completed: {hotRestoreStatus}", "MineRewind");
             }
@@ -265,8 +286,7 @@ namespace MineRewind
                 LogService.LogError($"Hot restore error: {ex.Message}", "MineRewind", ex);
                 try
                 {
-                    await KnotLinkService.BroadcastEventAsync(
-                        $"event=restore_finished;status=failure;config={config.Id};world={FormatModInteropValue(worldName)}");
+                    await BroadcastRestoreFinishedAsync("failure", config.Id, worldName);
                 }
                 catch { }
             }
@@ -276,6 +296,14 @@ namespace MineRewind
                 Interlocked.Exchange(ref _hotRestoreState, RestoreIdle);
             }
         }
+
+        private static Task BroadcastRestoreFinishedAsync(string status, string configId, string worldName) =>
+            KnotLinkService.BroadcastEventAsync(null, "restore_finished", new Dictionary<string, string?>
+            {
+                ["status"] = status,
+                ["config"] = configId,
+                ["world"] = FormatModInteropValue(worldName)
+            });
 
         #endregion
 

@@ -11,48 +11,6 @@ namespace MineRewind
     {
         #region KnotLink 指令扩展
 
-        public IReadOnlyList<PluginKnotLinkCommandDefinition> GetKnotLinkCommandDefinitions()
-        {
-            return new List<PluginKnotLinkCommandDefinition>
-            {
-                new() { Command = KnotLinkCommand_BackupCurrent, Description = "Backup the currently running (occupied) Minecraft world" },
-                new() { Command = KnotLinkCommand_RestoreCurrentLatest, Description = "Hot-restore the current world to its latest backup (requires mod)" },
-                new() { Command = KnotLinkCommand_ListBackupsCurrent, Description = "List all backups for the currently active (occupied) world" },
-                new() { Command = KnotLinkCommand_RestoreCurrent, Description = "Hot-restore the current world from a specified backup file (requires mod)" },
-                new() { Command = KnotLinkCommand_RestoreCurrentWithData, Description = "Hot-restore the current world while preserving player inventory and position (requires mod)" },
-                new() { Command = "HANDSHAKE_RESPONSE", Description = "Mod handshake response (internal)" },
-                new() { Command = "WORLD_SAVED", Description = "Mod notifies world save complete (internal)" },
-                new() { Command = "WORLD_SAVE_AND_EXIT_COMPLETE", Description = "Mod notifies world saved and exited (internal)" },
-                new() { Command = "SHUTDOWN_WORLD_SUCCESS", Description = "Legacy: same as WORLD_SAVE_AND_EXIT_COMPLETE (internal)" },
-                new() { Command = "REJOIN_RESULT", Description = "Mod reports rejoin world result (internal)" },
-            };
-        }
-
-        public Task<string?> TryHandleKnotLinkCommandAsync(
-            string command,
-            string args,
-            string rawCommand,
-            IReadOnlyDictionary<string, string> settingsValues,
-            PluginHostContext hostContext)
-        {
-            Initialize(settingsValues);
-
-            return command.ToUpperInvariant() switch
-            {
-                "BACKUP_CURRENT" => HandleBackupCurrentAsync(args, settingsValues, hostContext),
-                "RESTORE_CURRENT_LATEST" => HandleRestoreCurrentLatestAsync(args, settingsValues, hostContext),
-                "LIST_BACKUPS_CURRENT" => HandleListBackupsCurrentAsync(hostContext),
-                "RESTORE_CURRENT" => HandleRestoreCurrentAsync(args, settingsValues, hostContext),
-                "RESTORE_CURRENT_WITH_DATA" => HandleRestoreCurrentWithDataAsync(args, settingsValues, hostContext),
-                "HANDSHAKE_RESPONSE" => HandleHandshakeResponseAsync(args, hostContext),
-                "WORLD_SAVED" => HandleWorldSavedAsync(hostContext),
-                "WORLD_SAVE_AND_EXIT_COMPLETE" => HandleWorldSaveAndExitCompleteAsync(hostContext),
-                "SHUTDOWN_WORLD_SUCCESS" => HandleWorldSaveAndExitCompleteAsync(hostContext),
-                "REJOIN_RESULT" => HandleRejoinResultAsync(args, hostContext),
-                _ => Task.FromResult<string?>(null)
-            };
-        }
-
         public Task<PluginParameterizedKnotLinkCommandResult?> TryHandleParameterizedKnotLinkCommandAsync(
             KnotLinkCommandRequest request,
             IReadOnlyDictionary<string, string> settingsValues,
@@ -60,7 +18,22 @@ namespace MineRewind
         {
             Initialize(settingsValues);
 
-            // MineRewind 的新版参数只在显式声明 current_save 时接管，避免影响宿主内置 BACKUP/RESTORE。
+            switch (request.Command)
+            {
+                case "HANDSHAKE_RESPONSE":
+                    return WrapParameterizedResponseAsync(
+                        HandleHandshakeResponseAsync(request.GetStringOrDefault("mod_version"), hostContext));
+                case "WORLD_SAVED":
+                    return WrapParameterizedResponseAsync(HandleWorldSavedAsync(hostContext));
+                case "WORLD_SAVE_AND_EXIT_COMPLETE":
+                    return WrapParameterizedResponseAsync(HandleWorldSaveAndExitCompleteAsync(hostContext));
+                case "REJOIN_RESULT":
+                    var result = request.GetStringOrDefault("result");
+                    var reason = request.GetStringOrDefault("reason");
+                    return WrapParameterizedResponseAsync(
+                        HandleRejoinResultAsync(string.Join(' ', new[] { result, reason }.Where(value => !string.IsNullOrWhiteSpace(value))), hostContext));
+            }
+
             if (!request.GetBoolOrDefault("current_save"))
             {
                 return Task.FromResult<PluginParameterizedKnotLinkCommandResult?>(null);
@@ -75,7 +48,9 @@ namespace MineRewind
                 "RESTORE" => WrapParameterizedResponseAsync(
                     request.GetBoolOrDefault("preserve_player_data")
                         ? HandleRestoreCurrentWithDataAsync(BuildRestoreCurrentArgs(request), settingsValues, hostContext)
-                        : HandleRestoreCurrentAsync(BuildRestoreCurrentArgs(request), settingsValues, hostContext)),
+                        : string.IsNullOrWhiteSpace(BuildRestoreCurrentArgs(request))
+                            ? HandleRestoreCurrentLatestAsync(string.Empty, settingsValues, hostContext)
+                            : HandleRestoreCurrentAsync(BuildRestoreCurrentArgs(request), settingsValues, hostContext)),
                 _ => Task.FromResult<PluginParameterizedKnotLinkCommandResult?>(null)
             };
         }
@@ -109,10 +84,7 @@ namespace MineRewind
 
         private static string BuildRestoreCurrentArgs(KnotLinkCommandRequest request)
         {
-            return request.GetString("file")
-                ?? request.GetString("backup_file")
-                ?? request.GetString("archive")
-                ?? string.Empty;
+            return request.GetString("file") ?? string.Empty;
         }
 
         private Task<string?> HandleBackupCurrentAsync(string args, IReadOnlyDictionary<string, string> settingsValues, PluginHostContext hostContext)
@@ -122,7 +94,7 @@ namespace MineRewind
                 var active = TryFindOccupiedWorld();
                 if (active == null)
                 {
-                    try { hostContext?.BroadcastEvent("event=knotlink_backup_no_active_world;plugin=minerewind"); } catch { }
+                    try { hostContext?.BroadcastEvent("knotlink_backup_no_active_world", new Dictionary<string, string?> { ["plugin"] = "minerewind" }); } catch { }
                     return Task.FromResult<string?>("ERROR:No active world.");
                 }
 
@@ -143,7 +115,18 @@ namespace MineRewind
                     catch (Exception ex)
                     {
                         LogService.LogError(LocalizeFormat("MineRewind_KnotLink_BackupCurrent_Failed", ex.Message), "MineRewind", ex);
-                        try { hostContext?.BroadcastEvent($"event=knotlink_backup_failed;plugin=minerewind;command={KnotLinkCommand_BackupCurrent};config={cfg.Id};world={Uri.EscapeDataString(folder.DisplayName ?? string.Empty)};error={Uri.EscapeDataString(ex.Message)}"); } catch { }
+                        try
+                        {
+                            hostContext?.BroadcastEvent("knotlink_backup_failed", new Dictionary<string, string?>
+                            {
+                                ["plugin"] = "minerewind",
+                                ["command"] = "BACKUP",
+                                ["config"] = cfg.Id,
+                                ["world"] = folder.DisplayName,
+                                ["error"] = ex.Message
+                            });
+                        }
+                        catch { }
                     }
                 });
 
@@ -163,7 +146,7 @@ namespace MineRewind
                 var active = TryFindOccupiedWorld();
                 if (active == null)
                 {
-                    try { hostContext?.BroadcastEvent("event=knotlink_restore_no_active_world;plugin=minerewind"); } catch { }
+                    try { hostContext?.BroadcastEvent("knotlink_restore_no_active_world", new Dictionary<string, string?> { ["plugin"] = "minerewind" }); } catch { }
                     return "ERROR:No active world.";
                 }
 
@@ -173,14 +156,13 @@ namespace MineRewind
             }
             catch (Exception ex)
             {
-                LogService.LogError($"RESTORE_CURRENT_LATEST failed: {ex.Message}", "MineRewind", ex);
+                LogService.LogError($"RESTORE current_save latest failed: {ex.Message}", "MineRewind", ex);
                 return $"ERROR:{ex.Message}";
             }
         }
 
         /// <summary>
-        /// LIST_BACKUPS_CURRENT: 列出当前活跃世界的所有备份文件
-        /// 对应 MineBackup Console.cpp 的 LIST_BACKUPS_CURRENT 指令
+        /// LIST_BACKUPS + current_save: 列出当前活跃世界的所有备份文件
         /// </summary>
         private Task<string?> HandleListBackupsCurrentAsync(PluginHostContext hostContext)
         {
@@ -189,7 +171,7 @@ namespace MineRewind
                 var active = TryFindOccupiedWorld();
                 if (active == null)
                 {
-                    try { hostContext?.BroadcastEvent("event=knotlink_list_backups_no_active_world;plugin=minerewind"); } catch { }
+                    try { hostContext?.BroadcastEvent("knotlink_list_backups_no_active_world", new Dictionary<string, string?> { ["plugin"] = "minerewind" }); } catch { }
                     return Task.FromResult<string?>("ERROR:No active world found.");
                 }
 
@@ -220,8 +202,12 @@ namespace MineRewind
 
                 try
                 {
-                    hostContext?.BroadcastEvent(
-                        $"event=list_backups_current;config={config.Id};world={Uri.EscapeDataString(worldName)};data={result}");
+                    hostContext?.BroadcastEvent("list_backups_current", new Dictionary<string, string?>
+                    {
+                        ["config"] = config.Id,
+                        ["world"] = worldName,
+                        ["data"] = result
+                    });
                 }
                 catch { }
 
@@ -229,14 +215,13 @@ namespace MineRewind
             }
             catch (Exception ex)
             {
-                LogService.LogError($"LIST_BACKUPS_CURRENT failed: {ex.Message}", "MineRewind", ex);
+                LogService.LogError($"LIST_BACKUPS current_save failed: {ex.Message}", "MineRewind", ex);
                 return Task.FromResult<string?>($"ERROR:{ex.Message}");
             }
         }
 
         /// <summary>
-        /// RESTORE_CURRENT: 对当前活跃世界执行指定备份文件的热还原
-        /// 对应 MineBackup Console.cpp 的 RESTORE_CURRENT 指令
+        /// RESTORE + current_save + file: 对当前活跃世界执行指定备份文件的热还原
         /// 参数 args 为备份文件名
         /// </summary>
         private async Task<string?> HandleRestoreCurrentAsync(string args, IReadOnlyDictionary<string, string> settingsValues, PluginHostContext hostContext)
@@ -246,13 +231,13 @@ namespace MineRewind
                 var backupFile = args.Trim();
                 if (string.IsNullOrWhiteSpace(backupFile))
                 {
-                    return "ERROR:Missing backup file. Usage: RESTORE_CURRENT <backup_filename>";
+                    return "ERROR:Missing backup file. Usage: cmd=RESTORE;current_save=true;file=backup.7z";
                 }
 
                 var active = TryFindOccupiedWorld();
                 if (active == null)
                 {
-                    try { hostContext?.BroadcastEvent("event=knotlink_restore_no_active_world;plugin=minerewind"); } catch { }
+                    try { hostContext?.BroadcastEvent("knotlink_restore_no_active_world", new Dictionary<string, string?> { ["plugin"] = "minerewind" }); } catch { }
                     return "ERROR:No active world.";
                 }
 
@@ -262,13 +247,13 @@ namespace MineRewind
             }
             catch (Exception ex)
             {
-                LogService.LogError($"RESTORE_CURRENT failed: {ex.Message}", "MineRewind", ex);
+                LogService.LogError($"RESTORE current_save failed: {ex.Message}", "MineRewind", ex);
                 return $"ERROR:{ex.Message}";
             }
         }
 
         /// <summary>
-        /// RESTORE_CURRENT_WITH_DATA: 对当前活跃世界执行热还原，并强制保留玩家位置与物品栏数据。
+        /// RESTORE + current_save + preserve_player_data: 热还原并保留玩家数据。
         /// 参数 args 可选，为备份文件名；省略时使用最新备份。
         /// </summary>
         private async Task<string?> HandleRestoreCurrentWithDataAsync(string args, IReadOnlyDictionary<string, string> settingsValues, PluginHostContext hostContext)
@@ -278,7 +263,7 @@ namespace MineRewind
                 var active = TryFindOccupiedWorld();
                 if (active == null)
                 {
-                    try { hostContext?.BroadcastEvent("event=knotlink_restore_no_active_world;plugin=minerewind"); } catch { }
+                    try { hostContext?.BroadcastEvent("knotlink_restore_no_active_world", new Dictionary<string, string?> { ["plugin"] = "minerewind" }); } catch { }
                     return "ERROR:No active world.";
                 }
 
@@ -291,7 +276,7 @@ namespace MineRewind
             }
             catch (Exception ex)
             {
-                LogService.LogError($"RESTORE_CURRENT_WITH_DATA failed: {ex.Message}", "MineRewind", ex);
+                LogService.LogError($"RESTORE current_save preserve_player_data failed: {ex.Message}", "MineRewind", ex);
                 return $"ERROR:{ex.Message}";
             }
         }
@@ -345,7 +330,11 @@ namespace MineRewind
             try
             {
                 var status = _versionCompatible ? "compatible" : "incompatible";
-                KnotLinkService.BroadcastEvent($"event=handshake_ack;status={status};mod_version={modVersion}");
+                KnotLinkService.BroadcastEvent(null, "handshake_ack", new Dictionary<string, string?>
+                {
+                    ["status"] = status,
+                    ["mod_version"] = modVersion
+                });
             }
             catch { }
 

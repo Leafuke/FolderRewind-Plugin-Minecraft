@@ -25,7 +25,8 @@
 - 自动为每个版本创建独立配置，配置名格式为 `Minecraft - 版本名`
 
 ### 5. KnotLink 扩展
-- 暴露 `BACKUP_CURRENT`、`LIST_BACKUPS_CURRENT`、`RESTORE_CURRENT_LATEST`、`RESTORE_CURRENT`、`RESTORE_CURRENT_WITH_DATA` 等指令
+- 使用严格键值对 v2：`cmd=BACKUP;current_save=true`、`cmd=LIST_BACKUPS;current_save=true`、`cmd=RESTORE;current_save=true[;file=...]`
+- 所有值按 RFC 3986 percent-encoding；省略 `file` 时还原最新备份，添加 `preserve_player_data=true` 时保留玩家数据
 - 便于与 MineBackup 或其他支持 KnotLink 的组件联动
 
 ## 插件设置

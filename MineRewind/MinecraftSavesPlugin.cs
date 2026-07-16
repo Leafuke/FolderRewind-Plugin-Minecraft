@@ -18,7 +18,7 @@ namespace MineRewind
     /// 4. 配置类型 - 定义 "Minecraft Saves" 类型
     /// 5. KnotLink 互联 - 与 MineBackup 联动模组握手、协调备份/还原
     /// </summary>
-    public partial class MinecraftSavesPlugin : IFolderRewindPlugin, IFolderRewindConfigAugmenter, IFolderRewindHotkeyProvider, IFolderRewindKnotLinkCommandHandler, IFolderRewindParameterizedKnotLinkCommandHandler, IFolderRewindBackupScopeProvider, IFolderRewindBackupPreparationProvider, IFolderRewindFolderDetailsProvider
+    public partial class MinecraftSavesPlugin : IFolderRewindPlugin, IFolderRewindConfigAugmenter, IFolderRewindHotkeyProvider, IFolderRewindParameterizedKnotLinkCommandHandler, IFolderRewindKnotLinkCapabilityProvider, IFolderRewindBackupScopeProvider, IFolderRewindBackupPreparationProvider, IFolderRewindFolderDetailsProvider
     {
         #region 常量
 
@@ -29,12 +29,6 @@ namespace MineRewind
 
         private const string Hotkey_ActiveWorldHotBackup = "hotbackup.active_world";
         private const string Hotkey_QuickRestore = "hotrestore.active_world";
-
-        private const string KnotLinkCommand_BackupCurrent = "BACKUP_CURRENT";
-        private const string KnotLinkCommand_RestoreCurrentLatest = "RESTORE_CURRENT_LATEST";
-        private const string KnotLinkCommand_ListBackupsCurrent = "LIST_BACKUPS_CURRENT";
-        private const string KnotLinkCommand_RestoreCurrent = "RESTORE_CURRENT";
-        private const string KnotLinkCommand_RestoreCurrentWithData = "RESTORE_CURRENT_WITH_DATA";
 
         // 伪装版本：联动模组只认 MineBackup 1.14.0+
         private const string FakeVersion = "1.15.5";
@@ -64,14 +58,14 @@ namespace MineRewind
         private bool _autoDiscoverSaves = true;
         private bool _preservePlayerData = false;
 
-        // 当 RESTORE_CURRENT_WITH_DATA 指令触发时，强制下一次还原保留玩家数据，
+        // 当 RESTORE + preserve_player_data 触发时，强制下一次还原保留玩家数据，
         // 不管插件设置 PreservePlayerData 是否开启。
         private volatile bool _forcePreserveNextRestore = false;
 
         // 宿主上下文（持久缓存，用于主动发起 KnotLink 操作）
         private PluginHostContext? _hostContext;
 
-        // 用于 BACKUP_CURRENT/热键备份：在差异检测前强制执行一次热备协同保存
+        // 用于 BACKUP + current_save/热键备份：在差异检测前强制执行一次热备协同保存
         // 使用引用计数，避免并发触发时提前清除标记。
         private readonly ConcurrentDictionary<string, int> _forceHotBackupFolders
             = new(StringComparer.OrdinalIgnoreCase);
@@ -220,7 +214,8 @@ namespace MineRewind
 
         private static string FormatModInteropValue(string? value)
         {
-            // MineBackup 联动协议使用原始 UTF-8 文本；对 world 做 URL 编码会导致模组无法匹配当前世界。
+            // Pass the semantic value here; the KnotLink v2 formatter performs the
+            // required percent encoding exactly once at the wire boundary.
             return value ?? string.Empty;
         }
 

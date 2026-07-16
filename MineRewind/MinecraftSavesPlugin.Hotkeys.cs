@@ -55,13 +55,13 @@ namespace MineRewind
                 if (active == null)
                 {
                     LogService.LogInfo(Localize("MineRewind_Hotkey_NoActiveWorld"), "MineRewind");
-                    try { hostContext?.BroadcastEvent("event=hotkey_backup_no_active_world;plugin=minerewind"); } catch { }
+                    try { hostContext?.BroadcastEvent("hotkey_backup_no_active_world", new Dictionary<string, string?> { ["plugin"] = "minerewind" }); } catch { }
                     return;
                 }
 
                 var (config, folder) = active.Value;
 
-                // 与 BACKUP_CURRENT 对齐：无论锁检测结果如何，都先强制走一次热备协同流程。
+                // 与 BACKUP + current_save 对齐：无论锁检测结果如何，都先强制走一次热备协同流程。
                 await RunForcedHotBackupAsync(
                     config,
                     folder,
@@ -84,7 +84,7 @@ namespace MineRewind
                 if (active == null)
                 {
                     LogService.LogInfo(Localize("MineRewind_Hotkey_QuickRestore_NoActive"), "MineRewind");
-                    try { hostContext?.BroadcastEvent("event=hotkey_restore_no_active_world;plugin=minerewind"); } catch { }
+                    try { hostContext?.BroadcastEvent("hotkey_restore_no_active_world", new Dictionary<string, string?> { ["plugin"] = "minerewind" }); } catch { }
                     return;
                 }
 
