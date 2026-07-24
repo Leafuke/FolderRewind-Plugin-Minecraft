@@ -42,7 +42,7 @@ namespace MineRewind
             return request.Command switch
             {
                 "BACKUP" => WrapParameterizedResponseAsync(
-                    HandleBackupCurrentAsync(BuildBackupCurrentArgs(request), settingsValues, hostContext)),
+                    HandleBackupCurrentAsync(request, settingsValues, hostContext)),
                 "LIST_BACKUPS" => WrapParameterizedResponseAsync(
                     HandleListBackupsCurrentAsync(hostContext)),
                 "RESTORE" => WrapParameterizedResponseAsync(
@@ -65,29 +65,15 @@ namespace MineRewind
             };
         }
 
-        private static string BuildBackupCurrentArgs(KnotLinkCommandRequest request)
-        {
-            var args = new List<string>();
-            var comment = request.GetString("comment");
-            if (!string.IsNullOrWhiteSpace(comment))
-            {
-                args.Add(comment);
-            }
-
-            if (request.GetBoolOrDefault("force_full"))
-            {
-                args.Add("FORCE_FULL");
-            }
-
-            return string.Join(' ', args);
-        }
-
         private static string BuildRestoreCurrentArgs(KnotLinkCommandRequest request)
         {
             return request.GetString("file") ?? string.Empty;
         }
 
-        private Task<string?> HandleBackupCurrentAsync(string args, IReadOnlyDictionary<string, string> settingsValues, PluginHostContext hostContext)
+        private Task<string?> HandleBackupCurrentAsync(
+            KnotLinkCommandRequest request,
+            IReadOnlyDictionary<string, string> settingsValues,
+            PluginHostContext hostContext)
         {
             try
             {
@@ -99,17 +85,33 @@ namespace MineRewind
                 }
 
                 var (cfg, folder) = active.Value;
-                var (comment, forceFullBackup) = ParseBackupArgsAndForceFull(args, "QuickSave");
+                if (!KnotLinkBackupOverrideService.TryCreateEffectiveConfig(
+                        request,
+                        cfg,
+                        out var effectiveConfig,
+                        out var overrideError))
+                {
+                    return Task.FromResult<string?>("ERROR:" + overrideError);
+                }
+
+                var comment = request.GetStringOrDefault("comment");
+                if (string.IsNullOrWhiteSpace(comment))
+                {
+                    comment = "QuickSave";
+                }
+                var effectiveFolder = effectiveConfig.SourceFolders.FirstOrDefault(candidate =>
+                        string.Equals(candidate.Path, folder.Path, StringComparison.OrdinalIgnoreCase)
+                        || string.Equals(candidate.DisplayName, folder.DisplayName, StringComparison.OrdinalIgnoreCase))
+                    ?? folder;
 
                 _ = Task.Run(async () =>
                 {
                     try
                     {
                         await RunForcedHotBackupAsync(
-                            cfg,
-                            folder,
+                            effectiveConfig,
+                            effectiveFolder,
                             comment,
-                            forceFullBackup,
                             BackupInvocationOptions.ForRemote());
                     }
                     catch (Exception ex)
@@ -279,33 +281,6 @@ namespace MineRewind
                 LogService.LogError($"RESTORE current_save preserve_player_data failed: {ex.Message}", "MineRewind", ex);
                 return $"ERROR:{ex.Message}";
             }
-        }
-
-        private static (string Comment, bool ForceFullBackup) ParseBackupArgsAndForceFull(string args, string defaultComment)
-        {
-            if (string.IsNullOrWhiteSpace(args))
-                return (defaultComment, false);
-
-            var parts = args.Split(' ', StringSplitOptions.RemoveEmptyEntries);
-            bool forceFullBackup = false;
-            var commentParts = new List<string>(parts.Length);
-
-            foreach (var part in parts)
-            {
-                if (string.Equals(part, "FORCE_FULL", StringComparison.OrdinalIgnoreCase))
-                {
-                    forceFullBackup = true;
-                    continue;
-                }
-
-                commentParts.Add(part);
-            }
-
-            var comment = string.Join(' ', commentParts).Trim();
-            if (string.IsNullOrWhiteSpace(comment))
-                comment = defaultComment;
-
-            return (comment, forceFullBackup);
         }
 
         private Task<string?> HandleHandshakeResponseAsync(string args, PluginHostContext hostContext)

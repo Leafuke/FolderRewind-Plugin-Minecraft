@@ -92,7 +92,7 @@ namespace MineRewind
         {
             Id = "com.folderrewind.minerewind",
             Name = "MineRewind",
-            Version = "1.7.1",
+            Version = "1.8.0",
             Author = "Leafuke",
             Description = "Enhanced Minecraft saves backup: lock-friendly backup, batch discovery under .minecraft",
             LocalizedName = new Dictionary<string, string>
@@ -107,7 +107,7 @@ namespace MineRewind
             },
             EntryAssembly = "MineRewind.dll",
             EntryType = "MineRewind.MinecraftSavesPlugin",
-            MinHostVersion = "1.7.4",
+            MinHostVersion = "1.8.0",
             Repository = "Leafuke/FolderRewind-Plugin-Minecraft"
         };
 

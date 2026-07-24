@@ -13,7 +13,17 @@ namespace MineRewind
                     ("from", KnotLinkFuncListService.Input("Required caller identifier.", "minebackup.mod")),
                     ("request_id", KnotLinkFuncListService.Input("Required request ID.", "request-001")),
                     ("comment", KnotLinkFuncListService.Input("Optional backup comment.", "QuickSave")),
-                    ("force_full", KnotLinkFuncListService.BooleanOption("Force a full backup."))),
+                    ("backup_mode", KnotLinkFuncListService.Optional(
+                        "Optional one-shot backup mode.",
+                        ("Full", "full"),
+                        ("Incremental", "incremental"))),
+                    ("compression_method", KnotLinkFuncListService.Optional(
+                        "Optional one-shot compression method.",
+                        ("LZMA2", "LZMA2"),
+                        ("Deflate", "Deflate"),
+                        ("BZip2", "BZip2"),
+                        ("zstd", "zstd"))),
+                    ("compression_level", KnotLinkFuncListService.Input("Optional one-shot compression level.", ""))),
                 Capability("list_backups_current", "List backups for the currently active Minecraft world.", "LIST_BACKUPS", true),
                 Capability("restore_current_latest", "Restore the active Minecraft world from its latest backup.", "RESTORE", true,
                     ("from", KnotLinkFuncListService.Input("Required caller identifier.", "minebackup.mod")),
@@ -89,4 +99,3 @@ namespace MineRewind
 
     }
 }
-

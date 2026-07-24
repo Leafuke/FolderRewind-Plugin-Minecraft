@@ -132,7 +132,6 @@ namespace MineRewind
             BackupConfig config,
             ManagedFolder folder,
             string comment,
-            bool forceFullBackup = false,
             BackupInvocationOptions? invocationOptions = null)
         {
             MarkForceHotBackup(folder.Path);
@@ -142,7 +141,6 @@ namespace MineRewind
                     config,
                     folder,
                     comment,
-                    forceFullBackup,
                     invocationOptions ?? BackupInvocationOptions.ForRemote());
             }
             finally
