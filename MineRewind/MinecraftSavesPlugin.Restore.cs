@@ -23,12 +23,12 @@ namespace MineRewind
             if (!_preservePlayerData && !_forcePreserveNextRestore)
                 return null;
 
-            var levelDatPath = Path.Combine(folder.Path, "level.dat");
-            if (!File.Exists(levelDatPath))
+            var worldPath = MinecraftWorldPathResolver.TryResolveWorldPath(folder.Path);
+            if (worldPath == null)
                 return null;
 
             LogService.LogInfo($"[MineRewind] Extracting player data before restore for '{folder.DisplayName}'...", "MineRewind");
-            var snapshot = NbtHelper.ExtractPlayerData(folder.Path);
+            var snapshot = NbtHelper.ExtractPlayerData(worldPath);
             return snapshot;
         }
 
@@ -47,7 +47,8 @@ namespace MineRewind
                 return;
 
             LogService.LogInfo($"[MineRewind] Applying preserved player data after restore for '{folder.DisplayName}'...", "MineRewind");
-            var applied = NbtHelper.ApplyPlayerData(folder.Path, snapshot);
+            var worldPath = MinecraftWorldPathResolver.TryResolveWorldPath(folder.Path);
+            var applied = worldPath != null && NbtHelper.ApplyPlayerData(worldPath, snapshot);
             if (applied)
             {
                 LogService.LogInfo($"[MineRewind] Player data preserved successfully for '{folder.DisplayName}'.", "MineRewind");
@@ -133,7 +134,8 @@ namespace MineRewind
                 return;
             }
 
-            var worldName = folder.DisplayName ?? Path.GetFileName(folder.Path);
+            var worldPath = MinecraftWorldPathResolver.TryResolveWorldPath(folder.Path) ?? folder.Path;
+            var worldName = Path.GetFileName(worldPath);
             _forcePreserveNextRestore = forcePreservePlayerData;
 
             try
@@ -175,7 +177,7 @@ namespace MineRewind
                 }
 
                 LogService.LogInfo("Waiting for world files to be released...", "MineRewind");
-                if (!await WaitForWorldReleaseAsync(folder.Path, FileReleaseTimeoutMs))
+                if (!await WaitForWorldReleaseAsync(worldPath, FileReleaseTimeoutMs))
                 {
                     LogService.LogWarning("World files still occupied after timeout, cancelling restore.", "MineRewind");
                     await KnotLinkService.BroadcastEventAsync(null, "restore_cancelled", new Dictionary<string, string?>
@@ -186,7 +188,7 @@ namespace MineRewind
                     return;
                 }
 
-                var levelDat = Path.Combine(folder.Path, "level.dat");
+                var levelDat = Path.Combine(worldPath, "level.dat");
                 if (File.Exists(levelDat))
                 {
                     if (!await WaitForFileUnlockedAsync(levelDat, LevelDatReleaseTimeoutMs, LevelDatCheckIntervalMs))

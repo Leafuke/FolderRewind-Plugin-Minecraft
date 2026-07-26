@@ -236,7 +236,13 @@ namespace MineRewind
                 return Task.FromResult<IReadOnlyList<FolderDetailsSection>>(Array.Empty<FolderDetailsSection>());
             }
 
-            var details = NbtHelper.TryGetWorldDetails(folder.Path);
+            var worldPath = MinecraftWorldPathResolver.TryResolveWorldPath(folder.Path);
+            if (worldPath == null)
+            {
+                return Task.FromResult<IReadOnlyList<FolderDetailsSection>>(Array.Empty<FolderDetailsSection>());
+            }
+
+            var details = NbtHelper.TryGetWorldDetails(worldPath);
             if (details == null)
             {
                 LogService.LogInfo($"[MineRewind] TryGetWorldDetails returned null for '{folder.Path}'. No level.dat or parse failed.", "MineRewind");

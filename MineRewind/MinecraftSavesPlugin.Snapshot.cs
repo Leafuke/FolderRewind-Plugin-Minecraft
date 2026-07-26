@@ -25,13 +25,12 @@ namespace MineRewind
             if (!CanHandleConfigType(config.ConfigType))
                 return null;
 
-            var levelDatPath = Path.Combine(folder.Path, "level.dat");
-            var sessionLockPath = Path.Combine(folder.Path, "session.lock");
-            bool isMinecraftSave = File.Exists(levelDatPath);
-
-            if (!isMinecraftSave)
+            var worldPath = MinecraftWorldPathResolver.TryResolveWorldPath(folder.Path);
+            if (worldPath == null)
                 return null;
 
+            var levelDatPath = Path.Combine(worldPath, "level.dat");
+            var sessionLockPath = Path.Combine(worldPath, "session.lock");
             bool forceHotBackup = IsForceHotBackupRequested(folder.Path);
 
             bool isLocked = FileLockService.IsFileLocked(levelDatPath) || FileLockService.IsFileLocked(sessionLockPath);
@@ -53,7 +52,7 @@ namespace MineRewind
 
             try
             {
-                var worldName = folder.DisplayName ?? Path.GetFileName(folder.Path);
+                var worldName = Path.GetFileName(worldPath);
 
                 var handshakeOk = PerformModHandshakeSync("backup", worldName);
 

@@ -101,12 +101,22 @@ namespace MineRewind
                 return null;
             }
 
-            if (string.IsNullOrWhiteSpace(folder.Path) || !File.Exists(Path.Combine(folder.Path, "level.dat")))
+            var worldPath = MinecraftWorldPathResolver.TryResolveWorldPath(folder.Path);
+            if (worldPath == null)
             {
                 return null;
             }
 
-            var rules = BuildRegionBackupWhitelist(folder.Path, scope.Parameters);
+            var rules = BuildRegionBackupWhitelist(worldPath, scope.Parameters);
+            var worldPrefix = Path.GetRelativePath(folder.Path, worldPath)
+                .Replace(Path.DirectorySeparatorChar, '/')
+                .Replace(Path.AltDirectorySeparatorChar, '/');
+            if (!string.Equals(worldPrefix, ".", StringComparison.Ordinal))
+            {
+                rules = rules
+                    .Select(rule => $"{worldPrefix.TrimEnd('/')}/{rule}")
+                    .ToArray();
+            }
             if (rules.Count == 0)
             {
                 LogService.LogWarning("[MineRewind] Selected region backup has no valid whitelist rule.", "MineRewind");

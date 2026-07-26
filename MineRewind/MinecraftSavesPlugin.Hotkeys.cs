@@ -116,7 +116,8 @@ namespace MineRewind
                         if (string.IsNullOrWhiteSpace(folder.Path)) continue;
                         if (!Directory.Exists(folder.Path)) continue;
 
-                        if (IsWorldOccupied(folder.Path))
+                        var worldPath = MinecraftWorldPathResolver.TryResolveWorldPath(folder.Path);
+                        if (worldPath != null && IsWorldOccupied(worldPath))
                         {
                             return (cfg, folder);
                         }

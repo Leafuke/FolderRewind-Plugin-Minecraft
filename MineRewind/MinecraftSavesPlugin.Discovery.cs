@@ -37,13 +37,15 @@ namespace MineRewind
             {
                 results.AddRange(DiscoverFromSavesDirectory(selectedRootPath));
             }
+            else if (MinecraftWorldPathResolver.TryResolveWorldPath(selectedRootPath) != null)
+            {
+                // Keep the configured server root as the backup unit. The resolver is
+                // only used to recognize roots whose level.dat lives under world/.
+                results.Add(CreateManagedFolder(selectedRootPath));
+            }
             else if (Directory.Exists(Path.Combine(selectedRootPath, "saves")))
             {
                 results.AddRange(DiscoverFromSavesDirectory(Path.Combine(selectedRootPath, "saves")));
-            }
-            else if (File.Exists(Path.Combine(selectedRootPath, "level.dat")))
-            {
-                results.Add(CreateManagedFolder(selectedRootPath));
             }
 
             return results;
@@ -64,17 +66,21 @@ namespace MineRewind
             {
                 configs.AddRange(CreateConfigsFromDotMinecraft(selectedRootPath));
             }
-            else if (Directory.Exists(Path.Combine(selectedRootPath, "saves")))
-            {
-                var config = CreateConfigForVersion(selectedRootPath);
-                if (config != null)
-                    configs.Add(config);
-            }
             else if (dirName.Equals("saves", StringComparison.OrdinalIgnoreCase))
             {
                 var parentDir = Directory.GetParent(selectedRootPath)?.FullName;
                 var versionName = parentDir != null ? Path.GetFileName(parentDir) : "Unknown";
                 var config = CreateConfigForSavesDir(selectedRootPath, versionName);
+                if (config != null)
+                    configs.Add(config);
+            }
+            else if (MinecraftWorldPathResolver.TryResolveWorldPath(selectedRootPath) != null)
+            {
+                configs.Add(CreateConfigForManagedRoot(selectedRootPath));
+            }
+            else if (Directory.Exists(Path.Combine(selectedRootPath, "saves")))
+            {
+                var config = CreateConfigForVersion(selectedRootPath);
                 if (config != null)
                     configs.Add(config);
             }
@@ -143,13 +149,14 @@ namespace MineRewind
         private ManagedFolder CreateManagedFolder(string worldPath)
         {
             var worldName = Path.GetFileName(worldPath);
-            var coverImage = FindCoverImage(worldPath);
+            var resolvedWorldPath = MinecraftWorldPathResolver.TryResolveWorldPath(worldPath) ?? worldPath;
+            var coverImage = FindCoverImage(resolvedWorldPath);
 
             return new ManagedFolder
             {
                 Path = worldPath,
                 DisplayName = worldName,
-                Description = GetWorldDescription(worldPath),
+                Description = GetWorldDescription(resolvedWorldPath),
                 CoverImagePath = coverImage ?? string.Empty
             };
         }
@@ -197,6 +204,23 @@ namespace MineRewind
         #endregion
 
         #region 私有方法 - 配置创建
+
+        private BackupConfig CreateConfigForManagedRoot(string selectedRootPath)
+        {
+            var rootName = Path.GetFileName(Path.TrimEndingDirectorySeparator(selectedRootPath));
+            var config = new BackupConfig
+            {
+                Name = $"Minecraft - {rootName}",
+                ConfigType = ConfigTypeName,
+                IconGlyph = "\uE7FC"
+            };
+
+            config.SourceFolders.Add(CreateManagedFolder(selectedRootPath));
+            config.ExtendedProperties["MinecraftVersion"] = "Server";
+            config.ExtendedProperties["Plugin"] = Manifest.Id;
+            EnsureRequiredFilters(config);
+            return config;
+        }
 
         private IEnumerable<BackupConfig> CreateConfigsFromDotMinecraft(string dotMinecraftPath)
         {
