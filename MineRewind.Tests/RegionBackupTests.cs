@@ -62,7 +62,16 @@ public sealed class RegionBackupTests
         string world = CreateWorld();
         Directory.CreateDirectory(Path.Combine(world, "region"));
 
-        foreach (string area in new[] { "bad", "NaN,0,1,1", "Infinity,0,1,1", "30000001,0,1,1" })
+        foreach (string area in new[]
+                 {
+                     "bad",
+                     "NaN,0,1,1",
+                     "Infinity,0,1,1",
+                     "30000001,0,1,1",
+                     "0,,1,1",
+                     "0,0,1,1,",
+                     "0;0;1;1"
+                 })
         {
             bool success = Build(world, world, Parameters(("areas", area)), out _, out string errorCode);
             Assert.IsFalse(success, area);
@@ -211,6 +220,14 @@ public sealed class RegionBackupTests
             out _,
             out string flagCode));
         Assert.AreEqual("invalid_dimension_flag", flagCode);
+
+        Assert.IsFalse(Build(
+            world,
+            world,
+            Parameters(("dimensions", "overworld,,nether"), ("areas", "0,0,1,1")),
+            out _,
+            out string dimensionCode));
+        Assert.AreEqual("invalid_dimension", dimensionCode);
     }
 
     [TestMethod]

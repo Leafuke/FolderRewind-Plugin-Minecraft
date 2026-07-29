@@ -314,7 +314,7 @@ namespace MineRewind
             {
                 string[] tokens = dimensionsValue.Split(
                     [';', ',', '|'],
-                    StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+                    StringSplitOptions.TrimEntries);
                 foreach (string token in tokens)
                 {
                     MinecraftDimension? parsed = ParseDimension(token);
@@ -563,7 +563,7 @@ namespace MineRewind
             x1 = z1 = x2 = z2 = 0;
             string[] parts = line.Split(
                 ',',
-                StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+                StringSplitOptions.TrimEntries);
             if (parts.Length != 4)
             {
                 return false;
