@@ -1,0 +1,21 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <IsPackable>false</IsPackable>
+    <IsTestProject>true</IsTestProject>
+    <Platforms>AnyCPU</Platforms>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="18.0.1" />
+    <PackageReference Include="MSTest.TestAdapter" Version="4.0.2" />
+    <PackageReference Include="MSTest.TestFramework" Version="4.0.2" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Compile Include="..\MineRewind\MinecraftSavesPlugin.RegionBackup.cs" Link="Source\MinecraftSavesPlugin.RegionBackup.cs" />
+    <Compile Include="..\MineRewind\MinecraftWorldPathResolver.cs" Link="Source\MinecraftWorldPathResolver.cs" />
+  </ItemGroup>
+</Project>
