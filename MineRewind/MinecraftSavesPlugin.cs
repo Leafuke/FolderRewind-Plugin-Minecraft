@@ -31,8 +31,8 @@ namespace MineRewind
         private const string Hotkey_QuickRestore = "hotrestore.active_world";
 
         // 伪装版本：联动模组只认 MineBackup 1.14.0+
-        private const string FakeVersion = "1.15.5";
-        private const string MinModVersion = "2.1.1";
+        private const string FakeVersion = "1.16.0";
+        private const string MinModVersion = "3.0.0";
 
         // 超时常量（参考 MineBackup C++ 实现）
         private const int HandshakeTimeoutMs = 3_000;
