@@ -142,7 +142,8 @@ namespace MineRewind
                 {
                     UseWhitelistMode = true,
                     BackupWhitelist = rules
-                });
+                },
+                PluginBackupRuleMergeMode.Replace);
         }
 
         internal static bool TryBuildRegionBackupWhitelist(
@@ -206,6 +207,9 @@ namespace MineRewind
                     AddSourceRelativeRule(result, normalizedSource, dimensionRoot, $"poi/{regionFileName}");
                 }
 
+                AddSourceRelativeRule(result, normalizedSource, dimensionRoot, "region/c.*.*.mcc");
+                AddSourceRelativeRule(result, normalizedSource, dimensionRoot, "entities/c.*.*.mcc");
+                AddSourceRelativeRule(result, normalizedSource, dimensionRoot, "poi/c.*.*.mcc");
             }
 
             rules = result.OrderBy(rule => rule, StringComparer.OrdinalIgnoreCase).ToArray();
