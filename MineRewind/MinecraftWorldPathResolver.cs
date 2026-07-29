@@ -24,11 +24,21 @@ namespace MineRewind
                     return rootPath;
                 }
 
-                var configuredLevelName = TryReadLevelName(Path.Combine(rootPath, ServerPropertiesFileName));
-                var configuredWorldPath = TryResolveChildPath(rootPath, configuredLevelName);
-                if (configuredWorldPath != null && HasLevelDat(configuredWorldPath))
+                string serverPropertiesPath = Path.Combine(rootPath, ServerPropertiesFileName);
+                if (File.Exists(serverPropertiesPath))
                 {
-                    return configuredWorldPath;
+                    if (!TryReadLevelName(serverPropertiesPath, out string? configuredLevelName))
+                    {
+                        return null;
+                    }
+
+                    if (!string.IsNullOrWhiteSpace(configuredLevelName))
+                    {
+                        var configuredWorldPath = TryResolveChildPath(rootPath, configuredLevelName);
+                        return configuredWorldPath != null && HasLevelDat(configuredWorldPath)
+                            ? configuredWorldPath
+                            : null;
+                    }
                 }
 
                 var defaultWorldPath = Path.Combine(rootPath, DefaultWorldDirectoryName);
@@ -45,12 +55,11 @@ namespace MineRewind
             return File.Exists(Path.Combine(path, "level.dat"));
         }
 
-        private static string? TryReadLevelName(string serverPropertiesPath)
+        private static bool TryReadLevelName(
+            string serverPropertiesPath,
+            out string? levelName)
         {
-            if (!File.Exists(serverPropertiesPath))
-            {
-                return null;
-            }
+            levelName = null;
 
             try
             {
@@ -72,15 +81,17 @@ namespace MineRewind
                     if (string.Equals(key, "level-name", StringComparison.OrdinalIgnoreCase))
                     {
                         var value = line[(separatorIndex + 1)..].Trim();
-                        return value.Length == 0 ? null : value;
+                        levelName = value.Length == 0 ? null : value;
+                        return true;
                     }
                 }
+
+                return true;
             }
             catch
             {
+                return false;
             }
-
-            return null;
         }
 
         private static string? TryResolveChildPath(string rootPath, string? relativePath)

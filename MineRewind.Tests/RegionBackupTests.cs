@@ -254,6 +254,39 @@ public sealed class RegionBackupTests
         Assert.AreEqual("region_input_too_large", sizeCode);
     }
 
+    [TestMethod]
+    public void ServerPropertiesLevelNameSelectsConfiguredWorld()
+    {
+        string server = CreateRoot();
+        string configuredWorld = Path.Combine(server, "custom-world");
+        string fallbackWorld = Path.Combine(server, "world");
+        Directory.CreateDirectory(configuredWorld);
+        Directory.CreateDirectory(fallbackWorld);
+        File.WriteAllText(Path.Combine(configuredWorld, "level.dat"), string.Empty);
+        File.WriteAllText(Path.Combine(fallbackWorld, "level.dat"), string.Empty);
+        File.WriteAllText(
+            Path.Combine(server, "server.properties"),
+            "level-name=custom-world");
+
+        Assert.AreEqual(
+            configuredWorld,
+            MinecraftWorldPathResolver.TryResolveWorldPath(server));
+    }
+
+    [TestMethod]
+    public void MissingConfiguredWorldDoesNotFallbackToDefaultWorld()
+    {
+        string server = CreateRoot();
+        string fallbackWorld = Path.Combine(server, "world");
+        Directory.CreateDirectory(fallbackWorld);
+        File.WriteAllText(Path.Combine(fallbackWorld, "level.dat"), string.Empty);
+        File.WriteAllText(
+            Path.Combine(server, "server.properties"),
+            "level-name=missing-world");
+
+        Assert.IsNull(MinecraftWorldPathResolver.TryResolveWorldPath(server));
+    }
+
     private static bool Build(
         string source,
         string world,
