@@ -576,24 +576,6 @@ namespace MineRewind
             return File.Exists(playerDatPath);
         }
 
-        /// <summary>
-        /// 兼容旧调用方的基础信息读取接口。
-        /// </summary>
-        public static (string? LevelName, string? GameMode, long? DayTime, long? LastPlayed)? GetWorldInfo(string worldPath)
-        {
-            var details = TryGetWorldDetails(worldPath);
-            if (details == null)
-            {
-                return null;
-            }
-
-            return (
-                string.IsNullOrWhiteSpace(details.LevelName) ? null : details.LevelName,
-                string.IsNullOrWhiteSpace(details.GameMode) ? null : details.GameMode,
-                details.DayTime,
-                details.LastPlayed);
-        }
-
         private static string ResolveGameMode(int? gameType)
         {
             return gameType switch

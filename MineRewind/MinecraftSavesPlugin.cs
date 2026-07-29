@@ -263,7 +263,6 @@ namespace MineRewind
                     new FolderDetailsItem { Label = Localize("MineRewind_Details_TotalTime"), Value = FormatWorldTicks(details.TotalTime) },
                     new FolderDetailsItem { Label = Localize("MineRewind_Details_LastPlayed"), Value = FormatLastPlayed(details.LastPlayed) },
                     new FolderDetailsItem { Label = Localize("MineRewind_Details_PlayerData"), Value = details.HasPlayerData ? Localize("MineRewind_Details_Yes") : Localize("MineRewind_Details_No") },
-                    // new FolderDetailsItem { Label = Localize("MineRewind_Details_DataVersion"), Value = details.DataVersion?.ToString(CultureInfo.InvariantCulture) ?? string.Empty },
                     new FolderDetailsItem { Label = Localize("MineRewind_Details_Format"), Value = details.IsNewFormat ? Localize("MineRewind_Details_Format_New") : Localize("MineRewind_Details_Format_Legacy") }
                 }
             };
