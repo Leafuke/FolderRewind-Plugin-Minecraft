@@ -102,7 +102,7 @@ World1/
 2. 在设置中启用插件。
 3. 新建配置时选择扫描 `.minecraft` 目录，或者直接选择 `saves` / 单个世界目录。
 4. 插件会自动按 Minecraft 版本创建备份配置。
-5. 如果需要热还原和保留玩家数据，请同时安装 MineBackup 联动模组以及 [KnotLink 服务端](https://github.com/KnotLink-Protocol/KnotLink/releases)。
+5. 如果需要热还原和保留玩家数据，请同时安装 MineBackup 联动模组以及 [KnotLink 服务端](https://github.com/KnotLink-Protocol/KnotLinkService/releases)。
 
 - FolderRewind 下载：
 
@@ -124,3 +124,4 @@ World1/
 2. 将以下文件打包为 `.zip`：
    - `MineRewind.dll`
    - `manifest.json`
+   - `fNBT.dll`
