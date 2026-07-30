@@ -48,13 +48,23 @@ namespace MineRewind
 
             var signal = new List<PluginKnotLinkSignalCapability>
             {
-                SignalCapability("handshake", "Request a companion mod handshake.", "version", "Main application compatibility version."),
-                SignalCapability("handshake_ack", "Acknowledge a companion mod handshake.", "status", "Compatibility status."),
-                SignalCapability("pre_hot_backup", "Ask the companion mod to save before hot backup.", "world", "Minecraft world name."),
-                SignalCapability("pre_hot_restore", "Ask the companion mod to save and exit before restore.", "world", "Minecraft world name."),
-                SignalCapability("restore_cancelled", "Report that hot restore was cancelled.", "reason", "Cancellation reason."),
-                SignalCapability("rejoin_world", "Ask the companion mod to rejoin a restored world.", "world", "Minecraft world name."),
-                SignalCapability("hot_restore_complete", "Report hot restore completion.", "status", "Restore result status.")
+                SignalCapability("handshake", "Request a companion mod handshake.",
+                    ("version", "Main application compatibility version.")),
+                SignalCapability("handshake_ack", "Acknowledge a companion mod handshake.",
+                    ("status", "Compatibility status.")),
+                SignalCapability("pre_hot_backup", "Ask the companion mod to save before hot backup.",
+                    ("world", "Minecraft world name.")),
+                SignalCapability("hot_restore_requested", "Ask MineBackup 3.1+ to start its current-world restore countdown.",
+                    ("file", "Optional safe backup archive ID; missing means the latest backup."),
+                    ("request_id", "UUID reused by the subsequent RESTORE conversation.")),
+                SignalCapability("pre_hot_restore", "Ask the companion mod to save and exit before restore.",
+                    ("world", "Minecraft world name.")),
+                SignalCapability("restore_cancelled", "Report that hot restore was cancelled.",
+                    ("reason", "Cancellation reason.")),
+                SignalCapability("rejoin_world", "Ask the companion mod to rejoin a restored world.",
+                    ("world", "Minecraft world name.")),
+                SignalCapability("hot_restore_complete", "Report hot restore completion.",
+                    ("status", "Restore result status."))
             };
 
             return new PluginKnotLinkCapabilityContribution { OpenSocket = openSocket, Signal = signal };
@@ -85,17 +95,24 @@ namespace MineRewind
         private static PluginKnotLinkSignalCapability SignalCapability(
             string name,
             string description,
-            string fieldName,
-            string fieldDescription) => new()
+            params (string Name, string Description)[] fields)
         {
-            Name = name,
-            Description = description,
-            Returns = new Dictionary<string, KnotLinkSignalField>(StringComparer.Ordinal)
+            var returns = new Dictionary<string, KnotLinkSignalField>(StringComparer.Ordinal)
             {
-                ["event"] = new() { Description = "Signal event name.", Verification = name },
-                [fieldName] = new() { Description = fieldDescription }
+                ["event"] = new() { Description = "Signal event name.", Verification = name }
+            };
+            foreach (var field in fields)
+            {
+                returns[field.Name] = new() { Description = field.Description };
             }
-        };
+
+            return new PluginKnotLinkSignalCapability
+            {
+                Name = name,
+                Description = description,
+                Returns = returns
+            };
+        }
 
     }
 }

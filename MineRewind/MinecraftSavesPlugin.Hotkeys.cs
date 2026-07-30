@@ -88,8 +88,17 @@ namespace MineRewind
                     return;
                 }
 
-                var (config, folder) = active.Value;
-                await TriggerHotRestoreAsync(config, folder);
+                var result = await RequestHotRestoreAsync(
+                    archiveFileName: null,
+                    hostContext: hostContext);
+                if (result.Status == PluginRestoreInterceptionStatus.Handled)
+                {
+                    NotificationService.ShowInfo(result.Message);
+                }
+                else if (result.Status == PluginRestoreInterceptionStatus.Blocked)
+                {
+                    NotificationService.ShowError(result.Message);
+                }
             }
             catch (Exception ex)
             {
@@ -132,27 +141,9 @@ namespace MineRewind
         }
 
         private static bool IsWorldOccupied(string worldPath)
-        {
-            try
-            {
-                var sessionLock = Path.Combine(worldPath, "session.lock");
-                if (File.Exists(sessionLock) && FileLockService.IsFileLocked(sessionLock)) return true;
-
-                var dbDir = Path.Combine(worldPath, "db");
-                if (Directory.Exists(dbDir))
-                {
-                    foreach (var entry in Directory.EnumerateFiles(dbDir))
-                    {
-                        if (FileLockService.IsFileLocked(entry)) return true;
-                    }
-                }
-            }
-            catch
-            {
-            }
-
-            return false;
-        }
+            => MinecraftHotRestoreProtocol.IsWorldOccupied(
+                worldPath,
+                FileLockService.IsFileLocked);
 
         #endregion
     }

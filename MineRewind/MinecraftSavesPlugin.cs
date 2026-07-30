@@ -18,7 +18,7 @@ namespace MineRewind
     /// 4. 配置类型 - 定义 "Minecraft Saves" 类型
     /// 5. KnotLink 互联 - 与 MineBackup 联动模组握手、协调备份/还原
     /// </summary>
-    public partial class MinecraftSavesPlugin : IFolderRewindPlugin, IFolderRewindConfigAugmenter, IFolderRewindHotkeyProvider, IFolderRewindParameterizedKnotLinkCommandHandler, IFolderRewindKnotLinkCapabilityProvider, IFolderRewindBackupScopeProvider, IFolderRewindBackupPreparationProvider, IFolderRewindFolderDetailsProvider
+    public partial class MinecraftSavesPlugin : IFolderRewindPlugin, IFolderRewindConfigAugmenter, IFolderRewindHotkeyProvider, IFolderRewindParameterizedKnotLinkCommandHandler, IFolderRewindKnotLinkCapabilityProvider, IFolderRewindBackupScopeProvider, IFolderRewindBackupPreparationProvider, IFolderRewindFolderDetailsProvider, IFolderRewindRestoreInterceptor
     {
         #region 常量
 
@@ -32,7 +32,7 @@ namespace MineRewind
 
         // 伪装版本：联动模组只认 MineBackup 1.14.0+
         private const string FakeVersion = "1.16.0";
-        private const string MinModVersion = "3.0.0";
+        private const string MinModVersion = "3.1.0";
 
         // 超时常量（参考 MineBackup C++ 实现）
         private const int HandshakeTimeoutMs = 3_000;
@@ -92,7 +92,7 @@ namespace MineRewind
         {
             Id = "com.folderrewind.minerewind",
             Name = "MineRewind",
-            Version = "1.8.0",
+            Version = "1.8.1",
             Author = "Leafuke",
             Description = "Enhanced Minecraft saves backup: lock-friendly backup, batch discovery under .minecraft",
             LocalizedName = new Dictionary<string, string>
@@ -107,7 +107,7 @@ namespace MineRewind
             },
             EntryAssembly = "MineRewind.dll",
             EntryType = "MineRewind.MinecraftSavesPlugin",
-            MinHostVersion = "1.8.0",
+            MinHostVersion = "1.8.1",
             Repository = "Leafuke/FolderRewind-Plugin-Minecraft"
         };
 

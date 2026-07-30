@@ -236,7 +236,13 @@ namespace MineRewind
                 LogService.LogInfo($"Restoring '{worldName}' from '{latestBackup}'...", "MineRewind");
                 try
                 {
-                    await BackupService.RestoreBackupAsync(config, folder, latestBackup, BackupService.RestoreMode.Overwrite);
+                    var historyItem = HistoryService.TryGetEntry(config.Id, folder.Path, latestBackup);
+                    var restoreMode = MinecraftHotRestoreProtocol.ResolveRestoreMode(
+                        historyItem?.IsPartialBackup == true);
+                    LogService.LogInfo(
+                        $"Hot restore mode for '{latestBackup}': {restoreMode} (partial={historyItem?.IsPartialBackup == true}).",
+                        "MineRewind");
+                    await BackupService.RestoreBackupAsync(config, folder, latestBackup, restoreMode);
                 }
                 catch (Exception ex)
                 {
