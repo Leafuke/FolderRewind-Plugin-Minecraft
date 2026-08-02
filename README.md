@@ -11,6 +11,8 @@
 
 ### 2. 热还原 (Hot Restore)
 - 通过与 [MineBackup联动模组](https://github.com/Leafuke/MineBackup-Mod) 通信，实现 `Alt+Ctrl+Z` 快捷键以及 `/mb quickrestore` 指令还原。
+- 历史页还原正在运行的世界时，会与热键共用 `handshake → pre_hot_restore → 世界释放 → RESTORE → rejoin` 流程，不需要单独的游戏内倒计时请求。
+- 完整备份热还原使用清理模式，部分备份热还原使用覆写模式。
 - 支持自动退出存档、自动还原、自动重进。
 - 支持多人联机环境下的热还原，确保所有玩家都能正确回到指定版本。
 

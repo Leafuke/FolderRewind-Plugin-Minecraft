@@ -7,7 +7,7 @@ namespace MineRewind
 {
     public partial class MinecraftSavesPlugin
     {
-        public async Task<PluginRestoreInterceptionResult> TryInterceptRestoreAsync(
+        public Task<PluginRestoreInterceptionResult> TryInterceptRestoreAsync(
             BackupConfig config,
             ManagedFolder folder,
             string archiveFileName,
@@ -18,7 +18,7 @@ namespace MineRewind
 
             if (!CanHandleConfigType(config.ConfigType))
             {
-                return PluginRestoreInterceptionResult.Continue();
+                return Task.FromResult(PluginRestoreInterceptionResult.Continue());
             }
 
             if (string.Equals(
@@ -26,41 +26,37 @@ namespace MineRewind
                 "RESTORE",
                 StringComparison.OrdinalIgnoreCase))
             {
-                return PluginRestoreInterceptionResult.Continue();
+                return Task.FromResult(PluginRestoreInterceptionResult.Continue());
             }
 
             var worldPath = MinecraftWorldPathResolver.TryResolveWorldPath(folder.Path);
             if (worldPath == null || !IsWorldOccupied(worldPath))
             {
-                return PluginRestoreInterceptionResult.Continue();
+                return Task.FromResult(PluginRestoreInterceptionResult.Continue());
             }
 
             try
             {
-                return await RequestHotRestoreAsync(
+                return Task.FromResult(RequestHotRestore(
+                    config,
+                    folder,
                     archiveFileName,
-                    _hostContext,
-                    cancellationToken).ConfigureAwait(false);
-            }
-            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
-            {
-                throw;
+                    _hostContext));
             }
             catch (Exception ex)
             {
-                string failedMessage = Localize("MineRewind_HotRestore_BroadcastFailed");
+                string failedMessage = Localize("MineRewind_HotRestore_StartFailed");
                 LogService.LogError(failedMessage, "MineRewind", ex);
-                return PluginRestoreInterceptionResult.Blocked(failedMessage);
+                return Task.FromResult(PluginRestoreInterceptionResult.Blocked(failedMessage));
             }
         }
 
-        private async Task<PluginRestoreInterceptionResult> RequestHotRestoreAsync(
+        private PluginRestoreInterceptionResult RequestHotRestore(
+            BackupConfig config,
+            ManagedFolder folder,
             string? archiveFileName,
-            PluginHostContext? hostContext,
-            CancellationToken cancellationToken = default)
+            PluginHostContext? hostContext)
         {
-            cancellationToken.ThrowIfCancellationRequested();
-
             if (!MinecraftHotRestoreProtocol.TryNormalizeBackupId(archiveFileName, out var normalizedFile))
             {
                 string invalidMessage = Localize("MineRewind_HotRestore_InvalidBackupId");
@@ -77,26 +73,24 @@ namespace MineRewind
                 return PluginRestoreInterceptionResult.Blocked(unavailableMessage);
             }
 
-            var requestId = Guid.NewGuid();
-            var fields = MinecraftHotRestoreProtocol.BuildRequestFields(normalizedFile, requestId);
-            bool sent = await hostContext.TryBroadcastEventAsync(
-                null,
-                "hot_restore_requested",
-                fields).ConfigureAwait(false);
-            if (!sent)
+            if (!TryStartHotRestore(
+                config,
+                folder,
+                normalizedFile,
+                forcePreservePlayerData: false,
+                out _))
             {
-                string failedMessage = Localize("MineRewind_HotRestore_BroadcastFailed");
-                LogService.LogWarning(failedMessage, "MineRewind");
-                return PluginRestoreInterceptionResult.Blocked(failedMessage);
+                string busyMessage = Localize("MineRewind_HotRestore_Busy");
+                LogService.LogWarning(busyMessage, "MineRewind");
+                return PluginRestoreInterceptionResult.Blocked(busyMessage);
             }
 
             string target = normalizedFile == null
                 ? Localize("MineRewind_HotRestore_TargetLatest")
                 : LocalizeFormat("MineRewind_HotRestore_TargetFile", normalizedFile);
             string acceptedMessage = LocalizeFormat(
-                "MineRewind_HotRestore_Requested",
-                target,
-                requestId.ToString("D"));
+                "MineRewind_HotRestore_Started",
+                target);
             LogService.LogInfo(acceptedMessage, "MineRewind");
             return PluginRestoreInterceptionResult.Handled(acceptedMessage);
         }

@@ -128,18 +128,47 @@ namespace MineRewind
 
         private async Task TriggerHotRestoreAsync(BackupConfig config, ManagedFolder folder, string? specificBackupFile = null, bool forcePreservePlayerData = false)
         {
-            if (Interlocked.CompareExchange(ref _hotRestoreState, RestoreWaitingForMod, RestoreIdle) != RestoreIdle)
+            if (!TryStartHotRestore(
+                config,
+                folder,
+                specificBackupFile,
+                forcePreservePlayerData,
+                out var operation))
             {
                 LogService.LogWarning("Hot restore already in progress, ignoring request.", "MineRewind");
                 return;
             }
 
-            var worldPath = MinecraftWorldPathResolver.TryResolveWorldPath(folder.Path) ?? folder.Path;
-            var worldName = Path.GetFileName(worldPath);
+            await operation.ConfigureAwait(false);
+        }
+
+        private bool TryStartHotRestore(
+            BackupConfig config,
+            ManagedFolder folder,
+            string? specificBackupFile,
+            bool forcePreservePlayerData,
+            out Task operation)
+        {
+            if (Interlocked.CompareExchange(ref _hotRestoreState, RestoreWaitingForMod, RestoreIdle) != RestoreIdle)
+            {
+                operation = Task.CompletedTask;
+                return false;
+            }
+
+            operation = RunHotRestoreAsync(config, folder, specificBackupFile, forcePreservePlayerData);
+            return true;
+        }
+
+        private async Task RunHotRestoreAsync(BackupConfig config, ManagedFolder folder, string? specificBackupFile, bool forcePreservePlayerData)
+        {
+            var worldPath = folder.Path;
+            var worldName = folder.DisplayName ?? string.Empty;
             _forcePreserveNextRestore = forcePreservePlayerData;
 
             try
             {
+                worldPath = MinecraftWorldPathResolver.TryResolveWorldPath(folder.Path) ?? folder.Path;
+                worldName = Path.GetFileName(worldPath);
                 LogService.LogInfo($"Starting hot restore for '{worldName}'...", "MineRewind");
 
                 var handshakeOk = await PerformModHandshakeAsync("restore", worldName);

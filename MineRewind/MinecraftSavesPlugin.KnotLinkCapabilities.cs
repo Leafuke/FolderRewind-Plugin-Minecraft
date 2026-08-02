@@ -49,14 +49,14 @@ namespace MineRewind
             var signal = new List<PluginKnotLinkSignalCapability>
             {
                 SignalCapability("handshake", "Request a companion mod handshake.",
-                    ("version", "Main application compatibility version.")),
+                    ("version", "Main application compatibility version."),
+                    ("action", "Requested coordination action: backup or restore."),
+                    ("world", "Minecraft world name."),
+                    ("min_mod_version", "Minimum compatible companion mod version.")),
                 SignalCapability("handshake_ack", "Acknowledge a companion mod handshake.",
                     ("status", "Compatibility status.")),
                 SignalCapability("pre_hot_backup", "Ask the companion mod to save before hot backup.",
                     ("world", "Minecraft world name.")),
-                SignalCapability("hot_restore_requested", "Ask MineBackup 3.1+ to start its current-world restore countdown.",
-                    ("file", "Optional safe backup archive ID; missing means the latest backup."),
-                    ("request_id", "UUID reused by the subsequent RESTORE conversation.")),
                 SignalCapability("pre_hot_restore", "Ask the companion mod to save and exit before restore.",
                     ("world", "Minecraft world name.")),
                 SignalCapability("restore_cancelled", "Report that hot restore was cancelled.",

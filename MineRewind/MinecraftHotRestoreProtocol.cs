@@ -4,22 +4,6 @@ namespace MineRewind
 {
     internal static class MinecraftHotRestoreProtocol
     {
-        public static IReadOnlyDictionary<string, string?> BuildRequestFields(
-            string? normalizedFile,
-            Guid requestId)
-        {
-            var fields = new Dictionary<string, string?>(StringComparer.OrdinalIgnoreCase)
-            {
-                ["request_id"] = requestId.ToString("D")
-            };
-            if (normalizedFile != null)
-            {
-                fields["file"] = normalizedFile;
-            }
-
-            return fields;
-        }
-
         public static bool TryNormalizeBackupId(string? value, out string? normalized)
         {
             normalized = null;

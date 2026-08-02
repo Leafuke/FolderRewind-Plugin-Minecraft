@@ -88,17 +88,8 @@ namespace MineRewind
                     return;
                 }
 
-                var result = await RequestHotRestoreAsync(
-                    archiveFileName: null,
-                    hostContext: hostContext);
-                if (result.Status == PluginRestoreInterceptionStatus.Handled)
-                {
-                    NotificationService.ShowInfo(result.Message);
-                }
-                else if (result.Status == PluginRestoreInterceptionStatus.Blocked)
-                {
-                    NotificationService.ShowError(result.Message);
-                }
+                var (config, folder) = active.Value;
+                await TriggerHotRestoreAsync(config, folder);
             }
             catch (Exception ex)
             {

@@ -32,7 +32,7 @@ namespace MineRewind
 
         // 伪装版本：联动模组只认 MineBackup 1.14.0+
         private const string FakeVersion = "1.16.0";
-        private const string MinModVersion = "3.1.0";
+        private const string MinModVersion = "3.0.0";
 
         // 超时常量（参考 MineBackup C++ 实现）
         private const int HandshakeTimeoutMs = 3_000;
