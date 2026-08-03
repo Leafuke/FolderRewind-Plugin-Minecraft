@@ -9,6 +9,8 @@ namespace MineRewind
         {
             ["MineRewind_Setting_AutoDiscoverSaves_Name"] = "Auto-discover saves",
             ["MineRewind_Setting_AutoDiscoverSaves_Desc"] = "When FolderRewind starts, automatically add newly created worlds from the sibling saves directories of existing Minecraft Saves entries.",
+            ["MineRewind_Setting_AutoCreateConfigs_Name"] = "Auto-detect and add configs",
+            ["MineRewind_Setting_AutoCreateConfigs_Desc"] = "Immediately scan when enabled and on every FolderRewind startup. Locate .minecraft from existing Minecraft Saves configs and create configs for unmanaged instances.",
             ["MineRewind_Setting_PreservePlayerData_Name"] = "Preserve player data on restore",
             ["MineRewind_Setting_PreservePlayerData_Desc"] = "Keep the current player's position, inventory, XP, etc. when restoring a save (single-player only). Usually not needed.",
             ["MineRewind_BackupScope_SelectedRegions_Name"] = "Minecraft Selected Regions",
@@ -70,6 +72,8 @@ namespace MineRewind
         {
             ["MineRewind_Setting_AutoDiscoverSaves_Name"] = "自动发现存档",
             ["MineRewind_Setting_AutoDiscoverSaves_Desc"] = "FolderRewind 启动时，自动从已有 Minecraft 存档所在的同级 saves 目录补充新建世界。",
+            ["MineRewind_Setting_AutoCreateConfigs_Name"] = "自动识别并添加配置",
+            ["MineRewind_Setting_AutoCreateConfigs_Desc"] = "启用后立即扫描，并在每次 FolderRewind 启动时从现有 Minecraft 存档配置定位 .minecraft，为尚未管理的实例创建配置。",
             ["MineRewind_Setting_PreservePlayerData_Name"] = "还原时保留玩家数据",
             ["MineRewind_Setting_PreservePlayerData_Desc"] = "还原存档时**不还原**当前玩家的位置、物品栏、经验等数据（仅单人存档）。一般不需要开启。",
             ["MineRewind_BackupScope_SelectedRegions_Name"] = "Minecraft 指定区域",

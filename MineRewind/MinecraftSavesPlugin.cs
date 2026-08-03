@@ -24,6 +24,7 @@ namespace MineRewind
 
         private const string ConfigTypeName = "Minecraft Saves";
         private const string AutoDiscoverSavesSettingKey = "AutoDiscoverSaves";
+        private const string AutoCreateConfigsSettingKey = "AutoCreateConfigs";
         private const string PreservePlayerDataSettingKey = "PreservePlayerData";
         private static readonly string[] RequiredFilterEntries = { "session.lock", "voxy", "DistantHorizons.sqlite", "DistantHorizons.sqlite-shm", "DistantHorizons.sqlite-wal" };
 
@@ -56,6 +57,7 @@ namespace MineRewind
         #region 私有字段
 
         private bool _autoDiscoverSaves = true;
+        private bool _autoCreateConfigs = false;
         private bool _preservePlayerData = false;
 
         // 当 RESTORE + preserve_player_data 触发时，强制下一次还原保留玩家数据，
@@ -130,6 +132,15 @@ namespace MineRewind
                 },
                 new()
                 {
+                    Key = AutoCreateConfigsSettingKey,
+                    DisplayName = Localize("MineRewind_Setting_AutoCreateConfigs_Name"),
+                    Description = Localize("MineRewind_Setting_AutoCreateConfigs_Desc"),
+                    Type = PluginSettingType.Boolean,
+                    DefaultValue = "false",
+                    IsRequired = false
+                },
+                new()
+                {
                     Key = PreservePlayerDataSettingKey,
                     DisplayName = Localize("MineRewind_Setting_PreservePlayerData_Name"),
                     Description = Localize("MineRewind_Setting_PreservePlayerData_Desc"),
@@ -147,6 +158,7 @@ namespace MineRewind
         public void Initialize(IReadOnlyDictionary<string, string> settingsValues)
         {
             _autoDiscoverSaves = GetBoolSetting(settingsValues, AutoDiscoverSavesSettingKey, true);
+            _autoCreateConfigs = GetBoolSetting(settingsValues, AutoCreateConfigsSettingKey, false);
             _preservePlayerData = GetBoolSetting(settingsValues, PreservePlayerDataSettingKey, false);
 
             if (EnsureExistingMinecraftConfigFilters())

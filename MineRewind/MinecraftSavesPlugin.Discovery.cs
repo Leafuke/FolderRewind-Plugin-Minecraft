@@ -224,89 +224,36 @@ namespace MineRewind
 
         private IEnumerable<BackupConfig> CreateConfigsFromDotMinecraft(string dotMinecraftPath)
         {
-            var configs = new List<BackupConfig>();
-            var versionSavesMap = new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase);
+            return MinecraftInstanceDiscoveryPlanner
+                .DiscoverInstances(dotMinecraftPath, LogDiscoveryWarning)
+                .Select(CreateConfigForInstance)
+                .ToArray();
+        }
 
-            var directSaves = Path.Combine(dotMinecraftPath, "saves");
-            if (Directory.Exists(directSaves))
+        private BackupConfig CreateConfigForInstance(MinecraftInstanceDescriptor instance)
+        {
+            var config = new BackupConfig
             {
-                var worlds = Directory.EnumerateDirectories(directSaves)
-                    .Where(d => File.Exists(Path.Combine(d, "level.dat")))
-                    .ToList();
+                Name = $"Minecraft - {instance.VersionName}",
+                ConfigType = ConfigTypeName,
+                IconGlyph = "\uE7FC"
+            };
 
-                if (worlds.Count > 0)
-                {
-                    versionSavesMap["Default"] = worlds;
-                }
+            foreach (string worldPath in instance.WorldPaths)
+            {
+                config.SourceFolders.Add(CreateManagedFolder(worldPath));
             }
 
-            // 收集每个版本目录下的 mods 文件夹路径
-            var versionModsMap = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-
-            // .minecraft/mods 对应 Default 配置
-            var directMods = Path.Combine(dotMinecraftPath, "mods");
-            if (Directory.Exists(directMods))
+            if (!string.IsNullOrWhiteSpace(instance.ModsPath))
             {
-                versionModsMap["Default"] = directMods;
+                config.SourceFolders.Add(CreateModsManagedFolder(instance.ModsPath));
             }
 
-            var versionsDir = Path.Combine(dotMinecraftPath, "versions");
-            if (Directory.Exists(versionsDir))
-            {
-                foreach (var versionDir in Directory.EnumerateDirectories(versionsDir))
-                {
-                    var versionName = Path.GetFileName(versionDir);
-                    var versionSaves = Path.Combine(versionDir, "saves");
-
-                    if (Directory.Exists(versionSaves))
-                    {
-                        var worlds = Directory.EnumerateDirectories(versionSaves)
-                            .Where(d => File.Exists(Path.Combine(d, "level.dat")))
-                            .ToList();
-
-                        if (worlds.Count > 0)
-                        {
-                            versionSavesMap[versionName] = worlds;
-                        }
-                    }
-
-                    // 检查版本目录下的 mods 文件夹
-                    var versionMods = Path.Combine(versionDir, "mods");
-                    if (Directory.Exists(versionMods))
-                    {
-                        versionModsMap[versionName] = versionMods;
-                    }
-                }
-            }
-
-            foreach (var kvp in versionSavesMap)
-            {
-                var config = new BackupConfig
-                {
-                    Name = $"Minecraft - {kvp.Key}",
-                    ConfigType = ConfigTypeName,
-                    IconGlyph = "\uE7FC",
-                };
-
-                foreach (var worldPath in kvp.Value)
-                {
-                    config.SourceFolders.Add(CreateManagedFolder(worldPath));
-                }
-
-                // 添加对应版本的 mods 文件夹
-                if (versionModsMap.TryGetValue(kvp.Key, out var modsPath))
-                {
-                    config.SourceFolders.Add(CreateModsManagedFolder(modsPath));
-                }
-
-                config.ExtendedProperties["MinecraftVersion"] = kvp.Key;
-                config.ExtendedProperties["Plugin"] = Manifest.Id;
-                EnsureRequiredFilters(config);
-
-                configs.Add(config);
-            }
-
-            return configs;
+            config.ExtendedProperties["MinecraftVersion"] = instance.VersionName;
+            config.ExtendedProperties["MinecraftInstancePath"] = instance.InstancePath;
+            config.ExtendedProperties["Plugin"] = Manifest.Id;
+            EnsureRequiredFilters(config);
+            return config;
         }
 
         private BackupConfig? CreateConfigForVersion(string versionDirPath)
@@ -350,6 +297,7 @@ namespace MineRewind
                 return null;
 
             config.ExtendedProperties["MinecraftVersion"] = versionName;
+            config.ExtendedProperties["MinecraftInstancePath"] = MinecraftInstanceDiscoveryPlanner.NormalizePath(versionDirPath);
             config.ExtendedProperties["Plugin"] = Manifest.Id;
             EnsureRequiredFilters(config);
 
@@ -391,6 +339,10 @@ namespace MineRewind
                 return null;
 
             config.ExtendedProperties["MinecraftVersion"] = versionName;
+            if (parentDir != null)
+            {
+                config.ExtendedProperties["MinecraftInstancePath"] = MinecraftInstanceDiscoveryPlanner.NormalizePath(parentDir);
+            }
             config.ExtendedProperties["Plugin"] = Manifest.Id;
             EnsureRequiredFilters(config);
 

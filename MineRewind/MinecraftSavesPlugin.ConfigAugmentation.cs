@@ -2,7 +2,6 @@ using FolderRewind.Models;
 using FolderRewind.Services;
 using FolderRewind.Services.Plugins;
 using System.Collections.Generic;
-using System.IO;
 using System.Linq;
 
 namespace MineRewind;
@@ -13,32 +12,117 @@ public partial class MinecraftSavesPlugin
         PluginConfigAugmentationRequest request,
         IReadOnlyDictionary<string, string> settingsValues)
     {
-        if (!GetBoolSetting(settingsValues, AutoDiscoverSavesSettingKey, true))
+        bool autoDiscoverSaves = GetBoolSetting(settingsValues, AutoDiscoverSavesSettingKey, true);
+        bool autoCreateConfigs = GetBoolSetting(settingsValues, AutoCreateConfigsSettingKey, false);
+        if (!autoDiscoverSaves && !autoCreateConfigs)
         {
             return new PluginConfigAugmentationResult { Handled = false };
         }
 
-        var items = new List<PluginConfigAugmentationItem>();
-
-        foreach (var config in request.Configs.Where(IsEligibleMinecraftConfig))
+        var configs = (request.Configs ?? Array.Empty<BackupConfig>())
+            .Where(static config => config != null)
+            .ToList();
+        var minecraftConfigs = configs
+            .Where(MinecraftInstanceDiscoveryPlanner.IsMinecraftConfig)
+            .ToList();
+        if (minecraftConfigs.Count == 0)
         {
-            var foldersToAdd = DiscoverAugmentedFolders(config);
-            if (foldersToAdd.Count == 0)
+            return new PluginConfigAugmentationResult { Handled = false };
+        }
+
+        var instancesByConfig = minecraftConfigs.ToDictionary(
+            static config => config,
+            MinecraftInstanceDiscoveryPlanner.GetReferencedInstances);
+        var representedInstances = new HashSet<string>(
+            instancesByConfig.Values.SelectMany(static instances => instances),
+            StringComparer.OrdinalIgnoreCase);
+        var knownPaths = new HashSet<string>(
+            configs.SelectMany(config => config.SourceFolders ?? Enumerable.Empty<ManagedFolder>())
+                .Select(folder => MinecraftInstanceDiscoveryPlanner.NormalizePath(folder?.Path))
+                .Where(static path => !string.IsNullOrWhiteSpace(path)),
+            StringComparer.OrdinalIgnoreCase);
+
+        var discoveredInstances = MinecraftInstanceDiscoveryPlanner
+            .FindDotMinecraftRoots(minecraftConfigs)
+            .SelectMany(root => MinecraftInstanceDiscoveryPlanner.DiscoverInstances(root, LogDiscoveryWarning))
+            .GroupBy(static instance => instance.InstancePath, StringComparer.OrdinalIgnoreCase)
+            .Select(static group => group.First())
+            .OrderBy(static instance => instance.InstancePath, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        var foldersByConfig = new Dictionary<BackupConfig, List<ManagedFolder>>();
+        if (autoDiscoverSaves)
+        {
+            foreach (var instance in discoveredInstances.Where(instance => representedInstances.Contains(instance.InstancePath)))
             {
-                continue;
+                var owner = SelectInstanceOwner(instance.InstancePath, minecraftConfigs, instancesByConfig);
+                if (owner == null)
+                {
+                    continue;
+                }
+
+                AddNewWorlds(
+                    owner,
+                    instance.WorldPaths.Select(CreateManagedFolder),
+                    knownPaths,
+                    foldersByConfig);
             }
 
-            items.Add(new PluginConfigAugmentationItem
+            foreach (var group in FindStandaloneSavesOwners(minecraftConfigs))
             {
-                ConfigId = config.Id,
-                FoldersToAdd = foldersToAdd
-            });
+                try
+                {
+                    AddNewWorlds(
+                        group.Owner,
+                        DiscoverFromSavesDirectory(group.SavesPath),
+                        knownPaths,
+                        foldersByConfig);
+                }
+                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+                {
+                    LogDiscoveryWarning($"Failed to enumerate Minecraft saves under '{group.SavesPath}': {ex.Message}");
+                }
+            }
         }
+
+        var configsToAdd = new List<BackupConfig>();
+        if (autoCreateConfigs)
+        {
+            foreach (var instance in discoveredInstances.Where(instance => !representedInstances.Contains(instance.InstancePath)))
+            {
+                var candidate = CreateConfigForInstance(instance);
+                var candidatePaths = candidate.SourceFolders
+                    .Select(folder => MinecraftInstanceDiscoveryPlanner.NormalizePath(folder.Path))
+                    .Where(static path => !string.IsNullOrWhiteSpace(path))
+                    .ToArray();
+                if (candidatePaths.Length == 0 || candidatePaths.Any(knownPaths.Contains))
+                {
+                    continue;
+                }
+
+                configsToAdd.Add(candidate);
+                representedInstances.Add(instance.InstancePath);
+                foreach (string path in candidatePaths)
+                {
+                    knownPaths.Add(path);
+                }
+            }
+        }
+
+        var items = foldersByConfig
+            .Where(static pair => pair.Value.Count > 0)
+            .Select(static pair => new PluginConfigAugmentationItem
+            {
+                ConfigId = pair.Key.Id,
+                FoldersToAdd = pair.Value
+            })
+            .ToArray();
 
         return new PluginConfigAugmentationResult
         {
-            Handled = items.Count > 0,
-            Items = items
+            Handled = items.Length > 0 || configsToAdd.Count > 0,
+            Items = items,
+            ConfigsToAdd = configsToAdd
         };
     }
 
@@ -46,86 +130,128 @@ public partial class MinecraftSavesPlugin
         IReadOnlyDictionary<string, string> previousSettings,
         IReadOnlyDictionary<string, string> currentSettings)
     {
-        bool wasEnabled = GetBoolSetting(previousSettings, AutoDiscoverSavesSettingKey, true);
-        bool isEnabled = GetBoolSetting(currentSettings, AutoDiscoverSavesSettingKey, true);
-        return !wasEnabled && isEnabled;
+        bool savesWereEnabled = GetBoolSetting(previousSettings, AutoDiscoverSavesSettingKey, true);
+        bool savesAreEnabled = GetBoolSetting(currentSettings, AutoDiscoverSavesSettingKey, true);
+        bool configsWereEnabled = GetBoolSetting(previousSettings, AutoCreateConfigsSettingKey, false);
+        bool configsAreEnabled = GetBoolSetting(currentSettings, AutoCreateConfigsSettingKey, false);
+        return (!savesWereEnabled && savesAreEnabled)
+            || (!configsWereEnabled && configsAreEnabled);
     }
 
-    private bool IsEligibleMinecraftConfig(BackupConfig config)
+    private static BackupConfig? SelectInstanceOwner(
+        string instancePath,
+        IReadOnlyList<BackupConfig> configs,
+        IReadOnlyDictionary<BackupConfig, IReadOnlySet<string>> instancesByConfig)
     {
-        if (config == null || !CanHandleConfigType(config.ConfigType))
-        {
-            return false;
-        }
-
-        if (config.ExtendedProperties.TryGetValue("Plugin", out var pluginId)
-            && string.Equals(pluginId, Manifest.Id, StringComparison.OrdinalIgnoreCase))
-        {
-            return true;
-        }
-
-        return config.SourceFolders.Any(folder => IsMinecraftWorldFolder(folder?.Path));
+        return configs
+            .Select((config, index) => new
+            {
+                Config = config,
+                Index = index,
+                Instances = instancesByConfig[config]
+            })
+            .Where(entry => entry.Instances.Contains(instancePath))
+            .OrderBy(entry => GetInstanceOwnerRank(entry.Config, entry.Instances, instancePath))
+            .ThenBy(static entry => entry.Index)
+            .Select(static entry => entry.Config)
+            .FirstOrDefault();
     }
 
-    private IReadOnlyList<ManagedFolder> DiscoverAugmentedFolders(BackupConfig config)
+    private static int GetInstanceOwnerRank(
+        BackupConfig config,
+        IReadOnlySet<string> referencedInstances,
+        string instancePath)
     {
-        var results = new List<ManagedFolder>();
-        var knownPaths = new HashSet<string>(
-            config.SourceFolders.Select(folder => folder.Path ?? string.Empty),
-            StringComparer.OrdinalIgnoreCase);
+        if (config.ExtendedProperties != null
+            && config.ExtendedProperties.TryGetValue("MinecraftInstancePath", out string? markedPath)
+            && string.Equals(
+                MinecraftInstanceDiscoveryPlanner.NormalizePath(markedPath),
+                instancePath,
+                StringComparison.OrdinalIgnoreCase))
+        {
+            return 0;
+        }
+
+        return referencedInstances.Count == 1 ? 1 : 2;
+    }
+
+    private static IReadOnlyList<(string SavesPath, BackupConfig Owner)> FindStandaloneSavesOwners(
+        IReadOnlyList<BackupConfig> configs)
+    {
+        return configs
+            .SelectMany((config, index) => config.SourceFolders.Select(folder => new
+            {
+                Config = config,
+                Index = index,
+                SavesPath = TryGetStandaloneSavesDirectory(folder?.Path)
+            }))
+            .Where(static entry => !string.IsNullOrWhiteSpace(entry.SavesPath))
+            .GroupBy(static entry => entry.SavesPath, StringComparer.OrdinalIgnoreCase)
+            .Select(static group =>
+            {
+                var owner = group.OrderBy(static entry => entry.Index).First();
+                return (owner.SavesPath, owner.Config);
+            })
+            .ToArray();
+    }
+
+    private static string TryGetStandaloneSavesDirectory(string? worldPath)
+    {
+        if (string.IsNullOrWhiteSpace(worldPath)
+            || !File.Exists(Path.Combine(worldPath, "level.dat"))
+            || !string.IsNullOrWhiteSpace(MinecraftInstanceDiscoveryPlanner.FindDotMinecraftRoot(worldPath)))
+        {
+            return string.Empty;
+        }
+
+        string? parent = Directory.GetParent(worldPath)?.FullName;
+        return !string.IsNullOrWhiteSpace(parent)
+            && string.Equals(Path.GetFileName(parent), "saves", StringComparison.OrdinalIgnoreCase)
+                ? MinecraftInstanceDiscoveryPlanner.NormalizePath(parent)
+                : string.Empty;
+    }
+
+    private static void AddNewWorlds(
+        BackupConfig owner,
+        IEnumerable<ManagedFolder> candidates,
+        ISet<string> knownPaths,
+        IDictionary<BackupConfig, List<ManagedFolder>> foldersByConfig)
+    {
         var knownDisplayNames = new HashSet<string>(
-            config.SourceFolders.Select(FolderNameConflictService.ResolveDisplayName),
+            owner.SourceFolders.Select(FolderNameConflictService.ResolveDisplayName),
             StringComparer.OrdinalIgnoreCase);
-        var scannedSavesDirs = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-
-        foreach (var folder in config.SourceFolders.Where(folder => folder != null && IsMinecraftWorldFolder(folder.Path)))
+        if (!foldersByConfig.TryGetValue(owner, out var folders))
         {
-            string? savesDir = TryGetSiblingSavesDirectory(folder.Path);
-            if (string.IsNullOrWhiteSpace(savesDir) || !scannedSavesDirs.Add(savesDir))
+            folders = new List<ManagedFolder>();
+            foldersByConfig[owner] = folders;
+        }
+        else
+        {
+            knownDisplayNames.UnionWith(folders.Select(FolderNameConflictService.ResolveDisplayName));
+        }
+
+        foreach (var candidate in candidates)
+        {
+            string normalizedPath = MinecraftInstanceDiscoveryPlanner.NormalizePath(candidate.Path);
+            if (knownPaths.Contains(normalizedPath))
             {
                 continue;
             }
 
-            foreach (var candidate in DiscoverFromSavesDirectory(savesDir))
+            string displayName = FolderNameConflictService.ResolveDisplayName(candidate);
+            if (knownDisplayNames.Contains(displayName))
             {
-                string candidatePath = candidate.Path?.Trim() ?? string.Empty;
-                string candidateName = FolderNameConflictService.ResolveDisplayName(candidate);
-
-                if (string.IsNullOrWhiteSpace(candidatePath) || knownPaths.Contains(candidatePath) || knownDisplayNames.Contains(candidateName))
-                {
-                    continue;
-                }
-
-                knownPaths.Add(candidatePath);
-                knownDisplayNames.Add(candidateName);
-                results.Add(candidate);
+                LogDiscoveryWarning(
+                    $"Skipped world '{candidate.Path}' because config '{owner.Name}' already contains display name '{displayName}'.");
+                continue;
             }
-        }
 
-        return results;
+            knownPaths.Add(normalizedPath);
+            knownDisplayNames.Add(displayName);
+            folders.Add(candidate);
+        }
     }
 
-    private static bool IsMinecraftWorldFolder(string? worldPath)
-    {
-        return !string.IsNullOrWhiteSpace(worldPath)
-            && File.Exists(Path.Combine(worldPath, "level.dat"));
-    }
-
-    private static string? TryGetSiblingSavesDirectory(string? worldPath)
-    {
-        if (string.IsNullOrWhiteSpace(worldPath))
-        {
-            return null;
-        }
-
-        string? parent = Directory.GetParent(worldPath)?.FullName;
-        if (string.IsNullOrWhiteSpace(parent))
-        {
-            return null;
-        }
-
-        return string.Equals(Path.GetFileName(parent), "saves", StringComparison.OrdinalIgnoreCase)
-            ? parent
-            : null;
-    }
+    private static void LogDiscoveryWarning(string message)
+        => LogService.LogWarning($"[MineRewind] {message}", "MineRewind");
 }
