@@ -94,9 +94,9 @@ namespace MineRewind
         {
             Id = "com.folderrewind.minerewind",
             Name = "MineRewind",
-            Version = "1.8.1",
+            Version = "1.8.2",
             Author = "Leafuke",
-            Description = "Enhanced Minecraft saves backup: lock-friendly backup, batch discovery under .minecraft",
+            Description = "Enhanced Minecraft saves backup: lock-friendly backup, batch and automatic config discovery under .minecraft",
             LocalizedName = new Dictionary<string, string>
             {
                 ["zh-CN"] = "MineRewind",
@@ -104,12 +104,12 @@ namespace MineRewind
             },
             LocalizedDescription = new Dictionary<string, string>
             {
-                ["zh-CN"] = "Minecraft 存档备份增强插件：支持热备份、批量扫描 .minecraft 目录、自动发现存档，以及全局热键触发备份",
-                ["en-US"] = "Enhanced Minecraft saves backup: lock-friendly backup, batch discovery under .minecraft, plus a global hotkey trigger",
+                ["zh-CN"] = "Minecraft 存档备份增强插件：支持热备份、批量扫描与自动识别 .minecraft 实例、自动发现存档，以及全局热键触发备份",
+                ["en-US"] = "Enhanced Minecraft saves backup: lock-friendly backup, batch and automatic instance discovery under .minecraft, plus global hotkeys",
             },
             EntryAssembly = "MineRewind.dll",
             EntryType = "MineRewind.MinecraftSavesPlugin",
-            MinHostVersion = "1.8.1",
+            MinHostVersion = "1.8.2",
             Repository = "Leafuke/FolderRewind-Plugin-Minecraft"
         };
 

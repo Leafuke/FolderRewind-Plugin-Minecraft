@@ -1,6 +1,6 @@
 # MineRewind - Minecraft 存档增强插件
 
-为 [FolderRewind](https://github.com/Leafuke/FolderRewind) 提供 Minecraft 存档备份增强功能，重点覆盖热备份、热还原和自动扫描 `.minecraft` 目录下的世界存档。
+为 [FolderRewind](https://github.com/Leafuke/FolderRewind) 提供 Minecraft 存档备份增强功能，重点覆盖热备份、热还原、自动发现世界存档，以及从现有配置识别 `.minecraft` 实例并创建配置。
 
 ## 功能特性
 
@@ -22,17 +22,23 @@
 - 自动识别 `.minecraft/mods` 和版本目录下的 `mods` 文件夹
 - 自动读取世界根目录下的 `icon.png` 作为封面
 
-### 4. 配置类型
+### 4. 自动识别并添加配置
+- 可从现有 `Minecraft Saves` 配置的源路径定位 `.minecraft`
+- 启用设置后立即扫描，并在每次 FolderRewind 启动时继续扫描
+- 按实例根目录去重，为尚未管理的默认实例或版本隔离实例创建独立配置
+- 混合配置引用到的每个实例都视为已管理，不会拆分或重复创建
+
+### 5. 配置类型
 - 定义 `Minecraft Saves` 配置类型
 - 自动为每个版本创建独立配置，配置名格式为 `Minecraft - 版本名`
 
-### 5. KnotLink 扩展
+### 6. KnotLink 扩展
 - 使用严格键值对 v2：`cmd=BACKUP;current_save=true`、`cmd=LIST_BACKUPS;current_save=true`、`cmd=RESTORE;current_save=true[;file=...]`
 - 当前世界备份支持一次性 `backup_mode`、`compression_method`、`compression_level` 参数；参数只影响本次归档，不写回 FolderRewind 配置
 - 所有值按 RFC 3986 percent-encoding；省略 `file` 时还原最新备份，添加 `preserve_player_data=true` 时保留玩家数据
 - 便于与 MineBackup 或其他支持 KnotLink 的组件联动
 
-### 6. 指定区域备份
+### 7. 指定区域备份
 
 - 每行区域必须使用 `x1,z1,x2,z2`，坐标按不变量格式解析，范围为 `[-30000000, 30000000]`
 - 最多接受 32 KiB、128 个非空非注释行，以及每个维度 4096 个去重后的区域文件
@@ -53,7 +59,8 @@
 
 | 设置项 | 类型 | 默认值 | 说明 |
 |--------|------|--------|------|
-| EnableHotBackup | Boolean | true | 启用热备份功能 |
+| AutoDiscoverSaves | Boolean | true | 启动时向已有 Minecraft 实例配置补充新世界 |
+| AutoCreateConfigs | Boolean | false | 从已有 Minecraft 配置定位 `.minecraft`，自动为未管理实例创建配置 |
 | PreservePlayerData | Boolean | false | 还原时保留玩家位置、物品栏、经验等数据 |
 
 ## 热键
