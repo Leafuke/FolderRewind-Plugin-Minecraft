@@ -24,4 +24,8 @@
     <Compile Include="..\..\FolderRewind\Models\DiscoveryModels.cs" Link="Source\Host\DiscoveryModels.cs" />
     <Compile Include="..\..\FolderRewind\Services\Plugins\IFolderRewindDiscoveryProvider.cs" Link="Source\Host\IFolderRewindDiscoveryProvider.cs" />
   </ItemGroup>
+
+  <ItemGroup>
+    <None Include="..\MineRewind\manifest.json" Link="manifest.json" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
 </Project>

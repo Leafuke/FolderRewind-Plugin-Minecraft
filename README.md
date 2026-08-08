@@ -2,6 +2,8 @@
 
 为 [FolderRewind](https://github.com/Leafuke/FolderRewind) 提供 Minecraft 存档备份增强功能，重点覆盖热备份、热还原、自动发现世界存档，以及从现有配置识别 `.minecraft` 实例并创建配置。
 
+MineRewind 1.9.0 起实现 FolderRewind 统一发现提供程序接口，最低需要 FolderRewind 1.9.0；旧的手动发现、批量创建和自动增强入口继续兼容。
+
 ## 功能特性
 
 ### 1. 热备份 (Hot Backup)
@@ -21,6 +23,7 @@
 - 支持 `.minecraft/versions/版本名/saves` 的版本隔离结构
 - 自动识别 `.minecraft/mods` 和版本目录下的 `mods` 文件夹
 - 自动读取世界根目录下的 `icon.png` 作为封面
+- 在 FolderRewind“自动发现游戏存档 Beta”中按 Minecraft 实例返回独立候选配置，并以 `level.dat` 作为高可信证据
 
 ### 4. 自动识别并添加配置
 - 可从现有 `Minecraft Saves` 配置的源路径定位 `.minecraft`
