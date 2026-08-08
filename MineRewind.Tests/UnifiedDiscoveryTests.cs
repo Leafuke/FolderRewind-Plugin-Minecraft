@@ -34,6 +34,8 @@ public sealed class UnifiedDiscoveryTests
             Assert.IsTrue(result.Candidates[0].BackupSets.All(set => set.SuggestedConfigType == "Minecraft Saves"));
             Assert.IsTrue(result.Candidates[0].BackupSets.SelectMany(set => set.Resources).All(resource =>
                 resource.IsSpecializedProvider
+                && resource.FixedRootExists
+                && resource.IsSelectedByDefault
                 && resource.Evidence.Any(evidence => evidence.Confidence == DiscoveryConfidence.High)));
 
             var legacyFolders = plugin.TryDiscoverManagedFolders(dotMinecraft, new Dictionary<string, string>());

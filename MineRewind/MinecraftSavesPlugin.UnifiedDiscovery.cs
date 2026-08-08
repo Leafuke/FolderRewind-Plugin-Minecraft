@@ -116,17 +116,16 @@ public partial class MinecraftSavesPlugin
                 worldPath,
                 Path.GetFileName(worldPath),
                 new[] { "save" },
-                "level.dat",
-                cancellationToken));
+                "level.dat"));
         }
         if (!string.IsNullOrWhiteSpace(instance.ModsPath))
         {
+            cancellationToken.ThrowIfCancellationRequested();
             resources.Add(CreateDirectoryResource(
                 instance.ModsPath,
                 $"mods ({instance.VersionName})",
                 new[] { "config" },
-                "mods directory",
-                cancellationToken));
+                "mods directory"));
         }
         return new BackupSetCandidate
         {
@@ -141,10 +140,9 @@ public partial class MinecraftSavesPlugin
         string path,
         string displayName,
         IReadOnlyList<string> tags,
-        string marker,
-        CancellationToken cancellationToken)
+        string marker)
     {
-        var (count, size) = MeasureDirectory(path, cancellationToken);
+        var pathExists = Directory.Exists(path);
         return new BackupResourceCandidate
         {
             ResourceId = $"{DiscoveryProviderId}:directory:{StableId(path)}",
@@ -166,9 +164,8 @@ public partial class MinecraftSavesPlugin
                     Source = DiscoveryProviderId
                 }
             },
-            CurrentMatchCount = count,
-            CurrentSizeBytes = size,
-            IsSelectedByDefault = count > 0
+            FixedRootExists = pathExists,
+            IsSelectedByDefault = pathExists
         };
     }
 
@@ -204,31 +201,6 @@ public partial class MinecraftSavesPlugin
         {
             roots.Add(normalized);
         }
-    }
-
-    private static (int Count, long Size) MeasureDirectory(string path, CancellationToken cancellationToken)
-    {
-        var count = 0;
-        long size = 0;
-        try
-        {
-            foreach (var file in Directory.EnumerateFiles(path, "*", SearchOption.AllDirectories))
-            {
-                cancellationToken.ThrowIfCancellationRequested();
-                count++;
-                try
-                {
-                    size += new FileInfo(file).Length;
-                }
-                catch (IOException)
-                {
-                }
-            }
-        }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
-        {
-        }
-        return (count, size);
     }
 
     private static string StableId(string path)
