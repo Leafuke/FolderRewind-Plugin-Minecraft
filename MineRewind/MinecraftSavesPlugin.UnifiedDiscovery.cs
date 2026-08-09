@@ -47,8 +47,9 @@ public partial class MinecraftSavesPlugin
             {
                 InstallationId = $"minecraft:{StableId(root)}",
                 Store = GameStore.Standalone,
-                InstallPath = root,
-                LibraryRoot = root,
+                RootPath = root,
+                BasePath = root,
+                InstalledGameName = Path.GetFileName(root.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)),
                 Evidence = new[]
                 {
                     new DiscoveryEvidence
