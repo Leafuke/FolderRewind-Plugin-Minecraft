@@ -139,8 +139,7 @@ namespace MineRewind
                 await BackupService.BackupFolderAsync(
                     config,
                     folder,
-                    comment,
-                    invocationOptions ?? BackupInvocationOptions.ForRemote());
+                    (invocationOptions ?? BackupInvocationOptions.ForRemote()).WithComment(comment));
             }
             finally
             {
