@@ -109,6 +109,7 @@ public partial class MinecraftSavesPlugin
         MinecraftInstanceDescriptor instance,
         CancellationToken cancellationToken)
     {
+        var setId = StableId(instance.InstancePath);
         var resources = new List<BackupResourceCandidate>();
         foreach (var worldPath in instance.WorldPaths)
         {
@@ -130,8 +131,14 @@ public partial class MinecraftSavesPlugin
         }
         return new BackupSetCandidate
         {
-            StableKey = $"{DiscoveryProviderId}:instance:{StableId(instance.InstancePath)}",
-            DisplayName = $"Minecraft - {instance.VersionName}",
+            StableKey = $"{DiscoveryProviderId}:instance:{setId}",
+            Identity = new DiscoverySetIdentity
+            {
+                ProviderId = DiscoveryProviderId,
+                DefinitionId = MinecraftJavaDefinitionId,
+                SetId = setId
+            },
+            DisplayName = $"Minecraft - {instance.VersionName} ({setId[..8]})",
             SuggestedConfigType = ConfigTypeName,
             Resources = resources
         };

@@ -31,6 +31,10 @@ public sealed class UnifiedDiscoveryTests
             Assert.IsTrue(plugin.Descriptor.IsSpecialized);
             Assert.HasCount(1, result.Candidates);
             Assert.HasCount(2, result.Candidates[0].BackupSets);
+            Assert.AreEqual(2, result.Candidates[0].BackupSets.Select(set => set.Identity.SetId).Distinct().Count());
+            Assert.IsTrue(result.Candidates[0].BackupSets.All(set =>
+                set.Identity.ProviderId == "com.folderrewind.minerewind"
+                && set.Identity.DefinitionId == "minecraft-java"));
             Assert.IsTrue(result.Candidates[0].BackupSets.All(set => set.SuggestedConfigType == "Minecraft Saves"));
             Assert.IsTrue(result.Candidates[0].BackupSets.SelectMany(set => set.Resources).All(resource =>
                 resource.IsSpecializedProvider
