@@ -101,6 +101,26 @@ public sealed class V3VerticalSliceTests
     }
 
     [TestMethod]
+    public async Task WarningSafetyBackupRemainsVisibleAfterSuccessfulMutation()
+    {
+        using var world = TemporaryWorld.Create();
+        var services = new FakeHostServices();
+        services.Backups.NextOutcome = OperationOutcome.SuccessWithWarnings;
+        var fixture = Activate(services);
+        var (config, folder) = Snapshots(world.WorldPath);
+
+        var result = await fixture.Plugin.CoordinateAsync(
+            new RestoreCoordinatorRequest(
+                config,
+                folder,
+                "history",
+                _ => ValueTask.FromResult(OperationOutcome.Success)),
+            fixture.Invocation);
+
+        Assert.AreEqual(OperationOutcome.SuccessWithWarnings, result.Outcome);
+    }
+
+    [TestMethod]
     public async Task CommandsRouteThroughHostBackupAndRestoreServices()
     {
         var fixture = Activate();
@@ -123,6 +143,21 @@ public sealed class V3VerticalSliceTests
         Assert.AreEqual(OperationOutcome.Success, restore.Outcome);
         Assert.HasCount(1, fixture.Services.Backups.Requests);
         Assert.HasCount(1, fixture.Services.Restores.Requests);
+    }
+
+    [TestMethod]
+    public void CommandDescriptorsDeclareTheArgumentsConsumedAtRuntime()
+    {
+        var plugin = new V3Plugin();
+        var backup = plugin.Commands.Single(command => command.Id.CommandId == "hot-backup");
+        var restore = plugin.Commands.Single(command => command.Id.CommandId == "quick-restore");
+
+        CollectionAssert.AreEquivalent(
+            new[] { "configId" },
+            backup.ArgumentSchema.GetProperty("required").EnumerateArray().Select(value => value.GetString()).ToArray());
+        CollectionAssert.AreEquivalent(
+            new[] { "configId", "folderId", "historyItemId" },
+            restore.ArgumentSchema.GetProperty("required").EnumerateArray().Select(value => value.GetString()).ToArray());
     }
 
     [TestMethod]

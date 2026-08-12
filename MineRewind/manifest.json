@@ -24,6 +24,16 @@
       "ownerId": "com.folderrewind.minerewind",
       "kindId": "minecraft-saves",
       "displayName": "Minecraft Saves",
+      "localizedDisplayName": {
+        "en-US": "Minecraft Saves",
+        "zh-CN": "Minecraft 存档"
+      },
+      "description": "Minecraft world save folders with coordinated consistency and restore.",
+      "localizedDescription": {
+        "en-US": "Minecraft world save folders with coordinated consistency and restore.",
+        "zh-CN": "支持一致性备份与协调还原的 Minecraft 世界存档文件夹。"
+      },
+      "icon": "minecraft",
       "backupFallback": "rawWithWarnings",
       "restoreCoordination": "required"
     }

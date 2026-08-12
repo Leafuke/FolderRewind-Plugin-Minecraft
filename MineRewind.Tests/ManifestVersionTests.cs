@@ -21,7 +21,13 @@ public sealed class ManifestVersionTests
         var kind = root.GetProperty("configKinds")[0];
         Assert.AreEqual("com.folderrewind.minerewind", kind.GetProperty("ownerId").GetString());
         Assert.AreEqual("minecraft-saves", kind.GetProperty("kindId").GetString());
+        Assert.IsTrue(kind.GetProperty("localizedDisplayName").TryGetProperty("zh-CN", out _));
+        Assert.IsTrue(kind.GetProperty("localizedDescription").TryGetProperty("en-US", out _));
+        Assert.AreEqual("minecraft", kind.GetProperty("icon").GetString());
         Assert.AreEqual("rawWithWarnings", kind.GetProperty("backupFallback").GetString());
         Assert.AreEqual("required", kind.GetProperty("restoreCoordination").GetString());
+        CollectionAssert.AreEquivalent(
+            new[] { "discovery", "backupConsistency", "restoreCoordinator", "pluginCommand", "providerStateMigration" },
+            root.GetProperty("capabilities").EnumerateArray().Select(value => value.GetString()).ToArray());
     }
 }

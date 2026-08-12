@@ -24,7 +24,29 @@ public sealed class MinecraftSavesPlugin :
     private static readonly StateOwnerId MineRewindStateOwnerId = new(StateOwnerIdentity);
     private static readonly PluginCommandId HotBackupCommandId = new(MineRewindPluginId, "hot-backup");
     private static readonly PluginCommandId QuickRestoreCommandId = new(MineRewindPluginId, "quick-restore");
-    private static readonly JsonElement EmptySchema = Json("{\"type\":\"object\",\"additionalProperties\":false}");
+    private static readonly JsonElement HotBackupSchema = Json("""
+        {
+          "type": "object",
+          "required": ["configId"],
+          "properties": {
+            "configId": { "type": "string", "minLength": 1 },
+            "folderId": { "type": "string", "format": "uuid" }
+          },
+          "additionalProperties": false
+        }
+        """);
+    private static readonly JsonElement QuickRestoreSchema = Json("""
+        {
+          "type": "object",
+          "required": ["configId", "folderId", "historyItemId"],
+          "properties": {
+            "configId": { "type": "string", "minLength": 1 },
+            "folderId": { "type": "string", "format": "uuid" },
+            "historyItemId": { "type": "string", "minLength": 1 }
+          },
+          "additionalProperties": false
+        }
+        """);
     private static readonly IReadOnlyDictionary<StateOwnerId, ProviderStateDraft> EmptyDraftStates =
         new Dictionary<StateOwnerId, ProviderStateDraft>();
 
@@ -38,8 +60,8 @@ public sealed class MinecraftSavesPlugin :
 
     public IReadOnlyList<PluginCommandDescriptor> Commands { get; } =
     [
-        new(HotBackupCommandId, "Back up the active Minecraft world", EmptySchema),
-        new(QuickRestoreCommandId, "Restore a Minecraft world", EmptySchema)
+        new(HotBackupCommandId, "Back up the active Minecraft world", HotBackupSchema),
+        new(QuickRestoreCommandId, "Restore a Minecraft world", QuickRestoreSchema)
     ];
 
     public ValueTask<PluginActivationResult> ActivateAsync(
@@ -179,7 +201,11 @@ public sealed class MinecraftSavesPlugin :
             }
             else
             {
-                outcome = await request.ContinueMutationAsync(context.OperationCancellation).ConfigureAwait(false);
+                var mutation = await request.ContinueMutationAsync(context.OperationCancellation).ConfigureAwait(false);
+                outcome = safetyBackup == OperationOutcome.SuccessWithWarnings
+                          && mutation is OperationOutcome.Success or OperationOutcome.NoChanges
+                    ? OperationOutcome.SuccessWithWarnings
+                    : mutation;
             }
         }
         catch (OperationCanceledException) when (context.OperationCancellation.IsCancellationRequested)
