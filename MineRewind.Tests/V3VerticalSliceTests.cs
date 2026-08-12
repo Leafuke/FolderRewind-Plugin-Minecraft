@@ -198,6 +198,7 @@ public sealed class V3VerticalSliceTests
             new Dictionary<StateOwnerId, ProviderStateSnapshot>());
         var config = new ConfigSnapshot(
             "config",
+            new ConfigRevision("revision-1"),
             Kind,
             "Minecraft",
             [folder],
