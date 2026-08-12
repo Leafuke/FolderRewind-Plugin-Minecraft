@@ -36,17 +36,21 @@ public sealed class V3VerticalSliceTests
         var fixture = Activate();
         var (config, folder) = Snapshots(world.WorldPath);
 
-        await using var lease = await fixture.Plugin.AcquireAsync(
+        var lease = await fixture.Plugin.AcquireAsync(
             new BackupConsistencyRequest(config, folder, ConsistencyIntent.Prefer),
             fixture.Invocation);
 
-        Assert.AreEqual(world.WorldPath, lease.SourcePath);
+        var snapshotPath = lease.SourcePath;
+        Assert.AreNotEqual(world.WorldPath, snapshotPath);
+        Assert.IsTrue(File.Exists(Path.Combine(snapshotPath, "level.dat")));
         Assert.AreEqual("minebackup.save", fixture.Services.KnotLink.Events.Single().Name);
         Assert.IsEmpty(lease.Diagnostics);
+        await lease.DisposeAsync();
+        Assert.IsFalse(Directory.Exists(snapshotPath));
     }
 
     [TestMethod]
-    public async Task RestoreCoordinatorRunsSafetyBackupThenContinuationOnceAndRejoins()
+    public async Task RestoreCoordinatorRunsContinuationOnceAndRejoinsWithoutOwningHostSafetyBackup()
     {
         using var world = TemporaryWorld.Create();
         var fixture = Activate();
@@ -67,18 +71,17 @@ public sealed class V3VerticalSliceTests
 
         Assert.AreEqual(OperationOutcome.Success, result.Outcome);
         Assert.AreEqual(1, mutationCalls);
-        Assert.HasCount(1, fixture.Services.Backups.Requests);
+        Assert.IsEmpty(fixture.Services.Backups.Requests);
         CollectionAssert.AreEqual(
             new[] { "minebackup.save-and-exit", "minebackup.rejoin" },
             fixture.Services.KnotLink.Events.Select(value => value.Name).ToArray());
     }
 
     [TestMethod]
-    public async Task FailedSafetyBackupSkipsMutationAndStillRejoins()
+    public async Task FailedMutationStillRejoins()
     {
         using var world = TemporaryWorld.Create();
         var services = new FakeHostServices();
-        services.Backups.NextOutcome = OperationOutcome.Failed;
         var fixture = Activate(services);
         var (config, folder) = Snapshots(world.WorldPath);
         var mutationCalls = 0;
@@ -91,21 +94,20 @@ public sealed class V3VerticalSliceTests
                 _ =>
                 {
                     mutationCalls++;
-                    return ValueTask.FromResult(OperationOutcome.Success);
+                    return ValueTask.FromResult(OperationOutcome.Failed);
                 }),
             fixture.Invocation);
 
         Assert.AreEqual(OperationOutcome.Failed, result.Outcome);
-        Assert.AreEqual(0, mutationCalls);
+        Assert.AreEqual(1, mutationCalls);
         Assert.IsTrue(fixture.Services.KnotLink.Events.Any(value => value.Name == "minebackup.rejoin"));
     }
 
     [TestMethod]
-    public async Task WarningSafetyBackupRemainsVisibleAfterSuccessfulMutation()
+    public async Task WarningMutationRemainsVisible()
     {
         using var world = TemporaryWorld.Create();
         var services = new FakeHostServices();
-        services.Backups.NextOutcome = OperationOutcome.SuccessWithWarnings;
         var fixture = Activate(services);
         var (config, folder) = Snapshots(world.WorldPath);
 
@@ -114,10 +116,46 @@ public sealed class V3VerticalSliceTests
                 config,
                 folder,
                 "history",
-                _ => ValueTask.FromResult(OperationOutcome.Success)),
+                _ => ValueTask.FromResult(OperationOutcome.SuccessWithWarnings)),
             fixture.Invocation);
 
         Assert.AreEqual(OperationOutcome.SuccessWithWarnings, result.Outcome);
+    }
+
+    [TestMethod]
+    public async Task SelectedRegionsScopeProducesPartialWorldPatterns()
+    {
+        using var world = TemporaryWorld.Create();
+        var fixture = Activate();
+        var (config, folder) = Snapshots(world.WorldPath);
+
+        var result = await fixture.Plugin.ResolveAsync(
+            new BackupScopeRequest(
+                config,
+                folder,
+                new BackupScopeId(new OwnerId(V3Plugin.PluginIdentity), "selected-regions"),
+                Arguments(("regions", "0,0;-1,2"))),
+            fixture.Invocation);
+
+        Assert.AreEqual(OperationReadiness.Ready, result.Readiness);
+        Assert.Contains("region/r.0.0.mca", result.IncludePatterns);
+        Assert.Contains("dimensions/**/poi/r.-1.2.mca", result.IncludePatterns);
+        Assert.Contains("playerdata/**", result.IncludePatterns);
+    }
+
+    [TestMethod]
+    public async Task FilePolicyExcludesLiveLockAndKnownDerivedCaches()
+    {
+        using var world = TemporaryWorld.Create();
+        var fixture = Activate();
+        var (config, folder) = Snapshots(world.WorldPath);
+
+        var result = await fixture.Plugin.ResolveAsync(
+            new FilePolicyRequest(config, folder),
+            fixture.Invocation);
+
+        Assert.Contains("session.lock", result.RequiredExclusions);
+        Assert.Contains("voxy/**", result.RequiredExclusions);
     }
 
     [TestMethod]

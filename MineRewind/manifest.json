@@ -8,7 +8,7 @@
   },
   "version": "1.9.0",
   "author": "Leafuke",
-  "description": "Enhanced Minecraft saves backup with discovery, consistency coordination, hot restore coordination, and commands.",
+  "description": "Enhanced Minecraft saves backup with discovery, reconciliation, region scope, consistency, metadata, hot restore, and commands.",
   "localizedDescription": {
     "en-US": "Enhanced Minecraft saves backup with discovery, consistency coordination, hot restore coordination, and commands.",
     "zh-CN": "Minecraft 存档备份增强插件：提供发现、一致性协调、热还原协调和命令能力。"
@@ -47,9 +47,14 @@
   ],
   "capabilities": [
     "discovery",
+    "configReconciliation",
+    "filePolicy",
+    "backupScope",
     "backupConsistency",
+    "folderMetadata",
     "restoreCoordinator",
     "pluginCommand",
+    "knotLinkIntegration",
     "providerStateMigration"
   ],
   "artifactFormats": [],

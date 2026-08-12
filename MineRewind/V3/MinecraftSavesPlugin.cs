@@ -5,12 +5,17 @@ using FolderRewind.Plugin.Abstractions;
 
 namespace MineRewind;
 
-public sealed class MinecraftSavesPlugin :
+public sealed partial class MinecraftSavesPlugin :
     IFolderRewindPlugin,
     IDiscoveryCapability,
     IBackupConsistencyCapability,
+    IFilePolicyCapability,
+    IBackupScopeCapability,
+    IFolderMetadataCapability,
+    IConfigReconciliationCapability,
     IRestoreCoordinatorCapability,
     IPluginCommandCapability,
+    IKnotLinkIntegrationCapability,
     IProviderStateMigrationCapability
 {
     public const string PluginIdentity = "com.folderrewind.minerewind";
@@ -52,6 +57,7 @@ public sealed class MinecraftSavesPlugin :
 
     private bool _activated;
     private bool _autoDiscoverSaves = true;
+    private bool _preservePlayerData;
 
     public DiscoveryProviderId ProviderId { get; } = new(DiscoveryIdentity);
     public ConfigKindRef Kind => MinecraftKind;
@@ -80,6 +86,7 @@ public sealed class MinecraftSavesPlugin :
         }
 
         _autoDiscoverSaves = ReadBoolean(context.Settings, "AutoDiscoverSaves", defaultValue: true);
+        _preservePlayerData = ReadBoolean(context.Settings, "PreservePlayerData", defaultValue: false);
         context.RegisterCapability<IPluginCapability>(this);
         _activated = true;
         return ValueTask.FromResult(PluginActivationResult.Empty);
@@ -156,7 +163,36 @@ public sealed class MinecraftSavesPlugin :
                 "BackupConsistency"));
         }
 
-        return new MinecraftConsistencyLease(sourcePath, diagnostics);
+        string? snapshotPath = null;
+        try
+        {
+            var temporaryRoot = await context.HostServices.TemporaryStorage.CreateDirectoryAsync(
+                context.OperationCancellation).ConfigureAwait(false);
+            snapshotPath = Path.Combine(temporaryRoot, "minerewind-snapshot-" + Guid.NewGuid().ToString("N"));
+            CopyWorldSnapshot(sourcePath, snapshotPath, context.OperationCancellation);
+            return new MinecraftConsistencyLease(snapshotPath, diagnostics, snapshotPath);
+        }
+        catch (Exception ex) when (request.Intent == ConsistencyIntent.Prefer)
+        {
+            if (snapshotPath is not null)
+            {
+                try { if (Directory.Exists(snapshotPath)) Directory.Delete(snapshotPath, recursive: true); } catch { }
+            }
+            diagnostics.Add(Diagnostic(
+                "minerewind.snapshot_fallback",
+                DiagnosticSeverity.Warning,
+                "BackupConsistency",
+                ("message", ex.Message)));
+            return new MinecraftConsistencyLease(sourcePath, diagnostics, temporaryPath: null);
+        }
+        catch
+        {
+            if (snapshotPath is not null)
+            {
+                try { if (Directory.Exists(snapshotPath)) Directory.Delete(snapshotPath, recursive: true); } catch { }
+            }
+            throw;
+        }
     }
 
     public async ValueTask<RestoreCoordinatorResult> CoordinateAsync(
@@ -167,6 +203,7 @@ public sealed class MinecraftSavesPlugin :
         ValidateKind(request.Config.Kind);
         var diagnostics = new List<PluginDiagnostic>();
         var prepared = false;
+        string? preservedPlayerData = null;
         OperationOutcome outcome;
         try
         {
@@ -186,26 +223,16 @@ public sealed class MinecraftSavesPlugin :
                 context.OperationCancellation).ConfigureAwait(false);
             prepared = true;
 
-            var safetyBackup = await context.HostServices.Backups.RequestAsync(
-                request.Config.ConfigId,
-                request.Folder.FolderId,
-                context.OperationCancellation).ConfigureAwait(false);
-            if (!IsSuccessful(safetyBackup))
+            if (_preservePlayerData)
             {
-                diagnostics.Add(Diagnostic(
-                    "minerewind.restore_safety_backup_failed",
-                    DiagnosticSeverity.Error,
-                    "RestoreCoordinator",
-                    ("outcome", safetyBackup.ToString())));
-                outcome = safetyBackup;
+                preservedPlayerData = PreservePlayerData(request.Folder.Path);
             }
-            else
+
+            var mutation = await request.ContinueMutationAsync(context.OperationCancellation).ConfigureAwait(false);
+            outcome = mutation;
+            if (IsSuccessful(mutation) && preservedPlayerData is not null)
             {
-                var mutation = await request.ContinueMutationAsync(context.OperationCancellation).ConfigureAwait(false);
-                outcome = safetyBackup == OperationOutcome.SuccessWithWarnings
-                          && mutation is OperationOutcome.Success or OperationOutcome.NoChanges
-                    ? OperationOutcome.SuccessWithWarnings
-                    : mutation;
+                RestorePlayerData(preservedPlayerData, request.Folder.Path);
             }
         }
         catch (OperationCanceledException) when (context.OperationCancellation.IsCancellationRequested)
@@ -244,6 +271,8 @@ public sealed class MinecraftSavesPlugin :
                 }
             }
         }
+
+        DeleteTemporaryPlayerData(preservedPlayerData, diagnostics);
 
         return new RestoreCoordinatorResult(outcome, diagnostics);
     }
@@ -503,12 +532,51 @@ public sealed class MinecraftSavesPlugin :
         if (!_activated) throw new InvalidOperationException("MineRewind is not active.");
     }
 
+    private static void CopyWorldSnapshot(string source, string target, CancellationToken cancellationToken)
+    {
+        Directory.CreateDirectory(target);
+        foreach (var directory in Directory.EnumerateDirectories(source, "*", SearchOption.AllDirectories))
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            if ((File.GetAttributes(directory) & FileAttributes.ReparsePoint) != 0) continue;
+            var relative = Path.GetRelativePath(source, directory).Replace('\\', '/');
+            if (IsDerivedCache(relative)) continue;
+            Directory.CreateDirectory(Path.Combine(target, relative));
+        }
+        foreach (var file in Directory.EnumerateFiles(source, "*", SearchOption.AllDirectories))
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            if ((File.GetAttributes(file) & FileAttributes.ReparsePoint) != 0) continue;
+            var relative = Path.GetRelativePath(source, file).Replace('\\', '/');
+            if (string.Equals(Path.GetFileName(relative), "session.lock", StringComparison.OrdinalIgnoreCase)
+                || IsDerivedCache(relative)) continue;
+            var destination = Path.Combine(target, relative);
+            Directory.CreateDirectory(Path.GetDirectoryName(destination)!);
+            File.Copy(file, destination, overwrite: true);
+        }
+    }
+
+    private static bool IsDerivedCache(string relativePath)
+        => relativePath.StartsWith("voxy/", StringComparison.OrdinalIgnoreCase)
+           || relativePath.Contains("/voxy/", StringComparison.OrdinalIgnoreCase)
+           || relativePath.EndsWith("DistantHorizons.sqlite", StringComparison.OrdinalIgnoreCase)
+           || relativePath.EndsWith("DistantHorizons.sqlite-shm", StringComparison.OrdinalIgnoreCase)
+           || relativePath.EndsWith("DistantHorizons.sqlite-wal", StringComparison.OrdinalIgnoreCase);
+
     private sealed class MinecraftConsistencyLease(
         string sourcePath,
-        IReadOnlyList<PluginDiagnostic> diagnostics) : IConsistencyLease
+        IReadOnlyList<PluginDiagnostic> diagnostics,
+        string? temporaryPath) : IConsistencyLease
     {
         public string SourcePath { get; } = sourcePath;
         public IReadOnlyList<PluginDiagnostic> Diagnostics { get; } = diagnostics;
-        public ValueTask DisposeAsync() => ValueTask.CompletedTask;
+        public ValueTask DisposeAsync()
+        {
+            if (temporaryPath is not null)
+            {
+                try { if (Directory.Exists(temporaryPath)) Directory.Delete(temporaryPath, recursive: true); } catch { }
+            }
+            return ValueTask.CompletedTask;
+        }
     }
 }

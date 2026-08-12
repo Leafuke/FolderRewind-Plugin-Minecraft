@@ -27,7 +27,12 @@ public sealed class ManifestVersionTests
         Assert.AreEqual("rawWithWarnings", kind.GetProperty("backupFallback").GetString());
         Assert.AreEqual("required", kind.GetProperty("restoreCoordination").GetString());
         CollectionAssert.AreEquivalent(
-            new[] { "discovery", "backupConsistency", "restoreCoordinator", "pluginCommand", "providerStateMigration" },
+            new[]
+            {
+                "discovery", "configReconciliation", "filePolicy", "backupScope",
+                "backupConsistency", "folderMetadata", "restoreCoordinator",
+                "pluginCommand", "knotLinkIntegration", "providerStateMigration"
+            },
             root.GetProperty("capabilities").EnumerateArray().Select(value => value.GetString()).ToArray());
     }
 }
