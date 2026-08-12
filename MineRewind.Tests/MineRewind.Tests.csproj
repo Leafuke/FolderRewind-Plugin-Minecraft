@@ -15,6 +15,11 @@
   </ItemGroup>
 
   <ItemGroup>
+    <ProjectReference Include="..\MineRewind\MineRewind.csproj" Aliases="v3" />
+    <ProjectReference Include="..\..\FolderRewind.Plugin.Abstractions\FolderRewind.Plugin.Abstractions.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
     <Compile Include="..\MineRewind\MinecraftInstanceDiscoveryPlanner.cs" Link="Source\MinecraftInstanceDiscoveryPlanner.cs" />
     <Compile Include="..\MineRewind\MinecraftHotRestoreProtocol.cs" Link="Source\MinecraftHotRestoreProtocol.cs" />
     <Compile Include="..\MineRewind\MinecraftSavesPlugin.ConfigAugmentation.cs" Link="Source\MinecraftSavesPlugin.ConfigAugmentation.cs" />

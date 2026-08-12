@@ -1,20 +1,47 @@
 {
-  "Id": "com.folderrewind.minerewind",
-  "Name": "MineRewind",
-  "LocalizedName": {
+  "manifestVersion": 3,
+  "pluginId": "com.folderrewind.minerewind",
+  "name": "MineRewind",
+  "localizedName": {
     "en-US": "MineRewind",
     "zh-CN": "MineRewind"
   },
-  "Version": "1.9.0",
-  "Author": "Leafuke",
-  "Description": "Enhanced Minecraft saves backup: hot snapshot backup, batch and automatic config discovery under .minecraft",
-  "LocalizedDescription": {
-    "en-US": "Enhanced Minecraft saves backup: hot snapshot backup, batch and automatic instance discovery under .minecraft",
-    "zh-CN": "Minecraft存档备份增强插件：支持热备份、批量扫描与自动识别.minecraft实例、自动发现存档"
+  "version": "1.9.0",
+  "author": "Leafuke",
+  "description": "Enhanced Minecraft saves backup with discovery, consistency coordination, hot restore coordination, and commands.",
+  "localizedDescription": {
+    "en-US": "Enhanced Minecraft saves backup with discovery, consistency coordination, hot restore coordination, and commands.",
+    "zh-CN": "Minecraft 存档备份增强插件：提供发现、一致性协调、热还原协调和命令能力。"
   },
-  "EntryAssembly": "MineRewind.dll",
-  "EntryType": "MineRewind.MinecraftSavesPlugin",
-  "MinHostVersion": "1.9.0",
-  "Homepage": "https://github.com/Leafuke/FolderRewind-Plugin-Minecraft",
-  "Repository": "Leafuke/FolderRewind-Plugin-Minecraft"
+  "pluginApi": {
+    "major": 3,
+    "minor": 0
+  },
+  "entryAssembly": "MineRewind.dll",
+  "entryType": "MineRewind.MinecraftSavesPlugin",
+  "configKinds": [
+    {
+      "ownerId": "com.folderrewind.minerewind",
+      "kindId": "minecraft-saves",
+      "displayName": "Minecraft Saves",
+      "backupFallback": "rawWithWarnings",
+      "restoreCoordination": "required"
+    }
+  ],
+  "settingsSchema": "settings.schema.json",
+  "requestedHostServices": [
+    "backupRequest",
+    "restoreRequest",
+    "knotLink",
+    "logging"
+  ],
+  "capabilities": [
+    "discovery",
+    "backupConsistency",
+    "restoreCoordinator",
+    "pluginCommand",
+    "providerStateMigration"
+  ],
+  "homepage": "https://github.com/Leafuke/FolderRewind-Plugin-Minecraft",
+  "repository": "Leafuke/FolderRewind-Plugin-Minecraft"
 }
