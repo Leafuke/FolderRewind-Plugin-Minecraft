@@ -52,6 +52,10 @@
     "pluginCommand",
     "providerStateMigration"
   ],
+  "artifactFormats": [],
+  "artifactTransformers": [],
+  "restoreStrategies": [],
+  "hasBackupCompletionObserver": false,
   "homepage": "https://github.com/Leafuke/FolderRewind-Plugin-Minecraft",
   "repository": "Leafuke/FolderRewind-Plugin-Minecraft"
 }
