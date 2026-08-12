@@ -16,6 +16,7 @@
 
   <ItemGroup>
     <Compile Include="..\MineRewind\MinecraftInstanceDiscoveryPlanner.cs" Link="Source\MinecraftInstanceDiscoveryPlanner.cs" />
+    <Compile Include="..\MineRewind\MinecraftHotRestoreProtocol.cs" Link="Source\MinecraftHotRestoreProtocol.cs" />
     <Compile Include="..\MineRewind\MinecraftSavesPlugin.ConfigAugmentation.cs" Link="Source\MinecraftSavesPlugin.ConfigAugmentation.cs" />
     <Compile Include="..\MineRewind\MinecraftSavesPlugin.Discovery.cs" Link="Source\MinecraftSavesPlugin.Discovery.cs" />
     <Compile Include="..\MineRewind\MinecraftSavesPlugin.UnifiedDiscovery.cs" Link="Source\MinecraftSavesPlugin.UnifiedDiscovery.cs" />

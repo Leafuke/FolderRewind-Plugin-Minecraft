@@ -22,6 +22,15 @@ namespace FolderRewind.Models
 
 namespace FolderRewind.Services
 {
+    public static class BackupService
+    {
+        public enum RestoreMode
+        {
+            Overwrite,
+            Clean
+        }
+    }
+
     public static class FolderNameConflictService
     {
         public static string ResolveDisplayName(FolderRewind.Models.ManagedFolder? folder)
