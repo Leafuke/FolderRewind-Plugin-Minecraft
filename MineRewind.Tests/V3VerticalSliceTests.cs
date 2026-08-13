@@ -1,6 +1,7 @@
 extern alias v3;
 
 using System.Text.Json;
+using fNbt;
 using FolderRewind.Plugin.Abstractions;
 using V3Plugin = v3::MineRewind.MinecraftSavesPlugin;
 
@@ -159,18 +160,65 @@ public sealed class V3VerticalSliceTests
     }
 
     [TestMethod]
+    public async Task MetadataReadsLevelDatDomainFields()
+    {
+        using var world = TemporaryWorld.Create();
+        WriteLegacyLevelDat(world.WorldPath, "NBT World", gameType: 1, seed: 8675309, xpLevel: 7);
+        var fixture = Activate();
+        var (config, folder) = Snapshots(world.WorldPath);
+
+        var result = await fixture.Plugin.ReadAsync(
+            new FolderMetadataRequest(config, folder),
+            fixture.Invocation);
+
+        Assert.AreEqual("NBT World", result.Values["worldName"]);
+        Assert.AreEqual("Creative", result.Values["gameMode"]);
+        Assert.AreEqual("8675309", result.Values["seed"]);
+        Assert.AreEqual("True", result.Values["hasPlayerData"]);
+        Assert.AreEqual("legacy", result.Values["worldFormat"]);
+        Assert.IsEmpty(result.Diagnostics);
+    }
+
+    [TestMethod]
+    public async Task RestoreCoordinatorPreservesLegacyLevelDatPlayerState()
+    {
+        using var world = TemporaryWorld.Create();
+        WriteLegacyLevelDat(world.WorldPath, "Current", gameType: 0, seed: 1, xpLevel: 42);
+        var fixture = Activate(preservePlayerData: true);
+        var (config, folder) = Snapshots(world.WorldPath);
+
+        var result = await fixture.Plugin.CoordinateAsync(
+            new RestoreCoordinatorRequest(
+                config,
+                folder,
+                "history",
+                _ =>
+                {
+                    WriteLegacyLevelDat(world.WorldPath, "Restored", gameType: 0, seed: 1, xpLevel: 3);
+                    return ValueTask.FromResult(OperationOutcome.Success);
+                }),
+            fixture.Invocation);
+
+        Assert.AreEqual(OperationOutcome.Success, result.Outcome);
+        var level = new NbtFile();
+        level.LoadFromFile(Path.Combine(world.WorldPath, "level.dat"));
+        var player = (NbtCompound)((NbtCompound)level.RootTag["Data"]!)["Player"]!;
+        Assert.AreEqual(42, ((NbtInt)player["XpLevel"]!).Value);
+    }
+
+    [TestMethod]
     public async Task CommandsRouteThroughHostBackupAndRestoreServices()
     {
         var fixture = Activate();
         var folderId = Guid.NewGuid();
         var backup = await fixture.Plugin.ExecuteAsync(
             new PluginCommandRequest(
-                new PluginCommandId(PluginId, "hot-backup"),
+                new PluginCommandId(PluginId, "hotbackup.active-world"),
                 Arguments(("configId", "config"), ("folderId", folderId.ToString("D")))),
             fixture.Invocation);
         var restore = await fixture.Plugin.ExecuteAsync(
             new PluginCommandRequest(
-                new PluginCommandId(PluginId, "quick-restore"),
+                new PluginCommandId(PluginId, "hotrestore.active-world"),
                 Arguments(
                     ("configId", "config"),
                     ("folderId", folderId.ToString("D")),
@@ -184,18 +232,60 @@ public sealed class V3VerticalSliceTests
     }
 
     [TestMethod]
+    public async Task DefaultHotkeyCommandsResolveLockedWorldAndLatestHistory()
+    {
+        using var world = TemporaryWorld.Create();
+        File.WriteAllBytes(Path.Combine(world.WorldPath, "session.lock"), [0]);
+        using var sessionLock = new FileStream(
+            Path.Combine(world.WorldPath, "session.lock"),
+            FileMode.Open,
+            FileAccess.ReadWrite,
+            FileShare.None);
+        var fixture = Activate();
+        var (config, folder) = Snapshots(world.WorldPath);
+        fixture.Services.Configs.QueryResults.Add(config);
+        fixture.Services.History.Items.Add(new HistoryItemSnapshot(
+            "history-latest",
+            folder.FolderId,
+            folder.Path,
+            "latest.7z",
+            DateTimeOffset.UtcNow,
+            OperationOutcome.Success));
+
+        var backup = await fixture.Plugin.ExecuteAsync(
+            new PluginCommandRequest(
+                new PluginCommandId(PluginId, "hotbackup.active-world"),
+                new Dictionary<string, JsonElement>()),
+            fixture.Invocation);
+        var restore = await fixture.Plugin.ExecuteAsync(
+            new PluginCommandRequest(
+                new PluginCommandId(PluginId, "hotrestore.active-world"),
+                new Dictionary<string, JsonElement>()),
+            fixture.Invocation);
+
+        Assert.AreEqual(OperationOutcome.Success, backup.Outcome);
+        Assert.AreEqual(OperationOutcome.Success, restore.Outcome);
+        Assert.AreEqual(folder.FolderId, fixture.Services.Backups.Requests.Single().FolderId);
+        Assert.AreEqual("history-latest", fixture.Services.Restores.Requests.Single().HistoryId);
+    }
+
+    [TestMethod]
     public void CommandDescriptorsDeclareTheArgumentsConsumedAtRuntime()
     {
         var plugin = new V3Plugin();
-        var backup = plugin.Commands.Single(command => command.Id.CommandId == "hot-backup");
-        var restore = plugin.Commands.Single(command => command.Id.CommandId == "quick-restore");
+        var backup = plugin.Commands.Single(command => command.Id.CommandId == "hotbackup.active-world");
+        var restore = plugin.Commands.Single(command => command.Id.CommandId == "hotrestore.active-world");
 
         CollectionAssert.AreEquivalent(
-            new[] { "configId" },
-            backup.ArgumentSchema.GetProperty("required").EnumerateArray().Select(value => value.GetString()).ToArray());
+            new[] { "configId", "folderId" },
+            backup.ArgumentSchema.GetProperty("properties").EnumerateObject().Select(value => value.Name).ToArray());
         CollectionAssert.AreEquivalent(
             new[] { "configId", "folderId", "historyItemId" },
-            restore.ArgumentSchema.GetProperty("required").EnumerateArray().Select(value => value.GetString()).ToArray());
+            restore.ArgumentSchema.GetProperty("properties").EnumerateObject().Select(value => value.Name).ToArray());
+        Assert.AreEqual("Alt+Ctrl+S", backup.DefaultHotkey);
+        Assert.AreEqual("Alt+Ctrl+Z", restore.DefaultHotkey);
+        Assert.IsTrue(backup.IsGlobalHotkey);
+        Assert.IsTrue(restore.IsGlobalHotkey);
     }
 
     [TestMethod]
@@ -214,11 +304,11 @@ public sealed class V3VerticalSliceTests
         Assert.AreEqual(42, patch.Data.GetProperty("Future").GetInt32());
     }
 
-    private static ActivatedFixture Activate(FakeHostServices? services = null)
+    private static ActivatedFixture Activate(FakeHostServices? services = null, bool preservePlayerData = false)
     {
         services ??= new FakeHostServices();
         var plugin = new V3Plugin();
-        var activation = new FakeActivationContext();
+        var activation = new FakeActivationContext(preservePlayerData);
         plugin.ActivateAsync(activation, CancellationToken.None).GetAwaiter().GetResult();
         Assert.AreSame(plugin, activation.Capability);
         return new ActivatedFixture(
@@ -250,6 +340,39 @@ public sealed class V3VerticalSliceTests
     private static JsonElement Json(string json)
         => JsonDocument.Parse(json).RootElement.Clone();
 
+    private static void WriteLegacyLevelDat(
+        string worldPath,
+        string levelName,
+        int gameType,
+        long seed,
+        int xpLevel)
+    {
+        var player = new NbtCompound("Player")
+        {
+            new NbtInt("XpLevel", xpLevel),
+            new NbtList("Inventory", NbtTagType.Compound),
+            new NbtList("Pos", NbtTagType.Double)
+            {
+                new NbtDouble(1),
+                new NbtDouble(64),
+                new NbtDouble(1)
+            }
+        };
+        var data = new NbtCompound("Data")
+        {
+            new NbtString("LevelName", levelName),
+            new NbtInt("GameType", gameType),
+            new NbtLong("RandomSeed", seed),
+            new NbtLong("Time", 24000),
+            new NbtLong("DayTime", 12000),
+            new NbtLong("LastPlayed", 123456789),
+            new NbtInt("DataVersion", 4321),
+            player
+        };
+        var file = new NbtFile(new NbtCompound(string.Empty) { data });
+        file.SaveToFile(Path.Combine(worldPath, "level.dat"), NbtCompression.GZip);
+    }
+
     private sealed record ActivatedFixture(
         V3Plugin Plugin,
         FakeHostServices Services,
@@ -257,10 +380,19 @@ public sealed class V3VerticalSliceTests
 
     private sealed class FakeActivationContext : IPluginActivationContext
     {
+        public FakeActivationContext(bool preservePlayerData)
+        {
+            Settings = new PluginSettingsSnapshot(
+                V3VerticalSliceTests.PluginId,
+                new Dictionary<string, JsonElement>
+                {
+                    ["AutoDiscoverSaves"] = Json("true"),
+                    ["PreservePlayerData"] = Json(preservePlayerData ? "true" : "false")
+                });
+        }
+
         public PluginId PluginId => V3VerticalSliceTests.PluginId;
-        public PluginSettingsSnapshot Settings { get; } = new(
-            V3VerticalSliceTests.PluginId,
-            new Dictionary<string, JsonElement> { ["AutoDiscoverSaves"] = Json("true") });
+        public PluginSettingsSnapshot Settings { get; }
         public IReadOnlyList<ConfigSnapshot> Configs => Array.Empty<ConfigSnapshot>();
         public IPluginCapability? Capability { get; private set; }
 
@@ -277,7 +409,8 @@ public sealed class V3VerticalSliceTests
         IReadOnlyConfigQueryService IPluginHostServices.Configs => Configs;
         IBackupRequestService IPluginHostServices.Backups => Backups;
         IRestoreRequestService IPluginHostServices.Restores => Restores;
-        public IHistoryQueryService History { get; } = new FakeHistory();
+        public FakeHistory History { get; } = new();
+        IHistoryQueryService IPluginHostServices.History => History;
         public IPluginNotificationService Notifications { get; } = new FakeNotifications();
         IKnotLinkHostService IPluginHostServices.KnotLink => KnotLink;
         public IPluginDataStore DataStore { get; } = new FakeDataStore();
@@ -288,11 +421,25 @@ public sealed class V3VerticalSliceTests
     private sealed class FakeConfigQuery : IReadOnlyConfigQueryService
     {
         public List<string> FindRequests { get; } = new();
+        public List<ConfigSnapshot> QueryResults { get; } = new();
         public ValueTask<ConfigSnapshot?> FindAsync(string configId, CancellationToken cancellationToken)
         {
             FindRequests.Add(configId);
-            return ValueTask.FromResult<ConfigSnapshot?>(null);
+            return ValueTask.FromResult<ConfigSnapshot?>(new ConfigSnapshot(
+                configId,
+                new ConfigRevision("fake"),
+                Kind,
+                "Minecraft",
+                Array.Empty<FolderSnapshot>(),
+                new Dictionary<StateOwnerId, ProviderStateSnapshot>()));
         }
+
+        public ValueTask<IReadOnlyList<ConfigSnapshot>> QueryAsync(
+            ConfigKindRef? kind,
+            CancellationToken cancellationToken)
+            => ValueTask.FromResult<IReadOnlyList<ConfigSnapshot>>(QueryResults
+                .Where(value => !kind.HasValue || value.Kind == kind.Value)
+                .ToArray());
     }
 
     private sealed class FakeBackupRequests : IBackupRequestService
@@ -329,8 +476,11 @@ public sealed class V3VerticalSliceTests
 
     private sealed class FakeHistory : IHistoryQueryService
     {
+        public List<HistoryItemSnapshot> Items { get; } = new();
         public ValueTask<IReadOnlyList<HistoryItemSnapshot>> QueryAsync(string configId, Guid? folderId, CancellationToken cancellationToken)
-            => ValueTask.FromResult<IReadOnlyList<HistoryItemSnapshot>>(Array.Empty<HistoryItemSnapshot>());
+            => ValueTask.FromResult<IReadOnlyList<HistoryItemSnapshot>>(Items
+                .Where(value => !folderId.HasValue || value.FolderId == folderId)
+                .ToArray());
     }
 
     private sealed class FakeNotifications : IPluginNotificationService

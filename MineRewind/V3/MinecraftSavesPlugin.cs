@@ -27,12 +27,11 @@ public sealed partial class MinecraftSavesPlugin :
     private static readonly OwnerId MineRewindOwnerId = new(PluginIdentity);
     private static readonly ConfigKindRef MinecraftKind = new(MineRewindOwnerId, MinecraftKindIdentity);
     private static readonly StateOwnerId MineRewindStateOwnerId = new(StateOwnerIdentity);
-    private static readonly PluginCommandId HotBackupCommandId = new(MineRewindPluginId, "hot-backup");
-    private static readonly PluginCommandId QuickRestoreCommandId = new(MineRewindPluginId, "quick-restore");
+    private static readonly PluginCommandId HotBackupCommandId = new(MineRewindPluginId, "hotbackup.active-world");
+    private static readonly PluginCommandId QuickRestoreCommandId = new(MineRewindPluginId, "hotrestore.active-world");
     private static readonly JsonElement HotBackupSchema = Json("""
         {
           "type": "object",
-          "required": ["configId"],
           "properties": {
             "configId": { "type": "string", "minLength": 1 },
             "folderId": { "type": "string", "format": "uuid" }
@@ -43,7 +42,6 @@ public sealed partial class MinecraftSavesPlugin :
     private static readonly JsonElement QuickRestoreSchema = Json("""
         {
           "type": "object",
-          "required": ["configId", "folderId", "historyItemId"],
           "properties": {
             "configId": { "type": "string", "minLength": 1 },
             "folderId": { "type": "string", "format": "uuid" },
@@ -66,8 +64,16 @@ public sealed partial class MinecraftSavesPlugin :
 
     public IReadOnlyList<PluginCommandDescriptor> Commands { get; } =
     [
-        new(HotBackupCommandId, "Back up the active Minecraft world", HotBackupSchema),
-        new(QuickRestoreCommandId, "Restore a Minecraft world", QuickRestoreSchema)
+        new(HotBackupCommandId, "Back up the active Minecraft world", HotBackupSchema)
+        {
+            DefaultHotkey = "Alt+Ctrl+S",
+            IsGlobalHotkey = true
+        },
+        new(QuickRestoreCommandId, "Restore the active Minecraft world to its latest backup", QuickRestoreSchema)
+        {
+            DefaultHotkey = "Alt+Ctrl+Z",
+            IsGlobalHotkey = true
+        }
     ];
 
     public ValueTask<PluginActivationResult> ActivateAsync(
@@ -203,7 +209,7 @@ public sealed partial class MinecraftSavesPlugin :
         ValidateKind(request.Config.Kind);
         var diagnostics = new List<PluginDiagnostic>();
         var prepared = false;
-        string? preservedPlayerData = null;
+        NbtHelper.PlayerDataSnapshot? preservedPlayerData = null;
         OperationOutcome outcome;
         try
         {
@@ -225,14 +231,24 @@ public sealed partial class MinecraftSavesPlugin :
 
             if (_preservePlayerData)
             {
-                preservedPlayerData = PreservePlayerData(request.Folder.Path);
+                preservedPlayerData = NbtHelper.ExtractPlayerData(request.Folder.Path);
             }
 
             var mutation = await request.ContinueMutationAsync(context.OperationCancellation).ConfigureAwait(false);
             outcome = mutation;
             if (IsSuccessful(mutation) && preservedPlayerData is not null)
             {
-                RestorePlayerData(preservedPlayerData, request.Folder.Path);
+                if (!NbtHelper.ApplyPlayerData(request.Folder.Path, preservedPlayerData))
+                {
+                    diagnostics.Add(Diagnostic(
+                        "minerewind.playerdata_restore_failed",
+                        DiagnosticSeverity.Warning,
+                        "RestoreCoordinator"));
+                    if (outcome == OperationOutcome.Success)
+                    {
+                        outcome = OperationOutcome.SuccessWithWarnings;
+                    }
+                }
             }
         }
         catch (OperationCanceledException) when (context.OperationCancellation.IsCancellationRequested)
@@ -272,8 +288,6 @@ public sealed partial class MinecraftSavesPlugin :
             }
         }
 
-        DeleteTemporaryPlayerData(preservedPlayerData, diagnostics);
-
         return new RestoreCoordinatorResult(outcome, diagnostics);
     }
 
@@ -286,16 +300,25 @@ public sealed partial class MinecraftSavesPlugin :
         {
             return CommandFailure("minerewind.command_owner_invalid");
         }
-        if (!TryString(request.Arguments, "configId", out var configId))
+        TryString(request.Arguments, "configId", out var configId);
+        var hasExplicitConfig = !string.IsNullOrWhiteSpace(configId);
+        ConfigSnapshot? config = null;
+        if (string.IsNullOrWhiteSpace(configId))
         {
-            return CommandFailure("minerewind.command_config_required");
+            config = await FindActiveConfigAsync(context).ConfigureAwait(false);
+            if (config is null) return CommandFailure("minerewind.command_active_world_not_found");
+            configId = config.ConfigId;
         }
 
         if (request.Id == HotBackupCommandId)
         {
             Guid? folderId = TryGuid(request.Arguments, "folderId", out var backupFolderId)
                 ? backupFolderId
-                : null;
+                : hasExplicitConfig
+                    ? null
+                    : FindActiveFolder(config)?.FolderId;
+            if (!hasExplicitConfig && !folderId.HasValue)
+                return CommandFailure("minerewind.command_active_world_not_found");
             var outcome = await context.HostServices.Backups.RequestAsync(
                 configId,
                 folderId,
@@ -308,14 +331,28 @@ public sealed partial class MinecraftSavesPlugin :
 
         if (request.Id == QuickRestoreCommandId)
         {
-            if (!TryGuid(request.Arguments, "folderId", out var folderId)
-                || !TryString(request.Arguments, "historyItemId", out var historyItemId))
+            var folderId = TryGuid(request.Arguments, "folderId", out var requestedFolderId)
+                ? requestedFolderId
+                : FindActiveFolder(config ??= await context.HostServices.Configs.FindAsync(
+                    configId,
+                    context.OperationCancellation).ConfigureAwait(false))?.FolderId;
+            if (!folderId.HasValue)
             {
-                return CommandFailure("minerewind.command_restore_arguments_required");
+                return CommandFailure("minerewind.command_active_world_not_found");
             }
+            TryString(request.Arguments, "historyItemId", out var historyItemId);
+            if (string.IsNullOrWhiteSpace(historyItemId))
+            {
+                var history = await context.HostServices.History.QueryAsync(
+                    configId,
+                    folderId,
+                    context.OperationCancellation).ConfigureAwait(false);
+                historyItemId = history.OrderByDescending(value => value.CreatedAt).FirstOrDefault()?.HistoryItemId;
+            }
+            if (string.IsNullOrWhiteSpace(historyItemId)) return CommandFailure("minerewind.command_history_not_found");
             var outcome = await context.HostServices.Restores.RequestAsync(
                 configId,
-                folderId,
+                folderId.Value,
                 historyItemId,
                 context.OperationCancellation).ConfigureAwait(false);
             return new PluginCommandResult(
@@ -325,6 +362,37 @@ public sealed partial class MinecraftSavesPlugin :
         }
 
         return CommandFailure("minerewind.command_unknown");
+    }
+
+    private static async ValueTask<ConfigSnapshot?> FindActiveConfigAsync(PluginInvocationContext context)
+    {
+        var configs = await context.HostServices.Configs.QueryAsync(MinecraftKind, context.OperationCancellation)
+            .ConfigureAwait(false);
+        return configs.FirstOrDefault(config => FindActiveFolder(config) is not null);
+    }
+
+    private static FolderSnapshot? FindActiveFolder(ConfigSnapshot? config)
+        => config?.Folders.FirstOrDefault(folder => IsSessionLockHeld(folder.Path));
+
+    private static bool IsSessionLockHeld(string folderPath)
+    {
+        var worldPath = ResolveWorldPath(folderPath);
+        if (worldPath is null) return false;
+        var lockPath = Path.Combine(worldPath, "session.lock");
+        if (!File.Exists(lockPath)) return false;
+        try
+        {
+            using var stream = new FileStream(lockPath, FileMode.Open, FileAccess.ReadWrite, FileShare.None);
+            return false;
+        }
+        catch (IOException)
+        {
+            return true;
+        }
+        catch (UnauthorizedAccessException)
+        {
+            return true;
+        }
     }
 
     public ValueTask<ProviderStatePatch> MigrateAsync(

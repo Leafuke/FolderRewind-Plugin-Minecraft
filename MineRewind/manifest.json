@@ -43,8 +43,10 @@
     "backupRequest",
     "restoreRequest",
     "knotLink",
+    "temporaryStorage",
     "logging"
   ],
+  "architectures": ["any"],
   "capabilities": [
     "discovery",
     "configReconciliation",

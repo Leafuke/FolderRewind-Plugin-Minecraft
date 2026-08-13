@@ -116,13 +116,30 @@ public sealed partial class MinecraftSavesPlugin
                 new Dictionary<string, string>(),
                 [Diagnostic("minerewind.metadata_world_missing", DiagnosticSeverity.Warning, "FolderMetadata")]));
         }
-        var level = new FileInfo(Path.Combine(path, "level.dat"));
+        var details = NbtHelper.TryGetWorldDetails(path);
         var regionCount = Directory.EnumerateFiles(path, "r.*.*.mca", SearchOption.AllDirectories).Count();
+        if (details is null)
+        {
+            return ValueTask.FromResult(new FolderMetadataResult(
+                new Dictionary<string, string>(StringComparer.Ordinal)
+                {
+                    ["worldName"] = Path.GetFileName(path),
+                    ["regionFileCount"] = regionCount.ToString(System.Globalization.CultureInfo.InvariantCulture)
+                },
+                [Diagnostic("minerewind.metadata_level_dat_invalid", DiagnosticSeverity.Warning, "FolderMetadata")]));
+        }
         return ValueTask.FromResult(new FolderMetadataResult(
             new Dictionary<string, string>(StringComparer.Ordinal)
             {
-                ["worldName"] = Path.GetFileName(path),
-                ["levelDatLastWriteUtc"] = level.LastWriteTimeUtc.ToString("O"),
+                ["worldName"] = string.IsNullOrWhiteSpace(details.LevelName) ? Path.GetFileName(path) : details.LevelName,
+                ["gameMode"] = details.GameMode,
+                ["seed"] = details.Seed,
+                ["totalTime"] = details.TotalTime?.ToString(System.Globalization.CultureInfo.InvariantCulture) ?? string.Empty,
+                ["dayTime"] = details.DayTime?.ToString(System.Globalization.CultureInfo.InvariantCulture) ?? string.Empty,
+                ["lastPlayed"] = details.LastPlayed?.ToString(System.Globalization.CultureInfo.InvariantCulture) ?? string.Empty,
+                ["hasPlayerData"] = details.HasPlayerData.ToString(),
+                ["dataVersion"] = details.DataVersion?.ToString(System.Globalization.CultureInfo.InvariantCulture) ?? string.Empty,
+                ["worldFormat"] = details.IsNewFormat ? "26.1+" : "legacy",
                 ["regionFileCount"] = regionCount.ToString(System.Globalization.CultureInfo.InvariantCulture)
             },
             Array.Empty<PluginDiagnostic>()));
@@ -221,48 +238,4 @@ public sealed partial class MinecraftSavesPlugin
         catch { return null; }
     }
 
-    private static string? PreservePlayerData(string worldPath)
-    {
-        var source = Path.Combine(worldPath, "playerdata");
-        if (!Directory.Exists(source)) return null;
-        var target = Path.Combine(Path.GetTempPath(), "MineRewind-playerdata-" + Guid.NewGuid().ToString("N"));
-        CopyDirectory(source, target);
-        return target;
-    }
-
-    private static void RestorePlayerData(string preserved, string worldPath)
-    {
-        var target = Path.Combine(worldPath, "playerdata");
-        if (Directory.Exists(target)) Directory.Delete(target, recursive: true);
-        CopyDirectory(preserved, target);
-    }
-
-    private static void DeleteTemporaryPlayerData(
-        string? path,
-        ICollection<PluginDiagnostic> diagnostics)
-    {
-        if (path is null) return;
-        try { if (Directory.Exists(path)) Directory.Delete(path, recursive: true); }
-        catch (Exception ex)
-        {
-            diagnostics.Add(Diagnostic(
-                "minerewind.playerdata_cleanup_failed",
-                DiagnosticSeverity.Warning,
-                "RestoreCoordinator",
-                ("message", ex.Message)));
-        }
-    }
-
-    private static void CopyDirectory(string source, string target)
-    {
-        Directory.CreateDirectory(target);
-        foreach (var directory in Directory.EnumerateDirectories(source, "*", SearchOption.AllDirectories))
-            Directory.CreateDirectory(Path.Combine(target, Path.GetRelativePath(source, directory)));
-        foreach (var file in Directory.EnumerateFiles(source, "*", SearchOption.AllDirectories))
-        {
-            var destination = Path.Combine(target, Path.GetRelativePath(source, file));
-            Directory.CreateDirectory(Path.GetDirectoryName(destination)!);
-            File.Copy(file, destination, overwrite: true);
-        }
-    }
 }
