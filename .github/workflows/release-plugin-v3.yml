@@ -1,0 +1,51 @@
+name: Release Plugin v3
+
+on:
+  workflow_dispatch:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  package:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Restore
+        run: dotnet restore MineRewind/MineRewind.csproj
+      - name: Test
+        run: dotnet test MineRewind.Tests/MineRewind.Tests.csproj --no-restore -c Release
+      - name: Pack .frplugin
+        run: dotnet msbuild MineRewind/MineRewind.csproj /t:PackFrPlugin /p:Configuration=Release /p:Version=${{ github.ref_name }}
+      - name: Reject bundled Abstractions
+        shell: pwsh
+        run: |
+          Add-Type -AssemblyName System.IO.Compression.FileSystem
+          $package = Get-ChildItem artifacts/*.frplugin | Select-Object -First 1
+          $zip = [IO.Compression.ZipFile]::OpenRead($package.FullName)
+          try {
+            if ($zip.Entries.FullName -match '(^|/)FolderRewind.Plugin.Abstractions.dll$') { throw 'Abstractions DLL is bundled.' }
+          } finally { $zip.Dispose() }
+      - uses: actions/upload-artifact@v4
+        with:
+          name: MineRewind-frplugin
+          path: artifacts/MineRewind-*.frplugin*
+      - name: Publish GitHub Release artifact
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: artifacts/MineRewind-*.frplugin*
+      - name: Create Catalog update PR
+        if: startsWith(github.ref, 'refs/tags/')
+        env:
+          GH_TOKEN: ${{ secrets.CATALOG_PR_TOKEN }}
+          CATALOG_REPOSITORY: Leafuke/FolderRewind-Plugin-Catalog
+        shell: pwsh
+        run: |
+          $package = Get-ChildItem artifacts/*.frplugin | Select-Object -First 1
+          $sha = (Get-FileHash $package.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+          $url = "https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/$($package.Name)"
+          gh workflow run update-plugin.yml --repo $env:CATALOG_REPOSITORY -f pluginId=com.folderrewind.minerewind -f version=${{ github.ref_name }} -f artifactUrl=$url -f sha256=$sha
