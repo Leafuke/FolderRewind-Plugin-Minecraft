@@ -26,6 +26,11 @@ public sealed class ManifestVersionTests
         Assert.AreEqual("minecraft", kind.GetProperty("icon").GetString());
         Assert.AreEqual("rawWithWarnings", kind.GetProperty("backupFallback").GetString());
         Assert.AreEqual("required", kind.GetProperty("restoreCoordination").GetString());
+        using var settingsDocument = JsonDocument.Parse(
+            File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "settings.schema.json")));
+        var setting = settingsDocument.RootElement.GetProperty("settings")[0];
+        Assert.IsTrue(setting.GetProperty("localizedDisplayName").TryGetProperty("zh-CN", out _));
+        Assert.IsTrue(setting.GetProperty("localizedDescription").TryGetProperty("en-US", out _));
         CollectionAssert.AreEquivalent(
             new[]
             {

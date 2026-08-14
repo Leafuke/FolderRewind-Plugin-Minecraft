@@ -5,19 +5,46 @@
       "key": "AutoDiscoverSaves",
       "type": "boolean",
       "default": true,
-      "displayName": "Automatically discover Minecraft saves"
+      "displayName": "Automatically discover Minecraft saves",
+      "description": "Let MineRewind discover local Minecraft worlds and propose configuration drafts.",
+      "localizedDisplayName": {
+        "en-US": "Automatically discover Minecraft saves",
+        "zh-CN": "自动发现 Minecraft 存档"
+      },
+      "localizedDescription": {
+        "en-US": "Let MineRewind discover local Minecraft worlds and propose configuration drafts.",
+        "zh-CN": "允许 MineRewind 发现本机 Minecraft 世界，并生成可供审阅的配置草稿。"
+      }
     },
     {
       "key": "AutoCreateConfigs",
       "type": "boolean",
       "default": false,
-      "displayName": "Automatically create reviewed configurations"
+      "displayName": "Automatically create reviewed configurations",
+      "description": "After Host validation, atomically create configurations from reviewed discovery results.",
+      "localizedDisplayName": {
+        "en-US": "Automatically create reviewed configurations",
+        "zh-CN": "自动创建已审阅的配置"
+      },
+      "localizedDescription": {
+        "en-US": "After Host validation, atomically create configurations from reviewed discovery results.",
+        "zh-CN": "发现结果经 Host 校验后，自动以原子方式创建已审阅的配置。"
+      }
     },
     {
       "key": "PreservePlayerData",
       "type": "boolean",
       "default": false,
-      "displayName": "Preserve current player data during restore"
+      "displayName": "Preserve current player data during restore",
+      "description": "Keep the current player data while restoring the rest of a Minecraft world.",
+      "localizedDisplayName": {
+        "en-US": "Preserve current player data during restore",
+        "zh-CN": "还原时保留当前玩家数据"
+      },
+      "localizedDescription": {
+        "en-US": "Keep the current player data while restoring the rest of a Minecraft world.",
+        "zh-CN": "还原 Minecraft 世界的其余内容时，保留当前玩家数据。"
+      }
     }
   ]
 }
