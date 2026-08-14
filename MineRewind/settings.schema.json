@@ -1,0 +1,23 @@
+{
+  "schemaVersion": 1,
+  "settings": [
+    {
+      "key": "AutoDiscoverSaves",
+      "type": "boolean",
+      "default": true,
+      "displayName": "Automatically discover Minecraft saves"
+    },
+    {
+      "key": "AutoCreateConfigs",
+      "type": "boolean",
+      "default": false,
+      "displayName": "Automatically create reviewed configurations"
+    },
+    {
+      "key": "PreservePlayerData",
+      "type": "boolean",
+      "default": false,
+      "displayName": "Preserve current player data during restore"
+    }
+  ]
+}

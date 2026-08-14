@@ -12,13 +12,28 @@
     <PackageReference Include="Microsoft.NET.Test.Sdk" Version="18.0.1" />
     <PackageReference Include="MSTest.TestAdapter" Version="4.0.2" />
     <PackageReference Include="MSTest.TestFramework" Version="4.0.2" />
+    <PackageReference Include="fNbt" Version="1.0.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\MineRewind\MineRewind.csproj" Aliases="v3" />
+    <ProjectReference Include="..\..\FolderRewind.Plugin.Abstractions\FolderRewind.Plugin.Abstractions.csproj" />
   </ItemGroup>
 
   <ItemGroup>
     <Compile Include="..\MineRewind\MinecraftInstanceDiscoveryPlanner.cs" Link="Source\MinecraftInstanceDiscoveryPlanner.cs" />
+    <Compile Include="..\MineRewind\MinecraftHotRestoreProtocol.cs" Link="Source\MinecraftHotRestoreProtocol.cs" />
     <Compile Include="..\MineRewind\MinecraftSavesPlugin.ConfigAugmentation.cs" Link="Source\MinecraftSavesPlugin.ConfigAugmentation.cs" />
     <Compile Include="..\MineRewind\MinecraftSavesPlugin.Discovery.cs" Link="Source\MinecraftSavesPlugin.Discovery.cs" />
+    <Compile Include="..\MineRewind\MinecraftSavesPlugin.UnifiedDiscovery.cs" Link="Source\MinecraftSavesPlugin.UnifiedDiscovery.cs" />
     <Compile Include="..\MineRewind\MinecraftSavesPlugin.RegionBackup.cs" Link="Source\MinecraftSavesPlugin.RegionBackup.cs" />
     <Compile Include="..\MineRewind\MinecraftWorldPathResolver.cs" Link="Source\MinecraftWorldPathResolver.cs" />
+    <Compile Include="..\..\FolderRewind\Models\DiscoveryModels.cs" Link="Source\Host\DiscoveryModels.cs" />
+    <Compile Include="..\..\FolderRewind\Models\BackupSourceScopeModels.cs" Link="Source\Host\BackupSourceScopeModels.cs" />
+    <Compile Include="..\..\FolderRewind\Services\Plugins\IFolderRewindDiscoveryProvider.cs" Link="Source\Host\IFolderRewindDiscoveryProvider.cs" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Include="..\MineRewind\manifest.json" Link="manifest.json" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 </Project>

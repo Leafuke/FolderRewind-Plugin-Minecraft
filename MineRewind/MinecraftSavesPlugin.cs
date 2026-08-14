@@ -18,7 +18,7 @@ namespace MineRewind
     /// 4. 配置类型 - 定义 "Minecraft Saves" 类型
     /// 5. KnotLink 互联 - 与 MineBackup 联动模组握手、协调备份/还原
     /// </summary>
-    public partial class MinecraftSavesPlugin : IFolderRewindPlugin, IFolderRewindConfigAugmenter, IFolderRewindHotkeyProvider, IFolderRewindParameterizedKnotLinkCommandHandler, IFolderRewindKnotLinkCapabilityProvider, IFolderRewindBackupScopeProvider, IFolderRewindBackupPreparationProvider, IFolderRewindFolderDetailsProvider, IFolderRewindRestoreInterceptor
+    public partial class MinecraftSavesPlugin : IFolderRewindPlugin, IFolderRewindConfigAugmenter, IFolderRewindHotkeyProvider, IFolderRewindParameterizedKnotLinkCommandHandler, IFolderRewindKnotLinkCapabilityProvider, IFolderRewindBackupScopeProvider, IFolderRewindBackupPreparationProvider, IFolderRewindFolderDetailsProvider, IFolderRewindRestoreInterceptor, IFolderRewindDiscoveryProvider
     {
         #region 常量
 
@@ -94,7 +94,7 @@ namespace MineRewind
         {
             Id = "com.folderrewind.minerewind",
             Name = "MineRewind",
-            Version = "1.8.2",
+            Version = "1.9.0",
             Author = "Leafuke",
             Description = "Enhanced Minecraft saves backup: lock-friendly backup, batch and automatic config discovery under .minecraft",
             LocalizedName = new Dictionary<string, string>
@@ -109,7 +109,7 @@ namespace MineRewind
             },
             EntryAssembly = "MineRewind.dll",
             EntryType = "MineRewind.MinecraftSavesPlugin",
-            MinHostVersion = "1.8.2",
+            MinHostVersion = "1.9.0",
             Repository = "Leafuke/FolderRewind-Plugin-Minecraft"
         };
 

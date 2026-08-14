@@ -104,46 +104,28 @@ namespace MineRewind
 
         private IEnumerable<ManagedFolder> DiscoverFromDotMinecraft(string dotMinecraftPath)
         {
-            var results = new List<ManagedFolder>();
-
-            var directSaves = Path.Combine(dotMinecraftPath, "saves");
-            if (Directory.Exists(directSaves))
-            {
-                results.AddRange(DiscoverFromSavesDirectory(directSaves));
-            }
-
-            var versionsDir = Path.Combine(dotMinecraftPath, "versions");
-            if (Directory.Exists(versionsDir))
-            {
-                foreach (var versionDir in Directory.EnumerateDirectories(versionsDir))
-                {
-                    var versionSaves = Path.Combine(versionDir, "saves");
-                    if (Directory.Exists(versionSaves))
-                    {
-                        results.AddRange(DiscoverFromSavesDirectory(versionSaves));
-                    }
-                }
-            }
-
-            return results;
+            return MinecraftInstanceDiscoveryPlanner
+                .DiscoverInstances(dotMinecraftPath, LogDiscoveryWarning)
+                .SelectMany(instance => instance.WorldPaths)
+                .Select(CreateManagedFolder)
+                .ToArray();
         }
 
         private IEnumerable<ManagedFolder> DiscoverFromSavesDirectory(string savesPath)
         {
-            var results = new List<ManagedFolder>();
-
             if (!Directory.Exists(savesPath))
-                return results;
-
-            foreach (var worldDir in Directory.EnumerateDirectories(savesPath))
             {
-                if (File.Exists(Path.Combine(worldDir, "level.dat")))
-                {
-                    results.Add(CreateManagedFolder(worldDir));
-                }
+                return Array.Empty<ManagedFolder>();
             }
-
-            return results;
+            string instancePath = Directory.GetParent(savesPath)?.FullName ?? string.Empty;
+            string dotMinecraftPath = MinecraftInstanceDiscoveryPlanner.FindDotMinecraftRoot(instancePath);
+            var instance = MinecraftInstanceDiscoveryPlanner.TryDiscoverInstance(
+                string.IsNullOrWhiteSpace(dotMinecraftPath) ? instancePath : dotMinecraftPath,
+                instancePath,
+                Path.GetFileName(instancePath),
+                LogDiscoveryWarning);
+            return instance?.WorldPaths.Select(CreateManagedFolder).ToArray()
+                   ?? Array.Empty<ManagedFolder>();
         }
 
         private ManagedFolder CreateManagedFolder(string worldPath)
