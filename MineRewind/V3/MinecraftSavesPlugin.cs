@@ -144,24 +144,62 @@ public sealed partial class MinecraftSavesPlugin :
         var sourcePath = ResolveWorldPath(request.Folder.Path)
             ?? throw new InvalidOperationException("Minecraft consistency requires a valid world folder.");
         var diagnostics = new List<PluginDiagnostic>();
+        var worldIsActive = IsSessionLockHeld(sourcePath);
 
-        if (context.HostServices.KnotLink.IsAvailable)
+        if (worldIsActive && context.HostServices.KnotLink.IsAvailable)
         {
-            await context.HostServices.KnotLink.SendAsync(
-                "minebackup.save",
-                new Dictionary<string, string>(StringComparer.Ordinal)
+            try
+            {
+                var compatible = await PerformModHandshakeAsync(
+                    "backup",
+                    Path.GetFileName(sourcePath),
+                    context).ConfigureAwait(false);
+                if (!compatible)
                 {
-                    ["configId"] = request.Config.ConfigId,
-                    ["folderId"] = request.Folder.FolderId.ToString("D"),
-                    ["world"] = Path.GetFileName(sourcePath)
-                },
-                context.OperationCancellation).ConfigureAwait(false);
+                    if (request.Intent == ConsistencyIntent.Require)
+                    {
+                        throw new InvalidOperationException("A compatible Minecraft companion mod did not answer the KnotLink handshake.");
+                    }
+                    diagnostics.Add(Diagnostic(
+                        "minerewind.consistency_handshake_unavailable",
+                        DiagnosticSeverity.Warning,
+                        "BackupConsistency"));
+                }
+                else
+                {
+                    var saved = await RequestWorldSaveForBackupAsync(request, sourcePath, context)
+                        .ConfigureAwait(false);
+                    if (!saved)
+                    {
+                        if (request.Intent == ConsistencyIntent.Require)
+                        {
+                            throw new TimeoutException("Minecraft did not acknowledge WORLD_SAVED before the consistency timeout.");
+                        }
+                        diagnostics.Add(Diagnostic(
+                            "minerewind.consistency_save_timeout",
+                            DiagnosticSeverity.Warning,
+                            "BackupConsistency"));
+                    }
+                }
+            }
+            catch (OperationCanceledException) when (context.OperationCancellation.IsCancellationRequested)
+            {
+                throw;
+            }
+            catch (Exception ex) when (request.Intent == ConsistencyIntent.Prefer)
+            {
+                diagnostics.Add(Diagnostic(
+                    "minerewind.consistency_coordination_failed",
+                    DiagnosticSeverity.Warning,
+                    "BackupConsistency",
+                    ("message", ex.Message)));
+            }
         }
-        else if (request.Intent == ConsistencyIntent.Require)
+        else if (worldIsActive && request.Intent == ConsistencyIntent.Require)
         {
             throw new InvalidOperationException("Required Minecraft consistency is unavailable because KnotLink is not connected.");
         }
-        else
+        else if (worldIsActive)
         {
             diagnostics.Add(Diagnostic(
                 "minerewind.consistency_raw_source",
@@ -208,37 +246,79 @@ public sealed partial class MinecraftSavesPlugin :
         EnsureActivated();
         ValidateKind(request.Config.Kind);
         var diagnostics = new List<PluginDiagnostic>();
+        var worldWasActive = IsSessionLockHeld(request.Folder.Path);
+        var preservePlayerData = _preservePlayerData
+                                 || _preservePlayerDataHistoryIds.TryRemove(request.HistoryItemId, out _);
+        var signalGateHeld = false;
         var prepared = false;
+        var cancellationReported = false;
         NbtHelper.PlayerDataSnapshot? preservedPlayerData = null;
-        OperationOutcome outcome;
+        var outcome = OperationOutcome.Blocked;
         try
         {
-            if (!context.HostServices.KnotLink.IsAvailable)
+            if (worldWasActive)
             {
-                return new RestoreCoordinatorResult(
-                    OperationOutcome.Blocked,
-                    [Diagnostic(
+                if (!context.HostServices.KnotLink.IsAvailable)
+                {
+                    diagnostics.Add(Diagnostic(
                         "minerewind.restore_knotlink_unavailable",
                         DiagnosticSeverity.Error,
-                        "RestoreCoordinator")]);
+                        "RestoreCoordinator"));
+                    return new RestoreCoordinatorResult(OperationOutcome.Blocked, diagnostics);
+                }
+
+                await _restoreSignalGate.WaitAsync(context.OperationCancellation).ConfigureAwait(false);
+                signalGateHeld = true;
+                var compatible = await PerformModHandshakeAsync(
+                    "restore",
+                    Path.GetFileName(request.Folder.Path),
+                    context).ConfigureAwait(false);
+                if (!compatible)
+                {
+                    diagnostics.Add(Diagnostic(
+                        "minerewind.restore_handshake_unavailable",
+                        DiagnosticSeverity.Error,
+                        "RestoreCoordinator"));
+                    await ReportRestoreCancelledAsync(request, "no_mod", context).ConfigureAwait(false);
+                    cancellationReported = true;
+                }
+                else if (!await RequestWorldExitAsync(request, context).ConfigureAwait(false))
+                {
+                    diagnostics.Add(Diagnostic(
+                        "minerewind.restore_world_exit_timeout",
+                        DiagnosticSeverity.Error,
+                        "RestoreCoordinator"));
+                    await ReportRestoreCancelledAsync(request, "timeout", context).ConfigureAwait(false);
+                    cancellationReported = true;
+                }
+                else if (!await WaitForWorldReleaseAsync(
+                        request.Folder.Path,
+                        context.OperationCancellation).ConfigureAwait(false))
+                {
+                    diagnostics.Add(Diagnostic(
+                        "minerewind.restore_world_still_occupied",
+                        DiagnosticSeverity.Error,
+                        "RestoreCoordinator"));
+                    await ReportRestoreCancelledAsync(request, "world_occupied", context).ConfigureAwait(false);
+                    cancellationReported = true;
+                }
+                else
+                {
+                    prepared = true;
+                }
             }
 
-            await context.HostServices.KnotLink.SendAsync(
-                "minebackup.save-and-exit",
-                RestoreArguments(request),
-                context.OperationCancellation).ConfigureAwait(false);
-            prepared = true;
-
-            if (_preservePlayerData)
+            if (!worldWasActive || prepared)
             {
-                preservedPlayerData = NbtHelper.ExtractPlayerData(request.Folder.Path);
-            }
+                if (preservePlayerData)
+                {
+                    preservedPlayerData = NbtHelper.ExtractPlayerData(request.Folder.Path);
+                }
 
-            var mutation = await request.ContinueMutationAsync(context.OperationCancellation).ConfigureAwait(false);
-            outcome = mutation;
-            if (IsSuccessful(mutation) && preservedPlayerData is not null)
-            {
-                if (!NbtHelper.ApplyPlayerData(request.Folder.Path, preservedPlayerData))
+                var mutation = await request.ContinueMutationAsync(context.OperationCancellation).ConfigureAwait(false);
+                outcome = mutation;
+                if (IsSuccessful(mutation) && preservedPlayerData is not null
+                    && !NbtHelper.ApplyPlayerData(request.Folder.Path, preservedPlayerData))
                 {
                     diagnostics.Add(Diagnostic(
                         "minerewind.playerdata_restore_failed",
@@ -265,14 +345,31 @@ public sealed partial class MinecraftSavesPlugin :
             outcome = OperationOutcome.Failed;
         }
 
+        if (worldWasActive && !prepared && !cancellationReported)
+        {
+            await ReportRestoreCancelledAsync(
+                request,
+                outcome == OperationOutcome.Canceled ? "cancelled" : "failed",
+                context).ConfigureAwait(false);
+        }
+
         if (prepared)
         {
             try
             {
-                await context.HostServices.KnotLink.SendAsync(
-                    "minebackup.rejoin",
-                    RestoreArguments(request),
-                    CancellationToken.None).ConfigureAwait(false);
+                await ReportRestoreCompletedAsync(request, outcome, context).ConfigureAwait(false);
+                var rejoined = await RequestWorldRejoinAsync(request, context).ConfigureAwait(false);
+                if (!rejoined)
+                {
+                    diagnostics.Add(Diagnostic(
+                        "minerewind.restore_rejoin_failed",
+                        DiagnosticSeverity.Warning,
+                        "RestoreCoordinator"));
+                    if (outcome == OperationOutcome.Success)
+                    {
+                        outcome = OperationOutcome.SuccessWithWarnings;
+                    }
+                }
             }
             catch (Exception ex)
             {
@@ -286,6 +383,13 @@ public sealed partial class MinecraftSavesPlugin :
                     outcome = OperationOutcome.SuccessWithWarnings;
                 }
             }
+        }
+
+        if (signalGateHeld)
+        {
+            Volatile.Write(ref _pendingWorldExited, null);
+            Volatile.Write(ref _pendingRejoin, null);
+            _restoreSignalGate.Release();
         }
 
         return new RestoreCoordinatorResult(outcome, diagnostics);
@@ -532,9 +636,10 @@ public sealed partial class MinecraftSavesPlugin :
     private static IReadOnlyDictionary<string, string> RestoreArguments(RestoreCoordinatorRequest request)
         => new Dictionary<string, string>(StringComparer.Ordinal)
         {
-            ["configId"] = request.Config.ConfigId,
-            ["folderId"] = request.Folder.FolderId.ToString("D"),
-            ["historyItemId"] = request.HistoryItemId,
+            // 保留 1.8.x 模组使用的蛇形协议键；额外身份只用于 v3 诊断与关联。
+            ["config"] = request.Config.ConfigId,
+            ["folder_id"] = request.Folder.FolderId.ToString("D"),
+            ["history_id"] = request.HistoryItemId,
             ["world"] = Path.GetFileName(request.Folder.Path)
         };
 

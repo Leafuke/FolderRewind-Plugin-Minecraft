@@ -34,7 +34,25 @@ public sealed class V3VerticalSliceTests
     public async Task ConsistencyLeaseUsesCoordinatedSourceBeforeHostCapture()
     {
         using var world = TemporaryWorld.Create();
+        using var sessionLock = world.AcquireSessionLock();
         var fixture = Activate();
+        fixture.Services.KnotLink.OnSendAsync = async (eventName, _, _) =>
+        {
+            if (eventName == "handshake")
+            {
+                await fixture.Plugin.ExecuteAsync(
+                    "HANDSHAKE_RESPONSE",
+                    new Dictionary<string, string> { ["mod_version"] = "3.0.0" },
+                    fixture.Invocation);
+            }
+            else if (eventName == "pre_hot_backup")
+            {
+                await fixture.Plugin.ExecuteAsync(
+                    "WORLD_SAVED",
+                    new Dictionary<string, string>(),
+                    fixture.Invocation);
+            }
+        };
         var (config, folder) = Snapshots(world.WorldPath);
 
         var lease = await fixture.Plugin.AcquireAsync(
@@ -44,17 +62,72 @@ public sealed class V3VerticalSliceTests
         var snapshotPath = lease.SourcePath;
         Assert.AreNotEqual(world.WorldPath, snapshotPath);
         Assert.IsTrue(File.Exists(Path.Combine(snapshotPath, "level.dat")));
-        Assert.AreEqual("minebackup.save", fixture.Services.KnotLink.Events.Single().Name);
+        CollectionAssert.AreEqual(
+            new[] { "handshake", "handshake_ack", "pre_hot_backup" },
+            fixture.Services.KnotLink.Events.Select(value => value.Name).ToArray());
         Assert.IsEmpty(lease.Diagnostics);
         await lease.DisposeAsync();
         Assert.IsFalse(Directory.Exists(snapshotPath));
     }
 
     [TestMethod]
+    public async Task IncompatibleCompanionFallsBackWithWarningForPreferredBackupConsistency()
+    {
+        using var world = TemporaryWorld.Create();
+        using var sessionLock = world.AcquireSessionLock();
+        var fixture = Activate();
+        fixture.Services.KnotLink.OnSendAsync = async (eventName, _, _) =>
+        {
+            if (eventName != "handshake") return;
+            await fixture.Plugin.ExecuteAsync(
+                "HANDSHAKE_RESPONSE",
+                new Dictionary<string, string> { ["mod_version"] = "2.9.9" },
+                fixture.Invocation);
+        };
+        var (config, folder) = Snapshots(world.WorldPath);
+
+        await using var lease = await fixture.Plugin.AcquireAsync(
+            new BackupConsistencyRequest(config, folder, ConsistencyIntent.Prefer),
+            fixture.Invocation);
+
+        Assert.IsTrue(lease.Diagnostics.Any(value =>
+            value.Code == "minerewind.consistency_handshake_unavailable"));
+        CollectionAssert.AreEqual(
+            new[] { "handshake", "handshake_ack" },
+            fixture.Services.KnotLink.Events.Select(value => value.Name).ToArray());
+    }
+
+    [TestMethod]
     public async Task RestoreCoordinatorRunsContinuationOnceAndRejoinsWithoutOwningHostSafetyBackup()
     {
         using var world = TemporaryWorld.Create();
+        using var sessionLock = world.AcquireSessionLock();
         var fixture = Activate();
+        fixture.Services.KnotLink.OnSendAsync = async (eventName, _, _) =>
+        {
+            if (eventName == "handshake")
+            {
+                await fixture.Plugin.ExecuteAsync(
+                    "HANDSHAKE_RESPONSE",
+                    new Dictionary<string, string> { ["mod_version"] = "3.0.0" },
+                    fixture.Invocation);
+            }
+            else if (eventName == "pre_hot_restore")
+            {
+                sessionLock.Dispose();
+                await fixture.Plugin.ExecuteAsync(
+                    "WORLD_SAVE_AND_EXIT_COMPLETE",
+                    new Dictionary<string, string>(),
+                    fixture.Invocation);
+            }
+            else if (eventName == "rejoin_world")
+            {
+                await fixture.Plugin.ExecuteAsync(
+                    "REJOIN_RESULT",
+                    new Dictionary<string, string> { ["result"] = "success" },
+                    fixture.Invocation);
+            }
+        };
         var (config, folder) = Snapshots(world.WorldPath);
         var mutationCalls = 0;
 
@@ -74,7 +147,14 @@ public sealed class V3VerticalSliceTests
         Assert.AreEqual(1, mutationCalls);
         Assert.IsEmpty(fixture.Services.Backups.Requests);
         CollectionAssert.AreEqual(
-            new[] { "minebackup.save-and-exit", "minebackup.rejoin" },
+            new[]
+            {
+                "handshake",
+                "handshake_ack",
+                "pre_hot_restore",
+                "hot_restore_complete",
+                "rejoin_world"
+            },
             fixture.Services.KnotLink.Events.Select(value => value.Name).ToArray());
     }
 
@@ -82,8 +162,34 @@ public sealed class V3VerticalSliceTests
     public async Task FailedMutationStillRejoins()
     {
         using var world = TemporaryWorld.Create();
+        using var sessionLock = world.AcquireSessionLock();
         var services = new FakeHostServices();
         var fixture = Activate(services);
+        fixture.Services.KnotLink.OnSendAsync = async (eventName, _, _) =>
+        {
+            if (eventName == "handshake")
+            {
+                await fixture.Plugin.ExecuteAsync(
+                    "HANDSHAKE_RESPONSE",
+                    new Dictionary<string, string> { ["mod_version"] = "3.0.0" },
+                    fixture.Invocation);
+            }
+            else if (eventName == "pre_hot_restore")
+            {
+                sessionLock.Dispose();
+                await fixture.Plugin.ExecuteAsync(
+                    "WORLD_SAVE_AND_EXIT_COMPLETE",
+                    new Dictionary<string, string>(),
+                    fixture.Invocation);
+            }
+            else if (eventName == "rejoin_world")
+            {
+                await fixture.Plugin.ExecuteAsync(
+                    "REJOIN_RESULT",
+                    new Dictionary<string, string> { ["result"] = "success" },
+                    fixture.Invocation);
+            }
+        };
         var (config, folder) = Snapshots(world.WorldPath);
         var mutationCalls = 0;
 
@@ -101,7 +207,43 @@ public sealed class V3VerticalSliceTests
 
         Assert.AreEqual(OperationOutcome.Failed, result.Outcome);
         Assert.AreEqual(1, mutationCalls);
-        Assert.IsTrue(fixture.Services.KnotLink.Events.Any(value => value.Name == "minebackup.rejoin"));
+        Assert.IsTrue(fixture.Services.KnotLink.Events.Any(value => value.Name == "rejoin_world"));
+    }
+
+    [TestMethod]
+    public async Task IncompatibleCompanionBlocksActiveRestoreBeforeMutation()
+    {
+        using var world = TemporaryWorld.Create();
+        using var sessionLock = world.AcquireSessionLock();
+        var fixture = Activate();
+        fixture.Services.KnotLink.OnSendAsync = async (eventName, _, _) =>
+        {
+            if (eventName != "handshake") return;
+            await fixture.Plugin.ExecuteAsync(
+                "HANDSHAKE_RESPONSE",
+                new Dictionary<string, string> { ["mod_version"] = "2.9.9" },
+                fixture.Invocation);
+        };
+        var (config, folder) = Snapshots(world.WorldPath);
+        var mutationCalls = 0;
+
+        var result = await fixture.Plugin.CoordinateAsync(
+            new RestoreCoordinatorRequest(
+                config,
+                folder,
+                "history",
+                _ =>
+                {
+                    mutationCalls++;
+                    return ValueTask.FromResult(OperationOutcome.Success);
+                }),
+            fixture.Invocation);
+
+        Assert.AreEqual(OperationOutcome.Blocked, result.Outcome);
+        Assert.AreEqual(0, mutationCalls);
+        CollectionAssert.AreEqual(
+            new[] { "handshake", "handshake_ack", "restore_cancelled" },
+            fixture.Services.KnotLink.Events.Select(value => value.Name).ToArray());
     }
 
     [TestMethod]
@@ -267,6 +409,60 @@ public sealed class V3VerticalSliceTests
         Assert.AreEqual(OperationOutcome.Success, restore.Outcome);
         Assert.AreEqual(folder.FolderId, fixture.Services.Backups.Requests.Single().FolderId);
         Assert.AreEqual("history-latest", fixture.Services.Restores.Requests.Single().HistoryId);
+    }
+
+    [TestMethod]
+    public async Task KnotLinkCurrentSaveCommandsResolveActiveWorldWithoutConfigId()
+    {
+        using var world = TemporaryWorld.Create();
+        using var sessionLock = world.AcquireSessionLock();
+        var fixture = Activate();
+        var (config, folder) = Snapshots(world.WorldPath);
+        fixture.Services.Configs.QueryResults.Add(config);
+        fixture.Services.History.Items.Add(new HistoryItemSnapshot(
+            "history-latest",
+            folder.FolderId,
+            folder.Path,
+            "latest.7z",
+            DateTimeOffset.UtcNow,
+            OperationOutcome.Success));
+
+        var backup = await fixture.Plugin.ExecuteAsync(
+            "BACKUP",
+            new Dictionary<string, string> { ["current_save"] = "true" },
+            fixture.Invocation);
+        var list = await fixture.Plugin.ExecuteAsync(
+            "LIST_BACKUPS",
+            new Dictionary<string, string> { ["current_save"] = "true" },
+            fixture.Invocation);
+        var restore = await fixture.Plugin.ExecuteAsync(
+            "RESTORE",
+            new Dictionary<string, string>
+            {
+                ["current_save"] = "true",
+                ["file"] = "latest.7z"
+            },
+            fixture.Invocation);
+
+        await fixture.Services.Backups.Requested.Task.WaitAsync(TimeSpan.FromSeconds(2));
+        await fixture.Services.Restores.Requested.Task.WaitAsync(TimeSpan.FromSeconds(2));
+        Assert.AreEqual(OperationOutcome.Success, backup.Outcome);
+        Assert.AreEqual("latest.7z", list.Values["data"].GetString());
+        Assert.AreEqual(OperationOutcome.Success, restore.Outcome);
+        Assert.AreEqual(folder.FolderId, fixture.Services.Backups.Requests.Single().FolderId);
+        Assert.AreEqual("history-latest", fixture.Services.Restores.Requests.Single().HistoryId);
+    }
+
+    [TestMethod]
+    public void KnotLinkDescriptorsReserveOnlyCurrentSaveVariantsOfCoreCommands()
+    {
+        var commands = ((IKnotLinkIntegrationCapability)new V3Plugin()).Commands;
+
+        foreach (var command in new[] { "BACKUP", "LIST_BACKUPS", "RESTORE" })
+        {
+            var descriptor = commands.Single(value => value.Command == command);
+            Assert.AreEqual("true", descriptor.RequiredArguments["current_save"]);
+        }
     }
 
     [TestMethod]
@@ -445,10 +641,13 @@ public sealed class V3VerticalSliceTests
     private sealed class FakeBackupRequests : IBackupRequestService
     {
         public List<(string ConfigId, Guid? FolderId)> Requests { get; } = new();
+        public TaskCompletionSource<bool> Requested { get; } =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
         public OperationOutcome NextOutcome { get; set; } = OperationOutcome.Success;
         public ValueTask<OperationOutcome> RequestAsync(string configId, Guid? folderId, CancellationToken cancellationToken)
         {
             Requests.Add((configId, folderId));
+            Requested.TrySetResult(true);
             return ValueTask.FromResult(NextOutcome);
         }
     }
@@ -456,9 +655,12 @@ public sealed class V3VerticalSliceTests
     private sealed class FakeRestoreRequests : IRestoreRequestService
     {
         public List<(string ConfigId, Guid FolderId, string HistoryId)> Requests { get; } = new();
+        public TaskCompletionSource<bool> Requested { get; } =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
         public ValueTask<OperationOutcome> RequestAsync(string configId, Guid folderId, string historyItemId, CancellationToken cancellationToken)
         {
             Requests.Add((configId, folderId, historyItemId));
+            Requested.TrySetResult(true);
             return ValueTask.FromResult(OperationOutcome.Success);
         }
     }
@@ -466,11 +668,15 @@ public sealed class V3VerticalSliceTests
     private sealed class FakeKnotLink : IKnotLinkHostService
     {
         public bool IsAvailable { get; set; } = true;
+        public Func<string, IReadOnlyDictionary<string, string>, CancellationToken, Task>? OnSendAsync { get; set; }
         public List<(string Name, IReadOnlyDictionary<string, string> Arguments)> Events { get; } = new();
-        public ValueTask SendAsync(string eventName, IReadOnlyDictionary<string, string> arguments, CancellationToken cancellationToken)
+        public async ValueTask SendAsync(string eventName, IReadOnlyDictionary<string, string> arguments, CancellationToken cancellationToken)
         {
             Events.Add((eventName, arguments));
-            return ValueTask.CompletedTask;
+            if (OnSendAsync is not null)
+            {
+                await OnSendAsync(eventName, arguments, cancellationToken);
+            }
         }
     }
 
@@ -526,6 +732,13 @@ public sealed class V3VerticalSliceTests
             Directory.CreateDirectory(world);
             File.WriteAllText(Path.Combine(world, "level.dat"), "fixture");
             return new TemporaryWorld(root, Path.GetFullPath(world));
+        }
+
+        public FileStream AcquireSessionLock()
+        {
+            var path = Path.Combine(WorldPath, "session.lock");
+            File.WriteAllBytes(path, [0]);
+            return new FileStream(path, FileMode.Open, FileAccess.ReadWrite, FileShare.None);
         }
 
         public void Dispose()

@@ -29,10 +29,23 @@ public sealed partial class MinecraftSavesPlugin
 
     IReadOnlyList<KnotLinkCommandDescriptor> IKnotLinkIntegrationCapability.Commands { get; } =
     [
-        new("minebackup.save", "Flush the active world to disk"),
-        new("minebackup.save-and-exit", "Save and leave the active world before restore"),
-        new("minebackup.rejoin", "Rejoin the world after restore")
+        CurrentSaveCommand("BACKUP", "Back up the currently active Minecraft world"),
+        CurrentSaveCommand("LIST_BACKUPS", "List backups for the currently active Minecraft world"),
+        CurrentSaveCommand("RESTORE", "Restore the currently active Minecraft world"),
+        new("HANDSHAKE_RESPONSE", "Report the companion mod version"),
+        new("WORLD_SAVED", "Acknowledge that the active world was saved"),
+        new("WORLD_SAVE_AND_EXIT_COMPLETE", "Acknowledge that save-and-exit completed"),
+        new("REJOIN_RESULT", "Report the automatic world rejoin result")
     ];
+
+    private static KnotLinkCommandDescriptor CurrentSaveCommand(string command, string description)
+        => new(command, description)
+        {
+            RequiredArguments = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["current_save"] = "true"
+            }
+        };
 
     public ValueTask<FilePolicyResult> ResolveAsync(
         FilePolicyRequest request,
@@ -194,23 +207,10 @@ public sealed partial class MinecraftSavesPlugin
     {
         EnsureActivated();
         var known = ((IKnotLinkIntegrationCapability)this).Commands.Any(value =>
-            string.Equals(value.Command, command, StringComparison.Ordinal));
-        if (!known || !context.HostServices.KnotLink.IsAvailable)
+            string.Equals(value.Command, command, StringComparison.OrdinalIgnoreCase));
+        if (!known)
             return ValueTask.FromResult(CommandFailure("minerewind.knotlink_command_unavailable"));
-        return ExecuteKnotLinkAsync(command, arguments, context);
-    }
-
-    private static async ValueTask<PluginCommandResult> ExecuteKnotLinkAsync(
-        string command,
-        IReadOnlyDictionary<string, string> arguments,
-        PluginInvocationContext context)
-    {
-        await context.HostServices.KnotLink.SendAsync(command, arguments, context.OperationCancellation)
-            .ConfigureAwait(false);
-        return new PluginCommandResult(
-            OperationOutcome.Success,
-            new Dictionary<string, JsonElement>(),
-            Array.Empty<PluginDiagnostic>());
+        return ExecuteInboundKnotLinkAsync(command, arguments, context);
     }
 
     private static IReadOnlyList<(int X, int Z)> ParseRegions(string value)
