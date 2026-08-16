@@ -1,6 +1,7 @@
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using System.Globalization;
 using FolderRewind.Plugin.Abstractions;
 
 namespace MineRewind;
@@ -8,24 +9,57 @@ namespace MineRewind;
 public sealed partial class MinecraftSavesPlugin
 {
     private static readonly BackupScopeId SelectedRegionsScopeId = new(new OwnerId(PluginIdentity), "selected-regions");
-    private static readonly JsonElement SelectedRegionsSchema = Json("""
-        {
-          "type": "object",
-          "required": ["regions"],
-          "properties": {
-            "regions": {
-              "type": "string",
-              "description": "Semicolon-separated region coordinates, for example 0,0;-1,2"
-            }
-          },
-          "additionalProperties": false
-        }
-        """);
+    private static readonly JsonElement SelectedRegionsSchema = BuildSelectedRegionsSchema();
 
     public IReadOnlyList<BackupScopeDescriptor> Scopes { get; } =
     [
-        new(SelectedRegionsScopeId, "Selected Minecraft regions", SelectedRegionsSchema)
+        new(
+            SelectedRegionsScopeId,
+            ScopeText("Selected Minecraft regions", "选定 Minecraft 区域"),
+            SelectedRegionsSchema)
     ];
+
+    private static JsonElement BuildSelectedRegionsSchema()
+        => JsonSerializer.SerializeToElement(new Dictionary<string, object?>
+        {
+            ["type"] = "object",
+            ["description"] = ScopeText(
+                "Back up selected block-coordinate areas from explicitly selected Minecraft dimensions.",
+                "仅备份所选 Minecraft 维度中的指定方块坐标区域。"),
+            ["properties"] = new Dictionary<string, object?>
+            {
+                ["dimension.overworld"] = Field("boolean", ScopeText("Overworld", "主世界"), defaultValue: true),
+                ["dimension.nether"] = Field("boolean", ScopeText("Nether", "下界"), defaultValue: false),
+                ["dimension.end"] = Field("boolean", ScopeText("The End", "末地"), defaultValue: false),
+                ["areas"] = Field(
+                    "string",
+                    ScopeText("Block-coordinate areas", "方块坐标区域"),
+                    ScopeText(
+                        "One x1,z1,x2,z2 rectangle per line. Lines beginning with # are ignored.",
+                        "每行填写一个 x1,z1,x2,z2 矩形；以 # 开头的行会被忽略。"),
+                    format: "multiline")
+            },
+            ["additionalProperties"] = false
+        });
+
+    private static Dictionary<string, object?> Field(
+        string type,
+        string title,
+        string? description = null,
+        object? defaultValue = null,
+        string? format = null)
+    {
+        var result = new Dictionary<string, object?> { ["type"] = type, ["title"] = title };
+        if (description is not null) result["description"] = description;
+        if (defaultValue is not null) result["default"] = defaultValue;
+        if (format is not null) result["format"] = format;
+        return result;
+    }
+
+    private static string ScopeText(string english, string chinese)
+        => string.Equals(CultureInfo.CurrentUICulture.TwoLetterISOLanguageName, "zh", StringComparison.OrdinalIgnoreCase)
+            ? chinese
+            : english;
 
     IReadOnlyList<KnotLinkCommandDescriptor> IKnotLinkIntegrationCapability.Commands { get; } =
     [
@@ -79,40 +113,33 @@ public sealed partial class MinecraftSavesPlugin
                 Array.Empty<string>(),
                 [Diagnostic("minerewind.scope_unknown", DiagnosticSeverity.Error, "BackupScope")]));
         }
-        if (!TryString(request.Parameters, "regions", out var raw)
-            && !TryString(request.Parameters, "selectedRegions", out raw))
-        {
-            return ValueTask.FromResult(new BackupScopeResult(
-                OperationReadiness.Blocked,
-                Array.Empty<string>(),
-                [Diagnostic("minerewind.scope_regions_required", DiagnosticSeverity.Error, "BackupScope")]));
-        }
-
-        var regions = ParseRegions(raw);
-        if (regions.Count == 0)
-        {
-            return ValueTask.FromResult(new BackupScopeResult(
-                OperationReadiness.Blocked,
-                Array.Empty<string>(),
-                [Diagnostic("minerewind.scope_regions_invalid", DiagnosticSeverity.Error, "BackupScope")]));
-        }
-        var patterns = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
-        {
-            "level.dat", "level.dat_old", "icon.png", "datapacks/**", "data/**", "playerdata/**", "advancements/**", "stats/**"
-        };
-        foreach (var (x, z) in regions)
-        {
-            foreach (var family in new[] { "region", "entities", "poi" })
+        var parameters = request.Parameters.ToDictionary(
+            pair => pair.Key,
+            pair => pair.Value.ValueKind switch
             {
-                patterns.Add($"{family}/r.{x}.{z}.mca");
-                patterns.Add($"DIM-1/{family}/r.{x}.{z}.mca");
-                patterns.Add($"DIM1/{family}/r.{x}.{z}.mca");
-                patterns.Add($"dimensions/**/{family}/r.{x}.{z}.mca");
-            }
+                JsonValueKind.String => pair.Value.GetString() ?? string.Empty,
+                JsonValueKind.True => "true",
+                JsonValueKind.False => "false",
+                _ => pair.Value.ToString()
+            },
+            StringComparer.OrdinalIgnoreCase);
+        var sourceRoot = Path.GetFullPath(request.Folder.Path);
+        var worldPath = ResolveWorldPath(sourceRoot);
+        var errorCode = string.Empty;
+        if (worldPath is null
+            || !MinecraftRegionBackupScope.TryBuild(sourceRoot, worldPath, parameters, out var patterns, out errorCode))
+        {
+            return ValueTask.FromResult(new BackupScopeResult(
+                OperationReadiness.Blocked,
+                Array.Empty<string>(),
+                [Diagnostic(
+                    worldPath is null ? "minerewind.scope_world_missing" : $"minerewind.scope_{errorCode}",
+                    DiagnosticSeverity.Error,
+                    "BackupScope")]));
         }
         return ValueTask.FromResult(new BackupScopeResult(
             OperationReadiness.Ready,
-            patterns.OrderBy(value => value, StringComparer.Ordinal).ToArray(),
+            patterns,
             Array.Empty<PluginDiagnostic>()));
     }
 
@@ -211,22 +238,6 @@ public sealed partial class MinecraftSavesPlugin
         if (!known)
             return ValueTask.FromResult(CommandFailure("minerewind.knotlink_command_unavailable"));
         return ExecuteInboundKnotLinkAsync(command, arguments, context);
-    }
-
-    private static IReadOnlyList<(int X, int Z)> ParseRegions(string value)
-    {
-        var result = new HashSet<(int X, int Z)>();
-        foreach (var token in value.Split(';', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries))
-        {
-            var coordinates = token.Split(',', StringSplitOptions.TrimEntries);
-            if (coordinates.Length == 2
-                && int.TryParse(coordinates[0], out var x)
-                && int.TryParse(coordinates[1], out var z))
-            {
-                result.Add((x, z));
-            }
-        }
-        return result.OrderBy(region => region.X).ThenBy(region => region.Z).ToArray();
     }
 
     private static string? NormalizePath(string path)

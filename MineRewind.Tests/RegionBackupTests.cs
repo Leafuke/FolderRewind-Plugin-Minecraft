@@ -244,7 +244,7 @@ public sealed class RegionBackupTests
             out string lineCode));
         Assert.AreEqual("region_too_many_lines", lineCode);
 
-        string tooLarge = new(' ', MinecraftSavesPlugin.MaxRegionAreaBytes + 1);
+        string tooLarge = new(' ', MinecraftRegionBackupScope.MaxAreaBytes + 1);
         Assert.IsFalse(Build(
             world,
             world,
@@ -293,13 +293,12 @@ public sealed class RegionBackupTests
         IReadOnlyDictionary<string, string> parameters,
         out IReadOnlyList<string> rules,
         out string errorCode)
-        => MinecraftSavesPlugin.TryBuildRegionBackupWhitelist(
+        => MinecraftRegionBackupScope.TryBuild(
             source,
             world,
             parameters,
             out rules,
-            out errorCode,
-            out _);
+            out errorCode);
 
     private string CreateWorld()
         => CreateRoot();

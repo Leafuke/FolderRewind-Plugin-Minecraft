@@ -611,19 +611,7 @@ public sealed partial class MinecraftSavesPlugin :
     }
 
     private static string? ResolveWorldPath(string path)
-    {
-        if (IsWorld(path)) return Path.GetFullPath(path);
-        if (!Directory.Exists(path)) return null;
-        try
-        {
-            var worlds = Directory.EnumerateDirectories(path).Where(IsWorld).Take(2).ToArray();
-            return worlds.Length == 1 ? Path.GetFullPath(worlds[0]) : null;
-        }
-        catch
-        {
-            return null;
-        }
-    }
+        => MinecraftWorldPathResolver.TryResolveWorldPath(path);
 
     private static bool IsWorld(string path)
         => Directory.Exists(path) && File.Exists(Path.Combine(path, "level.dat"));

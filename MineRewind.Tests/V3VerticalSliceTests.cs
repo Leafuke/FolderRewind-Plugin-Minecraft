@@ -1,9 +1,7 @@
-extern alias v3;
-
 using System.Text.Json;
 using fNbt;
 using FolderRewind.Plugin.Abstractions;
-using V3Plugin = v3::MineRewind.MinecraftSavesPlugin;
+using V3Plugin = MineRewind.MinecraftSavesPlugin;
 
 namespace MineRewind.Tests;
 
@@ -292,8 +290,9 @@ public sealed class V3VerticalSliceTests
 
         Assert.AreEqual(OperationReadiness.Ready, result.Readiness);
         Assert.Contains("region/r.0.0.mca", result.IncludePatterns);
-        Assert.Contains("dimensions/**/poi/r.-1.2.mca", result.IncludePatterns);
-        Assert.Contains("playerdata/**", result.IncludePatterns);
+        Assert.Contains("poi/r.-1.2.mca", result.IncludePatterns);
+        Assert.Contains("region/c.*.*.mcc", result.IncludePatterns);
+        Assert.Contains("playerdata", result.IncludePatterns);
     }
 
     [TestMethod]
