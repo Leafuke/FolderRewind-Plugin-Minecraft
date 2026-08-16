@@ -13,6 +13,8 @@ public sealed partial class MinecraftSavesPlugin
     private const int WorldSaveTimeoutMs = 10_000;
     private const int WorldExitTimeoutMs = 10_000;
     private const int WorldReleaseTimeoutMs = 15_000;
+    private const int PostMutationSignalDelayMs = 100;
+    private const int PostRestoreStabilizeMs = 3_000;
     private const int RejoinTimeoutMs = 30_000;
 
     private readonly SemaphoreSlim _handshakeGate = new(1, 1);
@@ -46,7 +48,7 @@ public sealed partial class MinecraftSavesPlugin
                     return CommandFailure("minerewind.knotlink_ack_not_expected");
                 return Success("Rejoin result acknowledged.");
             case "BACKUP":
-                return await RequestCurrentBackupAsync(context).ConfigureAwait(false);
+                return await RequestCurrentBackupAsync(arguments, context).ConfigureAwait(false);
             case "LIST_BACKUPS":
                 return await ListCurrentBackupsAsync(context).ConfigureAwait(false);
             case "RESTORE":
@@ -231,48 +233,95 @@ public sealed partial class MinecraftSavesPlugin
         }
     }
 
-    private async ValueTask ReportRestoreCompletedAsync(
+    private async ValueTask ReportRestoreMutationFinishedAsync(
         RestoreCoordinatorRequest request,
         OperationOutcome outcome,
         PluginInvocationContext context)
     {
         try
         {
+            await Task.Delay(PostMutationSignalDelayMs, context.PluginLifetime).ConfigureAwait(false);
             var arguments = RestoreArguments(request).ToDictionary(pair => pair.Key, pair => pair.Value);
             arguments["status"] = IsSuccessful(outcome) ? "success" : "failed";
             await context.HostServices.KnotLink.SendAsync(
-                "hot_restore_complete",
+                "restore_finished",
                 arguments,
                 CancellationToken.None).ConfigureAwait(false);
+
+            context.HostServices.Logger.Log(
+                DiagnosticSeverity.Information,
+                $"KnotLink restore_finished sent for '{Path.GetFileName(request.Folder.Path)}' with status '{arguments["status"]}'.");
         }
         catch (Exception ex)
         {
             context.HostServices.Logger.Log(
                 DiagnosticSeverity.Warning,
-                "Failed to report hot-restore completion through KnotLink.",
+                "Failed to report restore mutation completion through KnotLink.",
                 ex);
         }
     }
 
-    private async ValueTask<bool> RequestWorldRejoinAsync(
+    private async ValueTask ReportHotRestoreCompletedAsync(
+        RestoreCoordinatorRequest request,
+        OperationOutcome outcome,
+        RejoinResult rejoinResult,
+        PluginInvocationContext context)
+    {
+        try
+        {
+            var arguments = RestoreArguments(request).ToDictionary(pair => pair.Key, pair => pair.Value);
+            arguments["status"] = ResolveHotRestoreStatus(outcome, rejoinResult);
+            await context.HostServices.KnotLink.SendAsync(
+                "hot_restore_complete",
+                arguments,
+                CancellationToken.None).ConfigureAwait(false);
+
+            context.HostServices.Logger.Log(
+                DiagnosticSeverity.Information,
+                $"KnotLink hot_restore_complete sent with status '{arguments["status"]}'.");
+        }
+        catch (Exception ex)
+        {
+            context.HostServices.Logger.Log(
+                DiagnosticSeverity.Warning,
+                "Failed to report final hot-restore completion through KnotLink.",
+                ex);
+        }
+    }
+
+    private async ValueTask<RejoinResult> RequestWorldRejoinAsync(
         RestoreCoordinatorRequest request,
         PluginInvocationContext context)
     {
+        // 模组收到 restore_finished 后需要从退出世界阶段切换到可重进状态；过早发送会被客户端丢弃。
+        context.HostServices.Logger.Log(
+            DiagnosticSeverity.Information,
+            $"Waiting {PostRestoreStabilizeMs} ms before sending KnotLink rejoin_world.");
+        await Task.Delay(PostRestoreStabilizeMs, context.PluginLifetime).ConfigureAwait(false);
+
         var pending = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
         Volatile.Write(ref _pendingRejoin, pending);
         try
         {
+            context.HostServices.Logger.Log(
+                DiagnosticSeverity.Information,
+                $"Sending KnotLink rejoin_world for '{Path.GetFileName(request.Folder.Path)}'.");
             await context.HostServices.KnotLink.SendAsync(
                 "rejoin_world",
                 RestoreArguments(request),
                 CancellationToken.None).ConfigureAwait(false);
             try
             {
-                return await pending.Task.WaitAsync(TimeSpan.FromMilliseconds(RejoinTimeoutMs)).ConfigureAwait(false);
+                return await pending.Task.WaitAsync(TimeSpan.FromMilliseconds(RejoinTimeoutMs)).ConfigureAwait(false)
+                    ? RejoinResult.Succeeded
+                    : RejoinResult.Failed;
             }
             catch (TimeoutException)
             {
-                return false;
+                context.HostServices.Logger.Log(
+                    DiagnosticSeverity.Warning,
+                    "Timed out waiting for KnotLink REJOIN_RESULT.");
+                return RejoinResult.TimedOut;
             }
         }
         finally
@@ -297,11 +346,17 @@ public sealed partial class MinecraftSavesPlugin
     }
 
     private static async ValueTask<PluginCommandResult> RequestCurrentBackupAsync(
+        IReadOnlyDictionary<string, string> arguments,
         PluginInvocationContext context)
     {
         var active = await FindActiveWorldAsync(context).ConfigureAwait(false);
         if (!active.HasValue) return CommandFailure("minerewind.command_active_world_not_found");
         var (config, folder) = active.Value;
+
+        var options = new BackupRequestOptions
+        {
+            Comment = TryGetValue(arguments, "comment", out var comment) ? comment : string.Empty
+        };
 
         // KnotLink responder 串行处理消息：必须先回复 BACKUP，后台备份才能继续接收 WORLD_SAVED。
         QueueHostOperation(
@@ -310,6 +365,7 @@ public sealed partial class MinecraftSavesPlugin
             cancellationToken => context.HostServices.Backups.RequestAsync(
                 config.ConfigId,
                 folder.FolderId,
+                options,
                 cancellationToken));
         return Success($"Backup started for '{folder.DisplayName}'.");
     }
@@ -452,4 +508,28 @@ public sealed partial class MinecraftSavesPlugin
 
     private static PluginCommandResult Success(string message)
         => Result(OperationOutcome.Success, message);
+
+    private static string ResolveHotRestoreStatus(OperationOutcome outcome, RejoinResult rejoinResult)
+    {
+        if (!IsSuccessful(outcome))
+        {
+            return rejoinResult == RejoinResult.Succeeded
+                ? "restore_failed_rejoined"
+                : "restore_failed_rejoin_failed";
+        }
+
+        return rejoinResult switch
+        {
+            RejoinResult.Succeeded => "full_success",
+            RejoinResult.TimedOut => "restore_ok_rejoin_timeout",
+            _ => "restore_ok_rejoin_failed"
+        };
+    }
+
+    private enum RejoinResult
+    {
+        Succeeded,
+        Failed,
+        TimedOut
+    }
 }

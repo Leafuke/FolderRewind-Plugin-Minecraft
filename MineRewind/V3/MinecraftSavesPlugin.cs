@@ -357,9 +357,10 @@ public sealed partial class MinecraftSavesPlugin :
         {
             try
             {
-                await ReportRestoreCompletedAsync(request, outcome, context).ConfigureAwait(false);
-                var rejoined = await RequestWorldRejoinAsync(request, context).ConfigureAwait(false);
-                if (!rejoined)
+                await ReportRestoreMutationFinishedAsync(request, outcome, context).ConfigureAwait(false);
+                var rejoinResult = await RequestWorldRejoinAsync(request, context).ConfigureAwait(false);
+                await ReportHotRestoreCompletedAsync(request, outcome, rejoinResult, context).ConfigureAwait(false);
+                if (rejoinResult != RejoinResult.Succeeded)
                 {
                     diagnostics.Add(Diagnostic(
                         "minerewind.restore_rejoin_failed",

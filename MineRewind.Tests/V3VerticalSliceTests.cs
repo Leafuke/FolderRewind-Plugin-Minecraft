@@ -152,10 +152,20 @@ public sealed class V3VerticalSliceTests
                 "handshake",
                 "handshake_ack",
                 "pre_hot_restore",
-                "hot_restore_complete",
-                "rejoin_world"
+                "restore_finished",
+                "rejoin_world",
+                "hot_restore_complete"
             },
             fixture.Services.KnotLink.Events.Select(value => value.Name).ToArray());
+        var restoreFinished = fixture.Services.KnotLink.Events.Single(value => value.Name == "restore_finished");
+        var rejoinWorld = fixture.Services.KnotLink.Events.Single(value => value.Name == "rejoin_world");
+        var hotRestoreComplete = fixture.Services.KnotLink.Events.Single(value => value.Name == "hot_restore_complete");
+        Assert.AreEqual("success", restoreFinished.Arguments["status"]);
+        Assert.IsGreaterThanOrEqualTo(
+            TimeSpan.FromMilliseconds(2_800),
+            rejoinWorld.SentAt - restoreFinished.SentAt,
+            "rejoin_world 必须等待模组完成退出世界后的状态切换，不能紧跟 restore_finished 发送。");
+        Assert.AreEqual("full_success", hotRestoreComplete.Arguments["status"]);
     }
 
     [TestMethod]
@@ -370,6 +380,7 @@ public sealed class V3VerticalSliceTests
         Assert.AreEqual(OperationOutcome.Success, backup.Outcome);
         Assert.AreEqual(OperationOutcome.Success, restore.Outcome);
         Assert.HasCount(1, fixture.Services.Backups.Requests);
+        Assert.AreEqual(string.Empty, fixture.Services.Backups.Requests.Single().Options.Comment);
         Assert.HasCount(1, fixture.Services.Restores.Requests);
     }
 
@@ -429,7 +440,11 @@ public sealed class V3VerticalSliceTests
 
         var backup = await fixture.Plugin.ExecuteAsync(
             "BACKUP",
-            new Dictionary<string, string> { ["current_save"] = "true" },
+            new Dictionary<string, string>
+            {
+                ["current_save"] = "true",
+                ["comment"] = "3.0插件修复后测试"
+            },
             fixture.Invocation);
         var list = await fixture.Plugin.ExecuteAsync(
             "LIST_BACKUPS",
@@ -449,7 +464,9 @@ public sealed class V3VerticalSliceTests
         Assert.AreEqual(OperationOutcome.Success, backup.Outcome);
         Assert.AreEqual("latest.7z", list.Values["data"].GetString());
         Assert.AreEqual(OperationOutcome.Success, restore.Outcome);
-        Assert.AreEqual(folder.FolderId, fixture.Services.Backups.Requests.Single().FolderId);
+        var backupRequest = fixture.Services.Backups.Requests.Single();
+        Assert.AreEqual(folder.FolderId, backupRequest.FolderId);
+        Assert.AreEqual("3.0插件修复后测试", backupRequest.Options.Comment);
         Assert.AreEqual("history-latest", fixture.Services.Restores.Requests.Single().HistoryId);
     }
 
@@ -640,13 +657,20 @@ public sealed class V3VerticalSliceTests
 
     private sealed class FakeBackupRequests : IBackupRequestService
     {
-        public List<(string ConfigId, Guid? FolderId)> Requests { get; } = new();
+        public List<(string ConfigId, Guid? FolderId, BackupRequestOptions Options)> Requests { get; } = new();
         public TaskCompletionSource<bool> Requested { get; } =
             new(TaskCreationOptions.RunContinuationsAsynchronously);
         public OperationOutcome NextOutcome { get; set; } = OperationOutcome.Success;
         public ValueTask<OperationOutcome> RequestAsync(string configId, Guid? folderId, CancellationToken cancellationToken)
+            => RequestAsync(configId, folderId, BackupRequestOptions.Default, cancellationToken);
+
+        public ValueTask<OperationOutcome> RequestAsync(
+            string configId,
+            Guid? folderId,
+            BackupRequestOptions options,
+            CancellationToken cancellationToken)
         {
-            Requests.Add((configId, folderId));
+            Requests.Add((configId, folderId, options));
             Requested.TrySetResult(true);
             return ValueTask.FromResult(NextOutcome);
         }
@@ -669,10 +693,10 @@ public sealed class V3VerticalSliceTests
     {
         public bool IsAvailable { get; set; } = true;
         public Func<string, IReadOnlyDictionary<string, string>, CancellationToken, Task>? OnSendAsync { get; set; }
-        public List<(string Name, IReadOnlyDictionary<string, string> Arguments)> Events { get; } = new();
+        public List<(string Name, IReadOnlyDictionary<string, string> Arguments, DateTimeOffset SentAt)> Events { get; } = new();
         public async ValueTask SendAsync(string eventName, IReadOnlyDictionary<string, string> arguments, CancellationToken cancellationToken)
         {
-            Events.Add((eventName, arguments));
+            Events.Add((eventName, arguments, DateTimeOffset.UtcNow));
             if (OnSendAsync is not null)
             {
                 await OnSendAsync(eventName, arguments, cancellationToken);
