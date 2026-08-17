@@ -384,6 +384,26 @@ public sealed class V3VerticalSliceTests
     }
 
     [TestMethod]
+    [DataRow(OperationOutcome.Failed)]
+    [DataRow(OperationOutcome.Blocked)]
+    [DataRow(OperationOutcome.Canceled)]
+    public async Task HotBackupCommandPreservesNonSuccessHostOutcome(OperationOutcome hostOutcome)
+    {
+        var services = new FakeHostServices();
+        services.Backups.NextOutcome = hostOutcome;
+        var fixture = Activate(services);
+
+        var result = await fixture.Plugin.ExecuteAsync(
+            new PluginCommandRequest(
+                new PluginCommandId(PluginId, "hotbackup.active-world"),
+                Arguments(("configId", "config"))),
+            fixture.Invocation);
+
+        Assert.AreEqual(hostOutcome, result.Outcome);
+        Assert.AreNotEqual(OperationOutcome.NoChanges, result.Outcome);
+    }
+
+    [TestMethod]
     public async Task DefaultHotkeyCommandsResolveLockedWorldAndLatestHistory()
     {
         using var world = TemporaryWorld.Create();

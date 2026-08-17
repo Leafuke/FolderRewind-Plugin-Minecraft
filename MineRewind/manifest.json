@@ -40,8 +40,10 @@
   ],
   "settingsSchema": "settings.schema.json",
   "requestedHostServices": [
+    "configQuery",
     "backupRequest",
     "restoreRequest",
+    "historyQuery",
     "knotLink",
     "temporaryStorage",
     "logging"

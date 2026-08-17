@@ -39,5 +39,13 @@ public sealed class ManifestVersionTests
                 "pluginCommand", "knotLinkIntegration", "providerStateMigration"
             },
             root.GetProperty("capabilities").EnumerateArray().Select(value => value.GetString()).ToArray());
+        CollectionAssert.AreEquivalent(
+            new[]
+            {
+                "configQuery", "backupRequest", "restoreRequest", "historyQuery",
+                "knotLink", "temporaryStorage", "logging"
+            },
+            root.GetProperty("requestedHostServices").EnumerateArray()
+                .Select(value => value.GetString()).ToArray());
     }
 }
