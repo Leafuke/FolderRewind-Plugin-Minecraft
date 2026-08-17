@@ -14,12 +14,27 @@ jobs:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
+      - name: Resolve and validate release version
+        shell: pwsh
+        run: |
+          $manifestVersion = (Get-Content MineRewind/manifest.json -Raw | ConvertFrom-Json).version
+          if ('${{ github.ref }}'.StartsWith('refs/tags/')) {
+            $tag = '${{ github.ref_name }}'
+            if (-not $tag.StartsWith('v')) { throw "Release tag must use v<SemVer>." }
+            $tagVersion = $tag.Substring(1)
+            if ($tagVersion -cne $manifestVersion) {
+              throw "Tag version '$tagVersion' does not match Manifest '$manifestVersion'."
+            }
+          }
+          "PLUGIN_VERSION=$manifestVersion" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
       - name: Restore
-        run: dotnet restore MineRewind/MineRewind.csproj
+        run: dotnet restore FolderRewind-Plugin-Minecraft.slnx --configfile NuGet.Config
+      - name: Build
+        run: dotnet build FolderRewind-Plugin-Minecraft.slnx --no-restore -c Release
       - name: Test
-        run: dotnet test MineRewind.Tests/MineRewind.Tests.csproj --no-restore -c Release
+        run: dotnet test MineRewind.Tests/MineRewind.Tests.csproj --no-restore --no-build -c Release
       - name: Pack .frplugin
-        run: dotnet msbuild MineRewind/MineRewind.csproj /t:PackFrPlugin /p:Configuration=Release /p:Version=${{ github.ref_name }}
+        run: dotnet msbuild MineRewind/MineRewind.csproj /t:PackFrPlugin /p:Configuration=Release /p:Version=${{ env.PLUGIN_VERSION }}
       - name: Reject bundled Abstractions
         shell: pwsh
         run: |
@@ -48,4 +63,4 @@ jobs:
           $package = Get-ChildItem artifacts/*.frplugin | Select-Object -First 1
           $sha = (Get-FileHash $package.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
           $url = "https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/$($package.Name)"
-          gh workflow run update-plugin.yml --repo $env:CATALOG_REPOSITORY -f pluginId=com.folderrewind.minerewind -f version=${{ github.ref_name }} -f artifactUrl=$url -f sha256=$sha
+          gh workflow run update-plugin.yml --repo $env:CATALOG_REPOSITORY -f pluginId=com.folderrewind.minerewind -f version=${{ env.PLUGIN_VERSION }} -f artifactUrl=$url -f sha256=$sha
