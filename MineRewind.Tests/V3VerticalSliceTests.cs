@@ -29,6 +29,47 @@ public sealed class V3VerticalSliceTests
     }
 
     [TestMethod]
+    public async Task DiscoveryCatalogMapsWorldCandidatesToMinecraftJava()
+    {
+        using var world = TemporaryWorld.Create();
+        var fixture = Activate();
+        var catalog = (IDiscoveryDefinitionCatalog)fixture.Plugin;
+
+        var result = await fixture.Plugin.DiscoverAsync(
+            new DiscoveryRequest([world.Root]),
+            fixture.Invocation);
+
+        var definition = catalog.Definitions.Single();
+        Assert.AreEqual(V3Plugin.MinecraftDefinitionIdentity, definition.DefinitionId);
+        Assert.AreEqual("Minecraft: Java Edition", definition.DisplayName);
+        Assert.AreEqual(V3Plugin.MinecraftDefinitionIdentity, catalog.ResolveDefinitionId(result.Candidates.Single()));
+        Assert.AreNotEqual(V3Plugin.MinecraftDefinitionIdentity, result.Candidates.Single().CandidateId);
+    }
+
+    [TestMethod]
+    public async Task DiscoveryKeepsMultipleWorldsAsIndependentStableCandidates()
+    {
+        using var world = TemporaryWorld.Create();
+        var secondWorld = Path.Combine(world.Root, ".minecraft", "saves", "World 2");
+        Directory.CreateDirectory(secondWorld);
+        File.WriteAllText(Path.Combine(secondWorld, "level.dat"), "fixture");
+        var fixture = Activate();
+
+        var first = await fixture.Plugin.DiscoverAsync(
+            new DiscoveryRequest([world.Root]),
+            fixture.Invocation);
+        var second = await fixture.Plugin.DiscoverAsync(
+            new DiscoveryRequest([world.Root + Path.DirectorySeparatorChar]),
+            fixture.Invocation);
+
+        Assert.HasCount(2, first.Candidates);
+        CollectionAssert.AreEquivalent(
+            first.Candidates.Select(candidate => candidate.CandidateId).ToArray(),
+            second.Candidates.Select(candidate => candidate.CandidateId).ToArray());
+        Assert.AreEqual(2, first.Candidates.SelectMany(candidate => candidate.ConfigDrafts).Count());
+    }
+
+    [TestMethod]
     public async Task ConsistencyLeaseUsesCoordinatedSourceBeforeHostCapture()
     {
         using var world = TemporaryWorld.Create();

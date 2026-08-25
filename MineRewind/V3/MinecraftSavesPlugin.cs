@@ -8,6 +8,7 @@ namespace MineRewind;
 public sealed partial class MinecraftSavesPlugin :
     IFolderRewindPlugin,
     IDiscoveryCapability,
+    IDiscoveryDefinitionCatalog,
     IBackupConsistencyCapability,
     IFilePolicyCapability,
     IBackupScopeCapability,
@@ -20,6 +21,7 @@ public sealed partial class MinecraftSavesPlugin :
 {
     public const string PluginIdentity = "com.folderrewind.minerewind";
     public const string MinecraftKindIdentity = "minecraft-saves";
+    public const string MinecraftDefinitionIdentity = "minecraft-java";
     public const string DiscoveryIdentity = PluginIdentity;
     public const string StateOwnerIdentity = PluginIdentity;
 
@@ -52,12 +54,21 @@ public sealed partial class MinecraftSavesPlugin :
         """);
     private static readonly IReadOnlyDictionary<StateOwnerId, ProviderStateDraft> EmptyDraftStates =
         new Dictionary<StateOwnerId, ProviderStateDraft>();
+    private static readonly IReadOnlyList<DiscoveryDefinitionDescriptor> DiscoveryDefinitions =
+    [
+        new(
+            MinecraftDefinitionIdentity,
+            "Minecraft: Java Edition",
+            ["Minecraft", "Minecraft Java", "Minecraft: Java Edition"],
+            new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase))
+    ];
 
     private bool _activated;
     private bool _autoDiscoverSaves = true;
     private bool _preservePlayerData;
 
     public DiscoveryProviderId ProviderId { get; } = new(DiscoveryIdentity);
+    public IReadOnlyList<DiscoveryDefinitionDescriptor> Definitions => DiscoveryDefinitions;
     public ConfigKindRef Kind => MinecraftKind;
     public StateOwnerId StateOwnerId => MineRewindStateOwnerId;
     public int CurrentSchemaVersion => 1;
@@ -133,6 +144,14 @@ public sealed partial class MinecraftSavesPlugin :
             .Select(CreateCandidate)
             .ToArray();
         return ValueTask.FromResult(new DiscoveryResult(candidates, diagnostics));
+    }
+
+    public string? ResolveDefinitionId(DiscoveryCandidate candidate)
+    {
+        ArgumentNullException.ThrowIfNull(candidate);
+        return candidate.ConfigDrafts.Any(draft => draft.Kind == MinecraftKind)
+            ? MinecraftDefinitionIdentity
+            : null;
     }
 
     public async ValueTask<IConsistencyLease> AcquireAsync(

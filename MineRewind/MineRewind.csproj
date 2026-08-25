@@ -7,9 +7,10 @@
     <GenerateDependencyFile>false</GenerateDependencyFile>
     <CopyLocalLockFileAssemblies>true</CopyLocalLockFileAssemblies>
     <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+    <Version>1.9.1</Version>
   </PropertyGroup>
   <ItemGroup>
-    <PackageReference Include="FolderRewind.Plugin.Abstractions" Version="3.0.0">
+    <PackageReference Include="FolderRewind.Plugin.Abstractions" Version="3.1.0">
       <Private>false</Private>
     </PackageReference>
     <PackageReference Include="fNbt" Version="1.0.0" />
