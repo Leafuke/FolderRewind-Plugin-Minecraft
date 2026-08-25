@@ -153,7 +153,7 @@ public sealed partial class MinecraftSavesPlugin
         if (path is null)
         {
             return ValueTask.FromResult(new FolderMetadataResult(
-                new Dictionary<string, string>(),
+                Array.Empty<FolderMetadataField>(),
                 [Diagnostic("minerewind.metadata_world_missing", DiagnosticSeverity.Warning, "FolderMetadata")]));
         }
         var details = NbtHelper.TryGetWorldDetails(path);
@@ -161,28 +161,117 @@ public sealed partial class MinecraftSavesPlugin
         if (details is null)
         {
             return ValueTask.FromResult(new FolderMetadataResult(
-                new Dictionary<string, string>(StringComparer.Ordinal)
-                {
-                    ["worldName"] = Path.GetFileName(path),
-                    ["regionFileCount"] = regionCount.ToString(System.Globalization.CultureInfo.InvariantCulture)
-                },
+                [
+                    CreateMetadataField("worldName", "World name", "世界名称", Path.GetFileName(path)),
+                    CreateMetadataField("regionFileCount", "Region files", "区域文件数", FormatNumber(regionCount))
+                ],
                 [Diagnostic("minerewind.metadata_level_dat_invalid", DiagnosticSeverity.Warning, "FolderMetadata")]));
         }
         return ValueTask.FromResult(new FolderMetadataResult(
-            new Dictionary<string, string>(StringComparer.Ordinal)
-            {
-                ["worldName"] = string.IsNullOrWhiteSpace(details.LevelName) ? Path.GetFileName(path) : details.LevelName,
-                ["gameMode"] = details.GameMode,
-                ["seed"] = details.Seed,
-                ["totalTime"] = details.TotalTime?.ToString(System.Globalization.CultureInfo.InvariantCulture) ?? string.Empty,
-                ["dayTime"] = details.DayTime?.ToString(System.Globalization.CultureInfo.InvariantCulture) ?? string.Empty,
-                ["lastPlayed"] = details.LastPlayed?.ToString(System.Globalization.CultureInfo.InvariantCulture) ?? string.Empty,
-                ["hasPlayerData"] = details.HasPlayerData.ToString(),
-                ["dataVersion"] = details.DataVersion?.ToString(System.Globalization.CultureInfo.InvariantCulture) ?? string.Empty,
-                ["worldFormat"] = details.IsNewFormat ? "26.1+" : "legacy",
-                ["regionFileCount"] = regionCount.ToString(System.Globalization.CultureInfo.InvariantCulture)
-            },
+            [
+                CreateMetadataField(
+                    "worldName",
+                    "World name",
+                    "世界名称",
+                    string.IsNullOrWhiteSpace(details.LevelName) ? Path.GetFileName(path) : details.LevelName),
+                CreateMetadataField("gameMode", "Game mode", "游戏模式", LocalizeGameMode(details.GameMode)),
+                CreateMetadataField("seed", "Seed", "种子", details.Seed),
+                CreateMetadataField("worldDays", "World days", "世界天数", FormatWorldDays(details.TotalTime)),
+                CreateMetadataField("worldTotalTime", "World total time", "世界总时间", FormatWorldTicks(details.TotalTime)),
+                CreateMetadataField("lastPlayed", "Last played", "最近游玩", FormatLastPlayed(details.LastPlayed)),
+                CreateMetadataField(
+                    "hasPlayerData",
+                    "Player data",
+                    "玩家数据",
+                    details.HasPlayerData ? MetadataText("Yes", "是") : MetadataText("No", "否")),
+                CreateMetadataField("dataVersion", "Data version", "数据版本", FormatNumber(details.DataVersion)),
+                CreateMetadataField(
+                    "worldFormat",
+                    "Format",
+                    "存档格式",
+                    details.IsNewFormat
+                        ? MetadataValue("Minecraft 26.1+")
+                        : MetadataText("Legacy (< 26.1)", "旧版 (< 26.1)")),
+                CreateMetadataField("regionFileCount", "Region files", "区域文件数", FormatNumber(regionCount))
+            ],
             Array.Empty<PluginDiagnostic>()));
+    }
+
+    private static FolderMetadataField CreateMetadataField(
+        string key,
+        string englishDisplayName,
+        string chineseDisplayName,
+        string value)
+        => CreateMetadataField(
+            key,
+            englishDisplayName,
+            chineseDisplayName,
+            MetadataValue(value));
+
+    private static FolderMetadataField CreateMetadataField(
+        string key,
+        string englishDisplayName,
+        string chineseDisplayName,
+        LocalizedText value)
+        => new(key, MetadataText(englishDisplayName, chineseDisplayName), value);
+
+    private static LocalizedText MetadataText(string english, string chinese)
+        => new(
+            english,
+            new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["en-US"] = english,
+                ["zh-CN"] = chinese
+            });
+
+    private static LocalizedText MetadataValue(string value)
+        => new(value ?? string.Empty, new Dictionary<string, string>());
+
+    private static LocalizedText LocalizeGameMode(string gameMode)
+        => gameMode switch
+        {
+            "Survival" => MetadataText("Survival", "生存模式"),
+            "Creative" => MetadataText("Creative", "创造模式"),
+            "Adventure" => MetadataText("Adventure", "冒险模式"),
+            "Spectator" => MetadataText("Spectator", "旁观模式"),
+            _ => MetadataValue(gameMode)
+        };
+
+    private static string FormatNumber(IFormattable? value)
+        => value?.ToString(null, CultureInfo.InvariantCulture) ?? string.Empty;
+
+    private static string FormatWorldTicks(long? totalTime)
+    {
+        if (totalTime is not long ticks) return string.Empty;
+        try
+        {
+            return TimeSpan.FromSeconds(ticks / 20.0)
+                .ToString(@"d\.hh\:mm\:ss", CultureInfo.InvariantCulture);
+        }
+        catch
+        {
+            return string.Empty;
+        }
+    }
+
+    private static string FormatWorldDays(long? totalTime)
+        => totalTime is long ticks
+            ? (ticks / 24000.0).ToString("F1", CultureInfo.InvariantCulture)
+            : string.Empty;
+
+    private static string FormatLastPlayed(long? lastPlayed)
+    {
+        if (lastPlayed is not long unixEpochMilliseconds) return string.Empty;
+        try
+        {
+            return DateTimeOffset.FromUnixTimeMilliseconds(unixEpochMilliseconds)
+                .ToLocalTime()
+                .ToString("yyyy-MM-dd HH:mm:ss", CultureInfo.InvariantCulture);
+        }
+        catch
+        {
+            return string.Empty;
+        }
     }
 
     public ValueTask<ConfigChangeProposal?> ProposeAsync(

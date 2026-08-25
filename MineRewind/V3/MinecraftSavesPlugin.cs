@@ -129,18 +129,18 @@ public sealed partial class MinecraftSavesPlugin :
         }
 
         var diagnostics = new List<PluginDiagnostic>();
-        var worlds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var instances = new Dictionary<string, DiscoveredMinecraftInstance>(StringComparer.OrdinalIgnoreCase);
         foreach (var userRoot in request.UserRoots ?? Array.Empty<string>())
         {
             context.OperationCancellation.ThrowIfCancellationRequested();
-            foreach (var world in DiscoverWorlds(userRoot, diagnostics))
+            foreach (var instance in DiscoverInstances(userRoot, diagnostics))
             {
-                worlds.Add(world);
+                instances.TryAdd(instance.InstancePath, instance);
             }
         }
 
-        var candidates = worlds
-            .OrderBy(path => path, StringComparer.OrdinalIgnoreCase)
+        var candidates = instances.Values
+            .OrderBy(instance => instance.InstancePath, StringComparer.OrdinalIgnoreCase)
             .Select(CreateCandidate)
             .ToArray();
         return ValueTask.FromResult(new DiscoveryResult(candidates, diagnostics));
@@ -537,7 +537,13 @@ public sealed partial class MinecraftSavesPlugin :
             Data: state.Data.Clone()));
     }
 
-    private static IEnumerable<string> DiscoverWorlds(
+    private sealed record DiscoveredMinecraftInstance(
+        string InstancePath,
+        string DisplayName,
+        IReadOnlyList<string> WorldPaths,
+        string ModsPath);
+
+    private static IEnumerable<DiscoveredMinecraftInstance> DiscoverInstances(
         string userRoot,
         ICollection<PluginDiagnostic> diagnostics)
     {
@@ -560,22 +566,39 @@ public sealed partial class MinecraftSavesPlugin :
 
         if (IsWorld(root))
         {
-            yield return root;
+            yield return new DiscoveredMinecraftInstance(
+                root,
+                Path.GetFileName(Path.TrimEndingDirectorySeparator(root)),
+                [root],
+                string.Empty);
             yield break;
         }
 
         foreach (var minecraftRoot in CandidateMinecraftRoots(root))
         {
-            foreach (var savesRoot in CandidateSavesRoots(minecraftRoot))
+            if (string.Equals(Path.GetFileName(minecraftRoot), "saves", StringComparison.OrdinalIgnoreCase))
             {
-                if (!Directory.Exists(savesRoot)) continue;
-                IEnumerable<string> directories;
-                try { directories = Directory.EnumerateDirectories(savesRoot); }
-                catch { continue; }
-                foreach (var directory in directories)
-                {
-                    if (IsWorld(directory)) yield return Path.GetFullPath(directory);
-                }
+                var instanceRoot = Directory.GetParent(minecraftRoot)?.FullName;
+                var instance = CreateInstance(instanceRoot, Path.GetFileName(instanceRoot));
+                if (instance != null) yield return instance;
+                continue;
+            }
+
+            var defaultName = string.Equals(Path.GetFileName(minecraftRoot), ".minecraft", StringComparison.OrdinalIgnoreCase)
+                ? "Default"
+                : Path.GetFileName(Path.TrimEndingDirectorySeparator(minecraftRoot));
+            var defaultInstance = CreateInstance(minecraftRoot, defaultName);
+            if (defaultInstance != null) yield return defaultInstance;
+
+            var versions = Path.Combine(minecraftRoot, "versions");
+            if (!Directory.Exists(versions)) continue;
+            IEnumerable<string> versionDirectories;
+            try { versionDirectories = Directory.EnumerateDirectories(versions); }
+            catch { continue; }
+            foreach (var version in versionDirectories.OrderBy(path => path, StringComparer.OrdinalIgnoreCase))
+            {
+                var instance = CreateInstance(version, Path.GetFileName(version));
+                if (instance != null) yield return instance;
             }
         }
     }
@@ -590,35 +613,57 @@ public sealed partial class MinecraftSavesPlugin :
         }
     }
 
-    private static IEnumerable<string> CandidateSavesRoots(string minecraftRoot)
+    private static DiscoveredMinecraftInstance? CreateInstance(string? instancePath, string? displayName)
     {
-        if (string.Equals(Path.GetFileName(minecraftRoot), "saves", StringComparison.OrdinalIgnoreCase))
-        {
-            yield return minecraftRoot;
-        }
-        yield return Path.Combine(minecraftRoot, "saves");
+        if (string.IsNullOrWhiteSpace(instancePath)) return null;
+        var normalizedInstance = Path.GetFullPath(instancePath);
+        var savesPath = Path.Combine(normalizedInstance, "saves");
+        if (!Directory.Exists(savesPath)) return null;
 
-        var versions = Path.Combine(minecraftRoot, "versions");
-        if (!Directory.Exists(versions)) yield break;
-        IEnumerable<string> versionDirectories;
-        try { versionDirectories = Directory.EnumerateDirectories(versions); }
-        catch { yield break; }
-        foreach (var version in versionDirectories)
+        IReadOnlyList<string> worlds;
+        try
         {
-            yield return Path.Combine(version, "saves");
+            worlds = Directory.EnumerateDirectories(savesPath)
+                .Where(IsWorld)
+                .Select(Path.GetFullPath)
+                .OrderBy(path => path, StringComparer.OrdinalIgnoreCase)
+                .ToArray();
         }
+        catch
+        {
+            return null;
+        }
+        if (worlds.Count == 0) return null;
+
+        var modsPath = Path.Combine(normalizedInstance, "mods");
+        return new DiscoveredMinecraftInstance(
+            normalizedInstance,
+            string.IsNullOrWhiteSpace(displayName) ? Path.GetFileName(normalizedInstance) : displayName,
+            worlds,
+            Directory.Exists(modsPath) ? modsPath : string.Empty);
     }
 
-    private static DiscoveryCandidate CreateCandidate(string worldPath)
+    private static DiscoveryCandidate CreateCandidate(DiscoveredMinecraftInstance instance)
     {
-        var displayName = Path.GetFileName(worldPath.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar));
-        var folder = new FolderDraft(worldPath, displayName, EmptyDraftStates);
+        var folders = instance.WorldPaths
+            .Select(worldPath => new FolderDraft(
+                worldPath,
+                Path.GetFileName(Path.TrimEndingDirectorySeparator(worldPath)),
+                EmptyDraftStates))
+            .ToList();
+        if (!string.IsNullOrWhiteSpace(instance.ModsPath))
+        {
+            folders.Add(new FolderDraft(instance.ModsPath, "mods", EmptyDraftStates));
+        }
         var config = new ConfigDraft(
             MinecraftKind,
-            displayName,
-            [folder],
+            instance.DisplayName,
+            folders,
             EmptyDraftStates);
-        return new DiscoveryCandidate(StableId(worldPath), displayName, [config]);
+        return new DiscoveryCandidate(
+            StableId(instance.InstancePath),
+            instance.DisplayName,
+            [config]);
     }
 
     private static string StableId(string path)

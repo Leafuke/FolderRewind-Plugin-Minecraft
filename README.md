@@ -33,7 +33,7 @@ MineRewind 1.9.0 起实现 FolderRewind 统一发现提供程序接口，最低�
 
 ### 5. 配置类型
 - 定义 `Minecraft Saves` 配置类型
-- 自动为每个版本创建独立配置，配置名格式为 `Minecraft - 版本名`
+- 自动为每个实例创建独立配置，并直接使用实例名称作为配置名
 
 ### 6. KnotLink 扩展
 - 使用严格键值对 v2：`cmd=BACKUP;current_save=true`、`cmd=LIST_BACKUPS;current_save=true`、`cmd=RESTORE;current_save=true[;file=...]`

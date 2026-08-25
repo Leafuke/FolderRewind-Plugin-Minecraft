@@ -47,7 +47,7 @@ public sealed class V3VerticalSliceTests
     }
 
     [TestMethod]
-    public async Task DiscoveryKeepsMultipleWorldsAsIndependentStableCandidates()
+    public async Task DiscoveryGroupsMultipleWorldsIntoOneStableInstanceCandidate()
     {
         using var world = TemporaryWorld.Create();
         var secondWorld = Path.Combine(world.Root, ".minecraft", "saves", "World 2");
@@ -62,11 +62,15 @@ public sealed class V3VerticalSliceTests
             new DiscoveryRequest([world.Root + Path.DirectorySeparatorChar]),
             fixture.Invocation);
 
-        Assert.HasCount(2, first.Candidates);
+        Assert.HasCount(1, first.Candidates);
         CollectionAssert.AreEquivalent(
             first.Candidates.Select(candidate => candidate.CandidateId).ToArray(),
             second.Candidates.Select(candidate => candidate.CandidateId).ToArray());
-        Assert.AreEqual(2, first.Candidates.SelectMany(candidate => candidate.ConfigDrafts).Count());
+        var draft = first.Candidates.Single().ConfigDrafts.Single();
+        Assert.HasCount(2, draft.Folders);
+        CollectionAssert.AreEquivalent(
+            new[] { world.WorldPath, Path.GetFullPath(secondWorld) },
+            draft.Folders.Select(folder => folder.Path).ToArray());
     }
 
     [TestMethod]
@@ -363,11 +367,18 @@ public sealed class V3VerticalSliceTests
             new FolderMetadataRequest(config, folder),
             fixture.Invocation);
 
-        Assert.AreEqual("NBT World", result.Values["worldName"]);
-        Assert.AreEqual("Creative", result.Values["gameMode"]);
-        Assert.AreEqual("8675309", result.Values["seed"]);
-        Assert.AreEqual("True", result.Values["hasPlayerData"]);
-        Assert.AreEqual("legacy", result.Values["worldFormat"]);
+        var fields = result.Fields.ToDictionary(field => field.Key, StringComparer.Ordinal);
+        Assert.AreEqual("NBT World", fields["worldName"].Value.Default);
+        Assert.AreEqual("World name", fields["worldName"].DisplayName.Default);
+        Assert.AreEqual("世界名称", fields["worldName"].DisplayName.Translations["zh-CN"]);
+        Assert.AreEqual("Creative", fields["gameMode"].Value.Default);
+        Assert.AreEqual("创造模式", fields["gameMode"].Value.Translations["zh-CN"]);
+        Assert.AreEqual("8675309", fields["seed"].Value.Default);
+        Assert.AreEqual("Yes", fields["hasPlayerData"].Value.Default);
+        Assert.AreEqual("是", fields["hasPlayerData"].Value.Translations["zh-CN"]);
+        Assert.AreEqual("Legacy (< 26.1)", fields["worldFormat"].Value.Default);
+        Assert.AreEqual("旧版 (< 26.1)", fields["worldFormat"].Value.Translations["zh-CN"]);
+        Assert.Contains("regionFileCount", fields.Keys);
         Assert.IsEmpty(result.Diagnostics);
     }
 

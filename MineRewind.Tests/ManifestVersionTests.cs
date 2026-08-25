@@ -14,7 +14,7 @@ public sealed class ManifestVersionTests
 
         Assert.AreEqual(3, root.GetProperty("manifestVersion").GetInt32());
         Assert.AreEqual("com.folderrewind.minerewind", root.GetProperty("pluginId").GetString());
-        Assert.AreEqual("1.9.1", root.GetProperty("version").GetString());
+        Assert.AreEqual("1.9.2", root.GetProperty("version").GetString());
         Assert.AreEqual(3, root.GetProperty("pluginApi").GetProperty("major").GetInt32());
         Assert.AreEqual(1, root.GetProperty("pluginApi").GetProperty("minor").GetInt32());
         Assert.AreEqual("settings.schema.json", root.GetProperty("settingsSchema").GetString());
