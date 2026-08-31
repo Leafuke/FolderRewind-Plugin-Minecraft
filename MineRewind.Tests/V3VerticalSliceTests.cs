@@ -456,7 +456,7 @@ public sealed class V3VerticalSliceTests
     }
 
     [TestMethod]
-    public async Task DefaultHotkeyCommandsResolveLockedWorldAndLatestHistory()
+    public async Task DefaultHotkeyRestoreUsesSemanticQuickRestoreWithoutHistoryQuery()
     {
         using var world = TemporaryWorld.Create();
         File.WriteAllBytes(Path.Combine(world.WorldPath, "session.lock"), [0]);
@@ -468,14 +468,6 @@ public sealed class V3VerticalSliceTests
         var fixture = Activate();
         var (config, folder) = Snapshots(world.WorldPath);
         fixture.Services.Configs.QueryResults.Add(config);
-        fixture.Services.History.Items.Add(new HistoryItemSnapshot(
-            "history-latest",
-            folder.FolderId,
-            folder.Path,
-            "latest.7z",
-            DateTimeOffset.UtcNow,
-            OperationOutcome.Success));
-
         var backup = await fixture.Plugin.ExecuteAsync(
             new PluginCommandRequest(
                 new PluginCommandId(PluginId, "hotbackup.active-world"),
@@ -490,7 +482,9 @@ public sealed class V3VerticalSliceTests
         Assert.AreEqual(OperationOutcome.Success, backup.Outcome);
         Assert.AreEqual(OperationOutcome.Success, restore.Outcome);
         Assert.AreEqual(folder.FolderId, fixture.Services.Backups.Requests.Single().FolderId);
-        Assert.AreEqual("history-latest", fixture.Services.Restores.Requests.Single().HistoryId);
+        Assert.AreEqual(folder.FolderId, fixture.Services.Restores.QuickRequests.Single().FolderId);
+        Assert.HasCount(0, fixture.Services.Restores.Requests);
+        Assert.AreEqual(0, fixture.Services.History.QueryCount);
     }
 
     [TestMethod]
@@ -501,7 +495,7 @@ public sealed class V3VerticalSliceTests
         var fixture = Activate();
         var (config, folder) = Snapshots(world.WorldPath);
         fixture.Services.Configs.QueryResults.Add(config);
-        fixture.Services.History.Items.Add(new HistoryItemSnapshot(
+        fixture.Services.History.Items.Add(new HistoryVersionSnapshot(
             "history-latest",
             folder.FolderId,
             folder.Path,
@@ -539,6 +533,27 @@ public sealed class V3VerticalSliceTests
         Assert.AreEqual(folder.FolderId, backupRequest.FolderId);
         Assert.AreEqual("3.0插件修复后测试", backupRequest.Options.Comment);
         Assert.AreEqual("history-latest", fixture.Services.Restores.Requests.Single().HistoryId);
+    }
+
+    [TestMethod]
+    public async Task KnotLinkCurrentSaveWithoutFileUsesSemanticQuickRestoreWithoutHistoryQuery()
+    {
+        using var world = TemporaryWorld.Create();
+        using var sessionLock = world.AcquireSessionLock();
+        var fixture = Activate();
+        var (config, folder) = Snapshots(world.WorldPath);
+        fixture.Services.Configs.QueryResults.Add(config);
+
+        var restore = await fixture.Plugin.ExecuteAsync(
+            "RESTORE",
+            new Dictionary<string, string> { ["current_save"] = "true" },
+            fixture.Invocation);
+
+        await fixture.Services.Restores.Requested.Task.WaitAsync(TimeSpan.FromSeconds(2));
+        Assert.AreEqual(OperationOutcome.Success, restore.Outcome);
+        Assert.AreEqual(folder.FolderId, fixture.Services.Restores.QuickRequests.Single().FolderId);
+        Assert.HasCount(0, fixture.Services.Restores.Requests);
+        Assert.AreEqual(0, fixture.Services.History.QueryCount);
     }
 
     [TestMethod]
@@ -750,8 +765,16 @@ public sealed class V3VerticalSliceTests
     private sealed class FakeRestoreRequests : IRestoreRequestService
     {
         public List<(string ConfigId, Guid FolderId, string HistoryId)> Requests { get; } = new();
+        public List<(string ConfigId, Guid FolderId)> QuickRequests { get; } = new();
         public TaskCompletionSource<bool> Requested { get; } =
             new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public ValueTask<OperationOutcome> RequestQuickAsync(string configId, Guid folderId, CancellationToken cancellationToken)
+        {
+            QuickRequests.Add((configId, folderId));
+            Requested.TrySetResult(true);
+            return ValueTask.FromResult(OperationOutcome.Success);
+        }
+
         public ValueTask<OperationOutcome> RequestAsync(string configId, Guid folderId, string historyItemId, CancellationToken cancellationToken)
         {
             Requests.Add((configId, folderId, historyItemId));
@@ -777,11 +800,15 @@ public sealed class V3VerticalSliceTests
 
     private sealed class FakeHistory : IHistoryQueryService
     {
-        public List<HistoryItemSnapshot> Items { get; } = new();
-        public ValueTask<IReadOnlyList<HistoryItemSnapshot>> QueryAsync(string configId, Guid? folderId, CancellationToken cancellationToken)
-            => ValueTask.FromResult<IReadOnlyList<HistoryItemSnapshot>>(Items
-                .Where(value => !folderId.HasValue || value.FolderId == folderId)
-                .ToArray());
+        public List<HistoryVersionSnapshot> Items { get; } = new();
+        public int QueryCount { get; private set; }
+        public ValueTask<IReadOnlyList<HistoryVersionSnapshot>> QueryAsync(string configId, Guid? folderId, CancellationToken cancellationToken)
+        {
+            QueryCount++;
+            return ValueTask.FromResult<IReadOnlyList<HistoryVersionSnapshot>>(Items
+                    .Where(value => !folderId.HasValue || value.SourceId == folderId)
+                    .ToArray());
+        }
     }
 
     private sealed class FakeNotifications : IPluginNotificationService

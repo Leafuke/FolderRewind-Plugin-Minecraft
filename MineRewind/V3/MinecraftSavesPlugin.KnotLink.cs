@@ -20,8 +20,9 @@ public sealed partial class MinecraftSavesPlugin
     private readonly SemaphoreSlim _handshakeGate = new(1, 1);
     private readonly SemaphoreSlim _worldSaveGate = new(1, 1);
     private readonly SemaphoreSlim _restoreSignalGate = new(1, 1);
-    private readonly ConcurrentDictionary<string, byte> _preservePlayerDataHistoryIds =
+    private readonly ConcurrentDictionary<string, byte> _preservePlayerDataVersionIds =
         new(StringComparer.OrdinalIgnoreCase);
+    private readonly ConcurrentDictionary<Guid, byte> _preservePlayerDataQuickFolders = new();
     private TaskCompletionSource<bool>? _pendingHandshake;
     private TaskCompletionSource<bool>? _pendingWorldSaved;
     private TaskCompletionSource<bool>? _pendingWorldExited;
@@ -401,19 +402,34 @@ public sealed partial class MinecraftSavesPlugin
         var active = await FindActiveWorldAsync(context).ConfigureAwait(false);
         if (!active.HasValue) return CommandFailure("minerewind.command_active_world_not_found");
         var (config, folder) = active.Value;
+        var requestedFile = TryGetValue(arguments, "file", out var file) ? file : null;
+        var forcePreserve = TryBoolean(arguments, "preserve_player_data");
+
+        if (string.IsNullOrWhiteSpace(requestedFile))
+        {
+            if (forcePreserve) _preservePlayerDataQuickFolders[folder.FolderId] = 0;
+
+            // 未指定归档时必须交由宿主按活动 Workspace 的唯一局部分支尖端解析，
+            // 不能用展示时间倒序猜测恢复目标，否则其他分支的新提交会污染 Quick Restore。
+            QueueHostOperation(
+                context,
+                "RESTORE current_save",
+                cancellationToken => context.HostServices.Restores.RequestQuickAsync(
+                    config.ConfigId,
+                    folder.FolderId,
+                    cancellationToken),
+                () => _preservePlayerDataQuickFolders.TryRemove(folder.FolderId, out _));
+            return Success($"Restore started for '{folder.DisplayName}'.");
+        }
+
         var history = await context.HostServices.History.QueryAsync(
             config.ConfigId,
             folder.FolderId,
             context.OperationCancellation).ConfigureAwait(false);
-        var requestedFile = TryGetValue(arguments, "file", out var file) ? file : null;
-        var item = string.IsNullOrWhiteSpace(requestedFile)
-            ? history.OrderByDescending(value => value.CreatedAt).FirstOrDefault()
-            : history.FirstOrDefault(value =>
-                string.Equals(value.ArchiveFileName, requestedFile, StringComparison.OrdinalIgnoreCase));
+        var item = history.FirstOrDefault(value =>
+            string.Equals(value.ArchiveFileName, requestedFile, StringComparison.OrdinalIgnoreCase));
         if (item is null) return CommandFailure("minerewind.command_history_not_found");
-
-        var forcePreserve = TryBoolean(arguments, "preserve_player_data");
-        if (forcePreserve) _preservePlayerDataHistoryIds[item.HistoryItemId] = 0;
+        if (forcePreserve) _preservePlayerDataVersionIds[item.VersionId] = 0;
 
         // 热还原会等待 WORLD_SAVE_AND_EXIT_COMPLETE；不能在当前 responder 回调内同步等待。
         QueueHostOperation(
@@ -422,9 +438,9 @@ public sealed partial class MinecraftSavesPlugin
             cancellationToken => context.HostServices.Restores.RequestAsync(
                 config.ConfigId,
                 folder.FolderId,
-                item.HistoryItemId,
+                item.VersionId,
                 cancellationToken),
-            () => _preservePlayerDataHistoryIds.TryRemove(item.HistoryItemId, out _));
+            () => _preservePlayerDataVersionIds.TryRemove(item.VersionId, out _));
         return Success($"Restore started for '{folder.DisplayName}'.");
     }
 

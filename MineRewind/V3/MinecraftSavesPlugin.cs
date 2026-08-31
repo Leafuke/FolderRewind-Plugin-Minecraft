@@ -267,7 +267,8 @@ public sealed partial class MinecraftSavesPlugin :
         var diagnostics = new List<PluginDiagnostic>();
         var worldWasActive = IsSessionLockHeld(request.Folder.Path);
         var preservePlayerData = _preservePlayerData
-                                 || _preservePlayerDataHistoryIds.TryRemove(request.HistoryItemId, out _);
+                                 || _preservePlayerDataVersionIds.TryRemove(request.VersionId, out _)
+                                 || _preservePlayerDataQuickFolders.TryRemove(request.Folder.FolderId, out _);
         var signalGateHeld = false;
         var prepared = false;
         var cancellationReported = false;
@@ -467,13 +468,15 @@ public sealed partial class MinecraftSavesPlugin :
             TryString(request.Arguments, "historyItemId", out var historyItemId);
             if (string.IsNullOrWhiteSpace(historyItemId))
             {
-                var history = await context.HostServices.History.QueryAsync(
+                var quickOutcome = await context.HostServices.Restores.RequestQuickAsync(
                     configId,
-                    folderId,
+                    folderId.Value,
                     context.OperationCancellation).ConfigureAwait(false);
-                historyItemId = history.OrderByDescending(value => value.CreatedAt).FirstOrDefault()?.HistoryItemId;
+                return new PluginCommandResult(
+                    quickOutcome,
+                    new Dictionary<string, JsonElement>(),
+                    Array.Empty<PluginDiagnostic>());
             }
-            if (string.IsNullOrWhiteSpace(historyItemId)) return CommandFailure("minerewind.command_history_not_found");
             var outcome = await context.HostServices.Restores.RequestAsync(
                 configId,
                 folderId.Value,
@@ -692,7 +695,7 @@ public sealed partial class MinecraftSavesPlugin :
             // 保留 1.8.x 模组使用的蛇形协议键；额外身份只用于 v3 诊断与关联。
             ["config"] = request.Config.ConfigId,
             ["folder_id"] = request.Folder.FolderId.ToString("D"),
-            ["history_id"] = request.HistoryItemId,
+            ["history_id"] = request.VersionId,
             ["world"] = Path.GetFileName(request.Folder.Path)
         };
 
