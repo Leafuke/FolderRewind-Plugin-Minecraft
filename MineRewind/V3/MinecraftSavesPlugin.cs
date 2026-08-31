@@ -13,6 +13,7 @@ public sealed partial class MinecraftSavesPlugin :
     IFilePolicyCapability,
     IBackupScopeCapability,
     IFolderMetadataCapability,
+    IVersionMetadataProviderCapability,
     IConfigReconciliationCapability,
     IRestoreCoordinatorCapability,
     IPluginCommandCapability,
@@ -798,6 +799,7 @@ public sealed partial class MinecraftSavesPlugin :
         string? temporaryPath) : IConsistencyLease
     {
         public string SourcePath { get; } = sourcePath;
+        public bool IsStableSourceView => temporaryPath is not null;
         public IReadOnlyList<PluginDiagnostic> Diagnostics { get; } = diagnostics;
         public ValueTask DisposeAsync()
         {

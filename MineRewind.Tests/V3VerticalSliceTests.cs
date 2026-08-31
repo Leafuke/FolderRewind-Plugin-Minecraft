@@ -104,6 +104,7 @@ public sealed class V3VerticalSliceTests
 
         var snapshotPath = lease.SourcePath;
         Assert.AreNotEqual(world.WorldPath, snapshotPath);
+        Assert.IsTrue(lease.IsStableSourceView);
         Assert.IsTrue(File.Exists(Path.Combine(snapshotPath, "level.dat")));
         CollectionAssert.AreEqual(
             new[] { "handshake", "handshake_ack", "pre_hot_backup" },
@@ -380,6 +381,51 @@ public sealed class V3VerticalSliceTests
         Assert.AreEqual("旧版 (< 26.1)", fields["worldFormat"].Value.Translations["zh-CN"]);
         Assert.Contains("regionFileCount", fields.Keys);
         Assert.IsEmpty(result.Diagnostics);
+    }
+
+    [TestMethod]
+    public async Task CaptureMetadataReadsHostStableViewInsteadOfMutatedLiveFolder()
+    {
+        using var world = TemporaryWorld.Create();
+        WriteLegacyLevelDat(world.WorldPath, "Captured World", gameType: 1, seed: 8675309, xpLevel: 7);
+        var capturedLevelDat = File.ReadAllBytes(Path.Combine(world.WorldPath, "level.dat"));
+        WriteLegacyLevelDat(world.WorldPath, "Live World Changed", gameType: 0, seed: 1, xpLevel: 1);
+        var fixture = Activate();
+        var (config, folder) = Snapshots(world.WorldPath);
+        var source = new MemoryMetadataSourceView(new Dictionary<string, byte[]>
+        {
+            ["level.dat"] = capturedLevelDat
+        });
+
+        var result = await fixture.Plugin.CaptureAsync(
+            new VersionMetadataCaptureRequest(config, folder, source),
+            fixture.Invocation);
+
+        var metadata = result.Snapshots.Single();
+        Assert.AreEqual("minecraft.world", metadata.SchemaId);
+        Assert.AreEqual(1, metadata.SchemaVersion);
+        Assert.AreEqual("Captured World", metadata.Payload.GetProperty("levelName").GetString());
+        Assert.AreEqual(4321, metadata.Payload.GetProperty("dataVersion").GetInt32());
+        Assert.IsEmpty(result.Diagnostics);
+    }
+
+    [TestMethod]
+    public async Task CaptureMetadataFailureReturnsWarningWithoutEmptySnapshot()
+    {
+        using var world = TemporaryWorld.Create();
+        var fixture = Activate();
+        var (config, folder) = Snapshots(world.WorldPath);
+        var source = new MemoryMetadataSourceView(new Dictionary<string, byte[]>
+        {
+            ["level.dat"] = [1, 2, 3]
+        });
+
+        var result = await fixture.Plugin.CaptureAsync(
+            new VersionMetadataCaptureRequest(config, folder, source),
+            fixture.Invocation);
+
+        Assert.IsEmpty(result.Snapshots);
+        Assert.AreEqual(DiagnosticSeverity.Warning, result.Diagnostics.Single().Severity);
     }
 
     [TestMethod]
@@ -676,6 +722,16 @@ public sealed class V3VerticalSliceTests
         V3Plugin Plugin,
         FakeHostServices Services,
         PluginInvocationContext Invocation);
+
+    private sealed class MemoryMetadataSourceView(
+        IReadOnlyDictionary<string, byte[]> files) : IVersionMetadataSourceView
+    {
+        public ValueTask<Stream> OpenReadAsync(string relativePath, CancellationToken cancellationToken)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            return ValueTask.FromResult<Stream>(new MemoryStream(files[relativePath], writable: false));
+        }
+    }
 
     private sealed class FakeActivationContext : IPluginActivationContext
     {

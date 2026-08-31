@@ -3,6 +3,7 @@ using System.Text;
 using System.Text.Json;
 using System.Globalization;
 using FolderRewind.Plugin.Abstractions;
+using fNbt;
 
 namespace MineRewind;
 
@@ -195,6 +196,49 @@ public sealed partial class MinecraftSavesPlugin
                 CreateMetadataField("regionFileCount", "Region files", "区域文件数", FormatNumber(regionCount))
             ],
             Array.Empty<PluginDiagnostic>()));
+    }
+
+    public async ValueTask<VersionMetadataCaptureResult> CaptureAsync(
+        VersionMetadataCaptureRequest request,
+        PluginInvocationContext context)
+    {
+        EnsureActivated();
+        ValidateKind(request.Config.Kind);
+        try
+        {
+            await using var stream = await request.Source.OpenReadAsync(
+                "level.dat",
+                context.OperationCancellation).ConfigureAwait(false);
+            var file = new NbtFile();
+            file.LoadFromStream(stream, NbtCompression.AutoDetect);
+            var data = file.RootTag["Data"] as NbtCompound
+                ?? throw new InvalidDataException("level.dat has no Data compound.");
+            var payload = JsonSerializer.SerializeToElement(new Dictionary<string, object?>
+            {
+                ["dataVersion"] = (data["DataVersion"] as NbtInt)?.Value,
+                ["levelName"] = (data["LevelName"] as NbtString)?.Value,
+                ["gameType"] = (data["GameType"] as NbtInt)?.Value,
+                ["lastPlayed"] = (data["LastPlayed"] as NbtLong)?.Value
+            });
+            return new VersionMetadataCaptureResult(
+                [new CapturedVersionMetadata("minecraft.world", 1, payload)],
+                []);
+        }
+        catch (OperationCanceledException) when (context.OperationCancellation.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            return new VersionMetadataCaptureResult(
+                [],
+                [new PluginDiagnostic(
+                    "minerewind.version_metadata_read_failed",
+                    DiagnosticSeverity.Warning,
+                    "VersionMetadata",
+                    PluginIdentity,
+                    new Dictionary<string, string> { ["message"] = ex.Message })]);
+        }
     }
 
     private static FolderMetadataField CreateMetadataField(

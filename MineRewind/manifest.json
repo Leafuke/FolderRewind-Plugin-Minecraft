@@ -15,7 +15,7 @@
   },
   "pluginApi": {
     "major": 3,
-    "minor": 1
+    "minor": 2
   },
   "entryAssembly": "MineRewind.dll",
   "entryType": "MineRewind.MinecraftSavesPlugin",
@@ -56,6 +56,7 @@
     "backupScope",
     "backupConsistency",
     "folderMetadata",
+    "versionMetadataProvider",
     "restoreCoordinator",
     "pluginCommand",
     "knotLinkIntegration",

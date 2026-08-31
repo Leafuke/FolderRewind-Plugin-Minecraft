@@ -16,7 +16,7 @@ public sealed class ManifestVersionTests
         Assert.AreEqual("com.folderrewind.minerewind", root.GetProperty("pluginId").GetString());
         Assert.AreEqual("1.9.2", root.GetProperty("version").GetString());
         Assert.AreEqual(3, root.GetProperty("pluginApi").GetProperty("major").GetInt32());
-        Assert.AreEqual(1, root.GetProperty("pluginApi").GetProperty("minor").GetInt32());
+        Assert.AreEqual(2, root.GetProperty("pluginApi").GetProperty("minor").GetInt32());
         Assert.AreEqual("settings.schema.json", root.GetProperty("settingsSchema").GetString());
         var kind = root.GetProperty("configKinds")[0];
         Assert.AreEqual("com.folderrewind.minerewind", kind.GetProperty("ownerId").GetString());
@@ -35,7 +35,7 @@ public sealed class ManifestVersionTests
             new[]
             {
                 "discovery", "configReconciliation", "filePolicy", "backupScope",
-                "backupConsistency", "folderMetadata", "restoreCoordinator",
+                "backupConsistency", "folderMetadata", "versionMetadataProvider", "restoreCoordinator",
                 "pluginCommand", "knotLinkIntegration", "providerStateMigration"
             },
             root.GetProperty("capabilities").EnumerateArray().Select(value => value.GetString()).ToArray());

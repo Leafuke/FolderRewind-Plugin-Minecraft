@@ -10,7 +10,7 @@
     <Version>1.9.2</Version>
   </PropertyGroup>
   <ItemGroup>
-    <PackageReference Include="FolderRewind.Plugin.Abstractions" Version="3.1.0">
+    <PackageReference Include="FolderRewind.Plugin.Abstractions" Version="3.2.0">
       <Private>false</Private>
     </PackageReference>
     <PackageReference Include="fNbt" Version="1.0.0" />
