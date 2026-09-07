@@ -15,7 +15,7 @@
   },
   "pluginApi": {
     "major": 3,
-    "minor": 2
+    "minor": 3
   },
   "entryAssembly": "MineRewind.dll",
   "entryType": "MineRewind.MinecraftSavesPlugin",

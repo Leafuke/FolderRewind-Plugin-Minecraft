@@ -251,7 +251,7 @@ public sealed partial class MinecraftSavesPlugin
 
             context.HostServices.Logger.Log(
                 DiagnosticSeverity.Information,
-                $"KnotLink restore_finished sent for '{Path.GetFileName(request.Folder.Path)}' with status '{arguments["status"]}'.");
+                $"KnotLink restore_finished sent for '{Path.GetFileName(request.Folders.Single().Path)}' with status '{arguments["status"]}'.");
         }
         catch (Exception ex)
         {
@@ -306,7 +306,7 @@ public sealed partial class MinecraftSavesPlugin
         {
             context.HostServices.Logger.Log(
                 DiagnosticSeverity.Information,
-                $"Sending KnotLink rejoin_world for '{Path.GetFileName(request.Folder.Path)}'.");
+                $"Sending KnotLink rejoin_world for '{Path.GetFileName(request.Folders.Single().Path)}'.");
             await context.HostServices.KnotLink.SendAsync(
                 "rejoin_world",
                 RestoreArguments(request),

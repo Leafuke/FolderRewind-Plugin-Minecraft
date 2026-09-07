@@ -266,10 +266,18 @@ public sealed partial class MinecraftSavesPlugin :
         EnsureActivated();
         ValidateKind(request.Config.Kind);
         var diagnostics = new List<PluginDiagnostic>();
-        var worldWasActive = IsSessionLockHeld(request.Folder.Path);
-        var preservePlayerData = _preservePlayerData
-                                 || _preservePlayerDataVersionIds.TryRemove(request.VersionId, out _)
-                                 || _preservePlayerDataQuickFolders.TryRemove(request.Folder.FolderId, out _);
+        var affected = request.Folders.ToArray();
+        if (affected.Length == 0)
+            return new(await request.ContinueMutationAsync(context.OperationCancellation), diagnostics);
+        var active = affected.Where(folder => IsSessionLockHeld(folder.Path)).ToArray();
+        if (active.Length > 1)
+            return new(OperationOutcome.Blocked, [Diagnostic("minerewind.restore_multiple_active_worlds",
+                DiagnosticSeverity.Error, "RestoreCoordinator")]);
+        request = request with { Folders = [active.SingleOrDefault() ?? affected[0]] };
+        var worldWasActive = IsSessionLockHeld(request.Folders.Single().Path);
+        var preservePlayerData = request.OperationKind == WorkspaceOperationKind.Restore && (_preservePlayerData
+                                 || _preservePlayerDataVersionIds.TryRemove(request.TargetIdentity, out _)
+                                 || _preservePlayerDataQuickFolders.TryRemove(request.Folders.Single().FolderId, out _));
         var signalGateHeld = false;
         var prepared = false;
         var cancellationReported = false;
@@ -292,7 +300,7 @@ public sealed partial class MinecraftSavesPlugin :
                 signalGateHeld = true;
                 var compatible = await PerformModHandshakeAsync(
                     "restore",
-                    Path.GetFileName(request.Folder.Path),
+                    Path.GetFileName(request.Folders.Single().Path),
                     context).ConfigureAwait(false);
                 if (!compatible)
                 {
@@ -313,7 +321,7 @@ public sealed partial class MinecraftSavesPlugin :
                     cancellationReported = true;
                 }
                 else if (!await WaitForWorldReleaseAsync(
-                        request.Folder.Path,
+                        request.Folders.Single().Path,
                         context.OperationCancellation).ConfigureAwait(false))
                 {
                     diagnostics.Add(Diagnostic(
@@ -329,17 +337,17 @@ public sealed partial class MinecraftSavesPlugin :
                 }
             }
 
-            if (!worldWasActive || prepared)
+            if ((!worldWasActive || prepared) && affected.All(folder => !IsSessionLockHeld(folder.Path)))
             {
                 if (preservePlayerData)
                 {
-                    preservedPlayerData = NbtHelper.ExtractPlayerData(request.Folder.Path);
+                    preservedPlayerData = NbtHelper.ExtractPlayerData(request.Folders.Single().Path);
                 }
 
                 var mutation = await request.ContinueMutationAsync(context.OperationCancellation).ConfigureAwait(false);
                 outcome = mutation;
                 if (IsSuccessful(mutation) && preservedPlayerData is not null
-                    && !NbtHelper.ApplyPlayerData(request.Folder.Path, preservedPlayerData))
+                    && !NbtHelper.ApplyPlayerData(request.Folders.Single().Path, preservedPlayerData))
                 {
                     diagnostics.Add(Diagnostic(
                         "minerewind.playerdata_restore_failed",
@@ -374,7 +382,7 @@ public sealed partial class MinecraftSavesPlugin :
                 context).ConfigureAwait(false);
         }
 
-        if (prepared)
+        if (prepared && outcome is not (OperationOutcome.RecoveryRequired or OperationOutcome.CommittedRecoveryRequired))
         {
             try
             {
@@ -695,9 +703,9 @@ public sealed partial class MinecraftSavesPlugin :
         {
             // 保留 1.8.x 模组使用的蛇形协议键；额外身份只用于 v3 诊断与关联。
             ["config"] = request.Config.ConfigId,
-            ["folder_id"] = request.Folder.FolderId.ToString("D"),
-            ["history_id"] = request.VersionId,
-            ["world"] = Path.GetFileName(request.Folder.Path)
+            ["folder_id"] = request.Folders.Single().FolderId.ToString("D"),
+            ["history_id"] = request.TargetIdentity,
+            ["world"] = Path.GetFileName(request.Folders.Single().Path)
         };
 
     private static bool IsSuccessful(OperationOutcome outcome)

@@ -178,8 +178,9 @@ public sealed class V3VerticalSliceTests
         var result = await fixture.Plugin.CoordinateAsync(
             new RestoreCoordinatorRequest(
                 config,
-                folder,
+                [folder],
                 "history",
+                Guid.NewGuid(), WorkspaceOperationKind.Restore,
                 _ =>
                 {
                     mutationCalls++;
@@ -213,7 +214,10 @@ public sealed class V3VerticalSliceTests
     }
 
     [TestMethod]
-    public async Task FailedMutationStillRejoins()
+    [DataRow(OperationOutcome.Failed, true)]
+    [DataRow(OperationOutcome.RecoveryRequired, false)]
+    [DataRow(OperationOutcome.CommittedRecoveryRequired, false)]
+    public async Task RecoveryStateControlsRejoinForSecondAffectedWorld(OperationOutcome mutationOutcome, bool shouldRejoin)
     {
         using var world = TemporaryWorld.Create();
         using var sessionLock = world.AcquireSessionLock();
@@ -244,24 +248,27 @@ public sealed class V3VerticalSliceTests
                     fixture.Invocation);
             }
         };
+        using var inactiveWorld = TemporaryWorld.Create();
+        var (_, inactiveFolder) = Snapshots(inactiveWorld.WorldPath);
         var (config, folder) = Snapshots(world.WorldPath);
         var mutationCalls = 0;
 
         var result = await fixture.Plugin.CoordinateAsync(
             new RestoreCoordinatorRequest(
                 config,
-                folder,
+                [inactiveFolder, folder],
                 "history",
+                Guid.NewGuid(), WorkspaceOperationKind.Restore,
                 _ =>
                 {
                     mutationCalls++;
-                    return ValueTask.FromResult(OperationOutcome.Failed);
+                    return ValueTask.FromResult(mutationOutcome);
                 }),
             fixture.Invocation);
 
-        Assert.AreEqual(OperationOutcome.Failed, result.Outcome);
+        Assert.AreEqual(mutationOutcome, result.Outcome);
         Assert.AreEqual(1, mutationCalls);
-        Assert.IsTrue(fixture.Services.KnotLink.Events.Any(value => value.Name == "rejoin_world"));
+        Assert.AreEqual(shouldRejoin, fixture.Services.KnotLink.Events.Any(value => value.Name == "rejoin_world"));
     }
 
     [TestMethod]
@@ -284,8 +291,9 @@ public sealed class V3VerticalSliceTests
         var result = await fixture.Plugin.CoordinateAsync(
             new RestoreCoordinatorRequest(
                 config,
-                folder,
+                [folder],
                 "history",
+                Guid.NewGuid(), WorkspaceOperationKind.Restore,
                 _ =>
                 {
                     mutationCalls++;
@@ -311,8 +319,9 @@ public sealed class V3VerticalSliceTests
         var result = await fixture.Plugin.CoordinateAsync(
             new RestoreCoordinatorRequest(
                 config,
-                folder,
+                [folder],
                 "history",
+                Guid.NewGuid(), WorkspaceOperationKind.Restore,
                 _ => ValueTask.FromResult(OperationOutcome.SuccessWithWarnings)),
             fixture.Invocation);
 
@@ -439,8 +448,9 @@ public sealed class V3VerticalSliceTests
         var result = await fixture.Plugin.CoordinateAsync(
             new RestoreCoordinatorRequest(
                 config,
-                folder,
+                [folder],
                 "history",
+                Guid.NewGuid(), WorkspaceOperationKind.Restore,
                 _ =>
                 {
                     WriteLegacyLevelDat(world.WorldPath, "Restored", gameType: 0, seed: 1, xpLevel: 3);
