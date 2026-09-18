@@ -20,9 +20,6 @@ public sealed partial class MinecraftSavesPlugin
     private readonly SemaphoreSlim _handshakeGate = new(1, 1);
     private readonly SemaphoreSlim _worldSaveGate = new(1, 1);
     private readonly SemaphoreSlim _restoreSignalGate = new(1, 1);
-    private readonly ConcurrentDictionary<string, byte> _preservePlayerDataVersionIds =
-        new(StringComparer.OrdinalIgnoreCase);
-    private readonly ConcurrentDictionary<Guid, byte> _preservePlayerDataQuickFolders = new();
     private TaskCompletionSource<bool>? _pendingHandshake;
     private TaskCompletionSource<bool>? _pendingWorldSaved;
     private TaskCompletionSource<bool>? _pendingWorldExited;
@@ -407,7 +404,6 @@ public sealed partial class MinecraftSavesPlugin
 
         if (string.IsNullOrWhiteSpace(requestedFile))
         {
-            if (forcePreserve) _preservePlayerDataQuickFolders[folder.FolderId] = 0;
 
             // 未指定归档时必须交由宿主按活动 Workspace 的唯一局部分支尖端解析，
             // 不能用展示时间倒序猜测恢复目标，否则其他分支的新提交会污染 Quick Restore。
@@ -417,8 +413,7 @@ public sealed partial class MinecraftSavesPlugin
                 cancellationToken => context.HostServices.Restores.RequestQuickAsync(
                     config.ConfigId,
                     folder.FolderId,
-                    cancellationToken),
-                () => _preservePlayerDataQuickFolders.TryRemove(folder.FolderId, out _));
+                    new RestoreRequestOptions(forcePreserve), cancellationToken));
             return Success($"Restore started for '{folder.DisplayName}'.");
         }
 
@@ -429,7 +424,6 @@ public sealed partial class MinecraftSavesPlugin
         var item = history.FirstOrDefault(value =>
             string.Equals(value.ArchiveFileName, requestedFile, StringComparison.OrdinalIgnoreCase));
         if (item is null) return CommandFailure("minerewind.command_history_not_found");
-        if (forcePreserve) _preservePlayerDataVersionIds[item.VersionId] = 0;
 
         // 热还原会等待 WORLD_SAVE_AND_EXIT_COMPLETE；不能在当前 responder 回调内同步等待。
         QueueHostOperation(
@@ -439,8 +433,7 @@ public sealed partial class MinecraftSavesPlugin
                 config.ConfigId,
                 folder.FolderId,
                 item.VersionId,
-                cancellationToken),
-            () => _preservePlayerDataVersionIds.TryRemove(item.VersionId, out _));
+                new RestoreRequestOptions(forcePreserve), cancellationToken));
         return Success($"Restore started for '{folder.DisplayName}'.");
     }
 

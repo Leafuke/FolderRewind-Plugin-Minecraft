@@ -16,6 +16,7 @@ public sealed partial class MinecraftSavesPlugin :
     IVersionMetadataProviderCapability,
     IConfigReconciliationCapability,
     IRestoreCoordinatorCapability,
+    IRestoreStagingPreparationCapability,
     IPluginCommandCapability,
     IKnotLinkIntegrationCapability,
     IProviderStateMigrationCapability
@@ -259,6 +260,25 @@ public sealed partial class MinecraftSavesPlugin :
         }
     }
 
+    public async ValueTask<RestoreStagingPreparationResult> PrepareAsync(
+        RestoreStagingPreparationRequest request, PluginInvocationContext context)
+    {
+        EnsureActivated();
+        ValidateKind(request.Config.Kind);
+        if (!_preservePlayerData && !request.PreservePlayerData) return new([], []);
+        try
+        {
+            return new(await NbtHelper.PreparePlayerDataAsync(request.Current, request.Target,
+                context.OperationCancellation).ConfigureAwait(false), []);
+        }
+        catch (OperationCanceledException) when (context.OperationCancellation.IsCancellationRequested) { throw; }
+        catch (Exception ex)
+        {
+            return new([], [Diagnostic("minerewind.playerdata_restore_failed", DiagnosticSeverity.Warning,
+                "RestoreStagingPreparation", ("message", ex.Message))]);
+        }
+    }
+
     public async ValueTask<RestoreCoordinatorResult> CoordinateAsync(
         RestoreCoordinatorRequest request,
         PluginInvocationContext context)
@@ -275,13 +295,9 @@ public sealed partial class MinecraftSavesPlugin :
                 DiagnosticSeverity.Error, "RestoreCoordinator")]);
         request = request with { Folders = [active.SingleOrDefault() ?? affected[0]] };
         var worldWasActive = IsSessionLockHeld(request.Folders.Single().Path);
-        var preservePlayerData = request.OperationKind == WorkspaceOperationKind.Restore && (_preservePlayerData
-                                 || _preservePlayerDataVersionIds.TryRemove(request.TargetIdentity, out _)
-                                 || _preservePlayerDataQuickFolders.TryRemove(request.Folders.Single().FolderId, out _));
         var signalGateHeld = false;
         var prepared = false;
         var cancellationReported = false;
-        NbtHelper.PlayerDataSnapshot? preservedPlayerData = null;
         var outcome = OperationOutcome.Blocked;
         try
         {
@@ -339,25 +355,7 @@ public sealed partial class MinecraftSavesPlugin :
 
             if ((!worldWasActive || prepared) && affected.All(folder => !IsSessionLockHeld(folder.Path)))
             {
-                if (preservePlayerData)
-                {
-                    preservedPlayerData = NbtHelper.ExtractPlayerData(request.Folders.Single().Path);
-                }
-
-                var mutation = await request.ContinueMutationAsync(context.OperationCancellation).ConfigureAwait(false);
-                outcome = mutation;
-                if (IsSuccessful(mutation) && preservedPlayerData is not null
-                    && !NbtHelper.ApplyPlayerData(request.Folders.Single().Path, preservedPlayerData))
-                {
-                    diagnostics.Add(Diagnostic(
-                        "minerewind.playerdata_restore_failed",
-                        DiagnosticSeverity.Warning,
-                        "RestoreCoordinator"));
-                    if (outcome == OperationOutcome.Success)
-                    {
-                        outcome = OperationOutcome.SuccessWithWarnings;
-                    }
-                }
+                outcome = await request.ContinueMutationAsync(context.OperationCancellation).ConfigureAwait(false);
             }
         }
         catch (OperationCanceledException) when (context.OperationCancellation.IsCancellationRequested)

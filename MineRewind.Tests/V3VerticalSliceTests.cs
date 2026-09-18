@@ -438,31 +438,47 @@ public sealed class V3VerticalSliceTests
     }
 
     [TestMethod]
-    public async Task RestoreCoordinatorPreservesLegacyLevelDatPlayerState()
+    public async Task PlayerPreservationProducesProposalWithoutChangingEitherView()
     {
         using var world = TemporaryWorld.Create();
+        using var target = TemporaryWorld.Create();
         WriteLegacyLevelDat(world.WorldPath, "Current", gameType: 0, seed: 1, xpLevel: 42);
+        WriteLegacyLevelDat(target.WorldPath, "Target", gameType: 0, seed: 1, xpLevel: 3);
+        var fixture = Activate(preservePlayerData: true);
+        var (config, folder) = Snapshots(world.WorldPath);
+        var before = File.ReadAllBytes(Path.Combine(target.WorldPath, "level.dat"));
+        var result = await fixture.Plugin.PrepareAsync(new(Guid.NewGuid(), config, folder.FolderId,
+            new TestReadView(world.WorldPath), new TestReadView(target.WorldPath), false), fixture.Invocation);
+        Assert.HasCount(1, result.Files);
+        CollectionAssert.AreEqual(before, File.ReadAllBytes(Path.Combine(target.WorldPath, "level.dat")));
+        var level = new NbtFile();
+        level.LoadFromStream(new MemoryStream(result.Files[0].Content.ToArray()), NbtCompression.AutoDetect);
+        var player = (NbtCompound)((NbtCompound)level.RootTag["Data"]!)["Player"]!;
+        Assert.AreEqual(42, ((NbtInt)player["XpLevel"]!).Value);
+    }
+
+    [TestMethod]
+    public async Task PlayerPreservationFailureIsAWarningAndDoesNotBlockRestore()
+    {
+        using var world = TemporaryWorld.Create();
+        using var target = TemporaryWorld.Create();
+        WriteLegacyLevelDat(world.WorldPath, "Current", gameType: 0, seed: 1, xpLevel: 42);
+        File.Delete(Path.Combine(target.WorldPath, "level.dat"));
         var fixture = Activate(preservePlayerData: true);
         var (config, folder) = Snapshots(world.WorldPath);
 
-        var result = await fixture.Plugin.CoordinateAsync(
-            new RestoreCoordinatorRequest(
-                config,
-                [folder],
-                "history",
-                Guid.NewGuid(), WorkspaceOperationKind.Restore,
-                _ =>
-                {
-                    WriteLegacyLevelDat(world.WorldPath, "Restored", gameType: 0, seed: 1, xpLevel: 3);
-                    return ValueTask.FromResult(OperationOutcome.Success);
-                }),
-            fixture.Invocation);
+        var result = await fixture.Plugin.PrepareAsync(new(Guid.NewGuid(), config, folder.FolderId,
+            new TestReadView(world.WorldPath), new TestReadView(target.WorldPath), false), fixture.Invocation);
 
-        Assert.AreEqual(OperationOutcome.Success, result.Outcome);
-        var level = new NbtFile();
-        level.LoadFromFile(Path.Combine(world.WorldPath, "level.dat"));
-        var player = (NbtCompound)((NbtCompound)level.RootTag["Data"]!)["Player"]!;
-        Assert.AreEqual(42, ((NbtInt)player["XpLevel"]!).Value);
+        Assert.IsEmpty(result.Files);
+        Assert.AreEqual(DiagnosticSeverity.Warning, result.Diagnostics.Single().Severity);
+        Assert.AreEqual("minerewind.playerdata_restore_failed", result.Diagnostics.Single().Code);
+    }
+
+    private sealed class TestReadView(string root) : IVersionMetadataSourceView
+    {
+        public ValueTask<Stream> OpenReadAsync(string relativePath, CancellationToken token)
+            => ValueTask.FromResult<Stream>(new MemoryStream(File.ReadAllBytes(Path.Combine(root, relativePath)), false));
     }
 
     [TestMethod]

@@ -15,33 +15,40 @@ MineRewind 1.9.0 起实现 FolderRewind 统一发现提供程序接口，最低�
 - 通过与 [MineBackup联动模组](https://github.com/Leafuke/MineBackup-Mod) 通信，实现 `Alt+Ctrl+Z` 快捷键以及 `/mb quickrestore` 指令还原。
 - 历史页还原正在运行的世界时，会与热键共用 `handshake → pre_hot_restore → 世界释放 → RESTORE → rejoin` 流程，不需要单独的游戏内倒计时请求。
 - 完整备份热还原使用清理模式，部分备份热还原使用覆写模式。
+- 保留玩家数据通过 Host 管理的只读 current/target 视图生成 staging proposal，并纳入同一次还原事务；插件不会在 Host continuation 返回后写回正在管理的世界目录。
 - 支持自动退出存档、自动还原、自动重进。
 - 支持多人联机环境下的热还原，确保所有玩家都能正确回到指定版本。
 
-### 3. 批量扫描与配置创建
+### 3. 分支合并边界
+
+- MineRewind 参与配置级 Restore/Checkout/Merge 环境协调，并检查全部受影响世界。
+- FolderRewind 1.9.0 对 Minecraft 存档仍使用通用保守文件级三方合并；插件不注册 region/chunk/NBT 语义 Merge provider。
+- `.mca`、玩家 NBT、stats 或 advancements 双方都改变时按文件冲突处理，不显示区块级自动合并。
+
+### 4. 批量扫描与配置创建
 - 自动扫描 `.minecraft/saves` 下的世界
 - 支持 `.minecraft/versions/版本名/saves` 的版本隔离结构
 - 自动识别 `.minecraft/mods` 和版本目录下的 `mods` 文件夹
 - 自动读取世界根目录下的 `icon.png` 作为封面
 - 在 FolderRewind“自动发现游戏存档 Beta”中按 Minecraft 实例返回独立候选配置，并以 `level.dat` 作为高可信证据
 
-### 4. 自动识别并添加配置
+### 5. 自动识别并添加配置
 - 可从现有 `Minecraft Saves` 配置的源路径定位 `.minecraft`
 - 启用设置后立即扫描，并在每次 FolderRewind 启动时继续扫描
 - 按实例根目录去重，为尚未管理的默认实例或版本隔离实例创建独立配置
 - 混合配置引用到的每个实例都视为已管理，不会拆分或重复创建
 
-### 5. 配置类型
+### 6. 配置类型
 - 定义 `Minecraft Saves` 配置类型
 - 自动为每个实例创建独立配置，并直接使用实例名称作为配置名
 
-### 6. KnotLink 扩展
+### 7. KnotLink 扩展
 - 使用严格键值对 v2：`cmd=BACKUP;current_save=true`、`cmd=LIST_BACKUPS;current_save=true`、`cmd=RESTORE;current_save=true[;file=...]`
 - 当前世界备份支持一次性 `backup_mode`、`compression_method`、`compression_level` 参数；参数只影响本次归档，不写回 FolderRewind 配置
 - 所有值按 RFC 3986 percent-encoding；省略 `file` 时还原最新备份，添加 `preserve_player_data=true` 时保留玩家数据
 - 便于与 MineBackup 或其他支持 KnotLink 的组件联动
 
-### 7. 指定区域备份
+### 8. 指定区域备份
 
 - 每行区域必须使用 `x1,z1,x2,z2`，坐标按不变量格式解析，范围为 `[-30000000, 30000000]`
 - 最多接受 32 KiB、128 个非空非注释行，以及每个维度 4096 个去重后的区域文件

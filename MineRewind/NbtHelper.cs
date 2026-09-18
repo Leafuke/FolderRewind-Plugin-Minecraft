@@ -38,6 +38,45 @@ namespace MineRewind
     /// </summary>
     public static class NbtHelper
     {
+        public static async Task<IReadOnlyList<FolderRewind.Plugin.Abstractions.RestoreStagedFileProposal>>
+            PreparePlayerDataAsync(FolderRewind.Plugin.Abstractions.IVersionMetadataSourceView current,
+                FolderRewind.Plugin.Abstractions.IVersionMetadataSourceView target, CancellationToken token)
+        {
+            async Task<NbtFile> Read(FolderRewind.Plugin.Abstractions.IVersionMetadataSourceView view, string path)
+            {
+                await using var input = await view.OpenReadAsync(path, token).ConfigureAwait(false);
+                var file = new NbtFile(); file.LoadFromStream(input, NbtCompression.AutoDetect); return file;
+            }
+            NbtFile source;
+            try { source = await Read(current, "level.dat"); }
+            catch (FileNotFoundException) { return []; }
+            if (source.RootTag["Data"] is not NbtCompound data) return [];
+            var sourceUuid = GetSinglePlayerUuid(data);
+            var player = sourceUuid is null ? data["Player"] as NbtCompound
+                : (await Read(current, $"players/data/{sourceUuid}.dat")).RootTag;
+            if (player is null) return [];
+            var snapshot = BuildPlayerSnapshot(player, true, true, true);
+            if (snapshot is null) return [];
+            var destination = await Read(target, "level.dat");
+            if (destination.RootTag["Data"] is not NbtCompound targetData)
+                throw new InvalidDataException("Restore target has no Data compound.");
+            var targetUuid = GetSinglePlayerUuid(targetData);
+            var relative = targetUuid is null ? "level.dat" : $"players/data/{targetUuid}.dat";
+            NbtCompound targetPlayer;
+            if (targetUuid is null)
+            {
+                targetPlayer = targetData["Player"] as NbtCompound ?? new NbtCompound("Player");
+                if (!targetData.Contains("Player")) targetData.Add(targetPlayer);
+            }
+            else
+            {
+                destination = await Read(target, relative);
+                targetPlayer = destination.RootTag;
+            }
+            ApplySnapshotToPlayerCompound(targetPlayer, snapshot);
+            return [new(relative, destination.SaveToBuffer(NbtCompression.GZip))];
+        }
+
         /// <summary>
         /// 玩家数据快照 —— 在还原前从当前 level.dat 提取，还原后写回。
         /// </summary>
@@ -273,7 +312,7 @@ namespace MineRewind
         /// <summary>
         /// 将先前提取的玩家数据写回 level.dat。
         /// 自动适配 26.1 前后两种存档格式。
-        /// 应在还原操作完成后调用。
+        /// 仅用于受控目录；Host 插件入口使用 PreparePlayerDataAsync 返回 staging proposal。
         /// </summary>
         /// <param name="worldPath">存档根目录路径</param>
         /// <param name="snapshot">之前通过 ExtractPlayerData 获取的快照</param>
