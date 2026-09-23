@@ -115,6 +115,30 @@ public sealed class V3VerticalSliceTests
     }
 
     [TestMethod]
+    [DataRow(true)]
+    [DataRow(false)]
+    public async Task MergeCoordinatesOnlyAffectedWorlds(bool includeActiveWorlds)
+    {
+        using var first = TemporaryWorld.Create();
+        using var second = TemporaryWorld.Create();
+        using var inactive = TemporaryWorld.Create();
+        using var firstLock = first.AcquireSessionLock();
+        using var secondLock = second.AcquireSessionLock();
+        var fixture = Activate();
+        var (config, firstFolder) = Snapshots(first.WorldPath);
+        var (_, secondFolder) = Snapshots(second.WorldPath);
+        var (_, inactiveFolder) = Snapshots(inactive.WorldPath);
+        var calls = 0;
+        var result = await fixture.Plugin.CoordinateAsync(new RestoreCoordinatorRequest(config,
+            includeActiveWorlds ? [firstFolder, secondFolder] : [inactiveFolder], "merge", Guid.NewGuid(),
+            WorkspaceOperationKind.Merge, _ => { calls++; return ValueTask.FromResult(OperationOutcome.Success); }), fixture.Invocation);
+        Assert.AreEqual(includeActiveWorlds ? OperationOutcome.Blocked : OperationOutcome.Success, result.Outcome);
+        Assert.AreEqual(includeActiveWorlds ? 0 : 1, calls);
+        Assert.IsFalse(fixture.Services.KnotLink.Events.Any(e => e.Name is "pre_hot_restore" or "rejoin_world"));
+        Assert.IsEmpty(fixture.Services.Backups.Requests);
+    }
+
+    [TestMethod]
     public async Task IncompatibleCompanionFallsBackWithWarningForPreferredBackupConsistency()
     {
         using var world = TemporaryWorld.Create();
@@ -214,10 +238,13 @@ public sealed class V3VerticalSliceTests
     }
 
     [TestMethod]
-    [DataRow(OperationOutcome.Failed, true)]
-    [DataRow(OperationOutcome.RecoveryRequired, false)]
-    [DataRow(OperationOutcome.CommittedRecoveryRequired, false)]
-    public async Task RecoveryStateControlsRejoinForSecondAffectedWorld(OperationOutcome mutationOutcome, bool shouldRejoin)
+    [DataRow(OperationOutcome.Failed, true, WorkspaceOperationKind.Restore)]
+    [DataRow(OperationOutcome.Success, true, WorkspaceOperationKind.Merge)]
+    [DataRow(OperationOutcome.RecoveryRequired, false, WorkspaceOperationKind.Merge)]
+    [DataRow(OperationOutcome.CommittedRecoveryRequired, false, WorkspaceOperationKind.Merge)]
+    [DataRow(OperationOutcome.RecoveryRequired, false, WorkspaceOperationKind.Restore)]
+    [DataRow(OperationOutcome.CommittedRecoveryRequired, false, WorkspaceOperationKind.Restore)]
+    public async Task RecoveryStateControlsRejoinForSecondAffectedWorld(OperationOutcome mutationOutcome, bool shouldRejoin, WorkspaceOperationKind operation)
     {
         using var world = TemporaryWorld.Create();
         using var sessionLock = world.AcquireSessionLock();
@@ -258,7 +285,7 @@ public sealed class V3VerticalSliceTests
                 config,
                 [inactiveFolder, folder],
                 "history",
-                Guid.NewGuid(), WorkspaceOperationKind.Restore,
+                Guid.NewGuid(), operation,
                 _ =>
                 {
                     mutationCalls++;
