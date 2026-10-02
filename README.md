@@ -2,7 +2,9 @@
 
 为 [FolderRewind](https://github.com/Leafuke/FolderRewind) 提供 Minecraft 存档备份增强功能，重点覆盖热备份、热还原、自动发现世界存档，以及从现有配置识别 `.minecraft` 实例并创建配置。
 
-MineRewind 1.9.0 起实现 FolderRewind 统一发现提供程序接口，最低需要 FolderRewind 1.9.0；旧的手动发现、批量创建和自动增强入口继续兼容。
+MineRewind 1.9.0 起实现 FolderRewind 统一发现提供程序接口。当前 1.9.4 要求支持 Plugin API 3.6 的 Host；SDK 3.6.0 与插件目前为本地候选，不代表已经公开发布。旧的手动发现与批量创建入口继续兼容。
+
+Java 的热备份、热还原、NBT 玩家保留和区域备份只适用于 `Minecraft Saves`。新增 `Minecraft Bedrock Saves` 使用普通目录备份与还原，请先关闭游戏。
 
 ## 功能特性
 
@@ -26,21 +28,40 @@ MineRewind 1.9.0 起实现 FolderRewind 统一发现提供程序接口，最低�
 - `.mca`、玩家 NBT、stats 或 advancements 双方都改变时按文件冲突处理，不显示区块级自动合并。
 
 ### 4. 批量扫描与配置创建
+- 支持官方 Java 默认位置、HMCL、PCL2、PCLCE、Prism、Modrinth、网易中国版及 Bedrock 的常见位置
 - 自动扫描 `.minecraft/saves` 下的世界
 - 支持 `.minecraft/versions/版本名/saves` 的版本隔离结构
 - 自动识别 `.minecraft/mods` 和版本目录下的 `mods` 文件夹
 - 自动读取世界根目录下的 `icon.png` 作为封面
-- 在 FolderRewind“自动发现游戏存档 Beta”中按 Minecraft 实例返回独立候选配置，并以 `level.dat` 作为高可信证据
+- 在 FolderRewind“自动发现游戏存档 Beta”中按 Java 实例或 Bedrock 世界集合返回候选配置；`level.dat` 存在即候选，不检查世界内容是否有效
+- 手选启动器、游戏根、实例库、saves、minecraftWorlds 或单世界；完成扫描后 Host 记住选定根，手选扫描不会混入全局已知位置
+- 单轮最多 500 个实例，达到扫描预算时保留已完成结果；配置文件读取最多 1 MiB
 
 ### 5. 自动识别并添加配置
-- 可从现有 `Minecraft Saves` 配置的源路径定位 `.minecraft`
-- 启用设置后立即扫描，并在每次 FolderRewind 启动时继续扫描
-- 按实例根目录去重，为尚未管理的默认实例或版本隔离实例创建独立配置
-- 混合配置引用到的每个实例都视为已管理，不会拆分或重复创建
+- 自动发现合并已知位置、记住的目录及现有 Minecraft 配置附近目录
+- `AutoDiscoverSaves` 控制发现提供程序；开启 `AutoCreateConfigs` 时 Host 在启动后执行扫描并提交候选
+- 默认仅生成可审阅的草稿；只有开启 `AutoCreateConfigs` 后才在启动时提交候选
+- 按实际路径去重，已管理的源不会再次加入新配置，已有混合配置不会被拆分
 
 ### 6. 配置类型
 - 定义 `Minecraft Saves` 配置类型
+- 定义 `Minecraft Bedrock Saves`，不注册 Java 专属能力；普通文件流程会保留整个世界目录，包括 `db`
 - 自动为每个实例创建独立配置，并直接使用实例名称作为配置名
+
+### 启动器发现边界（1.9.4）
+
+| 来源 | 简单定位方法 | 手选兜底范围 |
+| --- | --- | --- |
+| 官方 Java | `%APPDATA%/.minecraft` | 自定义 gameDir |
+| HMCL | 全局目录登记、新旧工作区路径字段 | 未定位的便携工作区或未知相对根 |
+| PCL2 | 指定注册表的 LaunchFolders（缺失正常）和 CacheDownloadFolder；缓存向上最多三层验证本地配置，再读 Select | 没有定位线索的启动器或游戏根 |
+| PCLCE | `%APPDATA%/PCLCE/config.v1.json` 与两个旧 JSON 位置；读取 LaunchFolders/CacheDownloadFolder | 非已知共享位置；不解析本地 YAML |
+| Prism | AppData/Scoop、InstanceDir、instance.cfg；minecraft 优先回退 .minecraft | 便携数据根或实例库 |
+| Modrinth | 新旧 AppData 的 profiles、可见 THESEUS_CONFIG_DIR | 数据库中的自定义存储根 |
+| 网易 | DownloadPath 的 Game/.minecraft 与已知网易 minecraftWorlds | 其他本地布局 |
+| Bedrock | 新版 Users 世界集合和旧 UWP 集合 | Preview/特殊发行版的其他位置 |
+
+PCL 下载缓存只是定位线索，不保证属于当前安装。仅确认目录标记后才展开 `$.minecraft` 等 Select 值；不固定裁剪目录层级、不要求启动器运行、不读取账号字段。不同路径的迁移残留可以同时列出，按路径去重即可。发现不启动自动备份、移动世界或判断存档健康。
 
 ### 7. KnotLink 扩展（MineRewind 1.9.3 / Plugin API 3.5）
 
@@ -75,16 +96,16 @@ MineRewind 1.9.0 起实现 FolderRewind 统一发现提供程序接口，最低�
 
 | 设置项 | 类型 | 默认值 | 说明 |
 |--------|------|--------|------|
-| AutoDiscoverSaves | Boolean | true | 启动时向已有 Minecraft 实例配置补充新世界 |
-| AutoCreateConfigs | Boolean | false | 从已有 Minecraft 配置定位 `.minecraft`，自动为未管理实例创建配置 |
-| PreservePlayerData | Boolean | false | 普通还原时保留所有玩家的选定 NBT 字段；远程显式 true/false 可覆盖本次设置 |
+| AutoDiscoverSaves | Boolean | true | 允许发现本机世界并生成可审阅的配置草稿 |
+| AutoCreateConfigs | Boolean | false | 启动时扫描已知位置、记住的根及已有配置附近目录，经 Host 校验后为未管理世界创建配置 |
+| PreservePlayerData | Boolean | false | Java 普通还原时保留所有玩家的选定 NBT 字段；远程显式 true/false 可覆盖本次设置 |
 
 ## 热键
 
 | 热键 | 作用 |
 |------|------|
-| Alt+Ctrl+S | 热备份当前正在运行的世界 |
-| Alt+Ctrl+Z | 快速还原当前正在运行的世界 |
+| Alt+Ctrl+S | 热备份当前正在运行的 Java 世界 |
+| Alt+Ctrl+Z | 快速还原当前正在运行的 Java 世界 |
 
 ## 目录结构识别
 
