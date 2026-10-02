@@ -36,14 +36,14 @@
       "type": "boolean",
       "default": false,
       "displayName": "Preserve all players’ state during restore",
-      "description": "Keep selected NBT fields for all players during ordinary restore. A remote true/false overrides this default. Advancements and statistics still restore; players absent from the backup retain their full current NBT.",
+      "description": "For Java Edition, keep selected NBT fields for all players during ordinary restore. A remote true/false overrides this default. Advancements and statistics still restore; players absent from the backup retain their full current NBT.",
       "localizedDisplayName": {
         "en-US": "Preserve all players’ state during restore",
         "zh-CN": "还原时保留所有玩家状态"
       },
       "localizedDescription": {
-        "en-US": "Keep selected NBT fields for all players during ordinary restore. A remote true/false overrides this default. Advancements and statistics still restore; players absent from the backup retain their full current NBT.",
-        "zh-CN": "普通还原时保留所有玩家的位置、背包、经验等选定 NBT 字段。远程 true/false 可覆盖本次设置；进度和统计仍回档，备份中不存在的玩家保留完整当前 NBT。"
+        "en-US": "For Java Edition, keep selected NBT fields for all players during ordinary restore. A remote true/false overrides this default. Advancements and statistics still restore; players absent from the backup retain their full current NBT.",
+        "zh-CN": "仅对 Java 版生效：普通还原时保留所有玩家的位置、背包、经验等选定 NBT 字段。远程 true/false 可覆盖本次设置；进度和统计仍回档，备份中不存在的玩家保留完整当前 NBT。"
       }
     }
   ]

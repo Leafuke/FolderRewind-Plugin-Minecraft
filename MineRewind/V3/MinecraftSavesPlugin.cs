@@ -2,6 +2,7 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using FolderRewind.Plugin.Abstractions;
+using MineRewind.Discovery;
 
 namespace MineRewind;
 
@@ -25,12 +26,15 @@ public sealed partial class MinecraftSavesPlugin :
     public const string PluginIdentity = "com.folderrewind.minerewind";
     public const string MinecraftKindIdentity = "minecraft-saves";
     public const string MinecraftDefinitionIdentity = "minecraft-java";
+    public const string BedrockKindIdentity = "minecraft-bedrock-saves";
+    public const string BedrockDefinitionIdentity = "minecraft-bedrock";
     public const string DiscoveryIdentity = PluginIdentity;
     public const string StateOwnerIdentity = PluginIdentity;
 
     private static readonly PluginId MineRewindPluginId = new(PluginIdentity);
     private static readonly OwnerId MineRewindOwnerId = new(PluginIdentity);
     private static readonly ConfigKindRef MinecraftKind = new(MineRewindOwnerId, MinecraftKindIdentity);
+    private static readonly ConfigKindRef BedrockKind = new(MineRewindOwnerId, BedrockKindIdentity);
     private static readonly StateOwnerId MineRewindStateOwnerId = new(StateOwnerIdentity);
     private static readonly PluginCommandId HotBackupCommandId = new(MineRewindPluginId, "hotbackup.active-world");
     private static readonly PluginCommandId QuickRestoreCommandId = new(MineRewindPluginId, "hotrestore.active-world");
@@ -63,6 +67,11 @@ public sealed partial class MinecraftSavesPlugin :
             MinecraftDefinitionIdentity,
             "Minecraft: Java Edition",
             ["Minecraft", "Minecraft Java", "Minecraft: Java Edition"],
+            new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)),
+        new(
+            BedrockDefinitionIdentity,
+            "Minecraft: Bedrock Edition",
+            ["Minecraft Bedrock", "Minecraft for Windows", "Minecraft 基岩版"],
             new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase))
     ];
 
@@ -79,12 +88,12 @@ public sealed partial class MinecraftSavesPlugin :
 
     public IReadOnlyList<PluginCommandDescriptor> Commands { get; } =
     [
-        new(HotBackupCommandId, "Back up the active Minecraft world", HotBackupSchema)
+        new(HotBackupCommandId, "Back up the active Minecraft Java world", HotBackupSchema)
         {
             DefaultHotkey = "Alt+Ctrl+S",
             IsGlobalHotkey = true
         },
-        new(QuickRestoreCommandId, "Restore the active Minecraft world to its latest backup", QuickRestoreSchema)
+        new(QuickRestoreCommandId, "Restore the active Minecraft Java world to its latest backup", QuickRestoreSchema)
         {
             DefaultHotkey = "Alt+Ctrl+Z",
             IsGlobalHotkey = true
@@ -119,7 +128,7 @@ public sealed partial class MinecraftSavesPlugin :
         return ValueTask.CompletedTask;
     }
 
-    public ValueTask<DiscoveryResult> DiscoverAsync(
+    public async ValueTask<DiscoveryResult> DiscoverAsync(
         DiscoveryRequest request,
         PluginInvocationContext context)
     {
@@ -127,35 +136,21 @@ public sealed partial class MinecraftSavesPlugin :
         ArgumentNullException.ThrowIfNull(request);
         if (!_autoDiscoverSaves)
         {
-            return ValueTask.FromResult(new DiscoveryResult(
+            return new DiscoveryResult(
                 Array.Empty<DiscoveryCandidate>(),
-                Array.Empty<PluginDiagnostic>()));
+                Array.Empty<PluginDiagnostic>());
         }
 
-        var diagnostics = new List<PluginDiagnostic>();
-        var instances = new Dictionary<string, DiscoveredMinecraftInstance>(StringComparer.OrdinalIgnoreCase);
-        foreach (var userRoot in request.UserRoots ?? Array.Empty<string>())
-        {
-            context.OperationCancellation.ThrowIfCancellationRequested();
-            foreach (var instance in DiscoverInstances(userRoot, diagnostics))
-            {
-                instances.TryAdd(instance.InstancePath, instance);
-            }
-        }
-
-        var candidates = instances.Values
-            .OrderBy(instance => instance.InstancePath, StringComparer.OrdinalIgnoreCase)
-            .Select(CreateCandidate)
-            .ToArray();
-        return ValueTask.FromResult(new DiscoveryResult(candidates, diagnostics));
+        var scan = await Task.Run(() => MinecraftDiscoveryService.Discover(request, context.OperationCancellation),
+            context.OperationCancellation).ConfigureAwait(false);
+        return new DiscoveryResult(scan.Instances.Select(CreateCandidate).ToArray(), scan.Diagnostics);
     }
 
     public string? ResolveDefinitionId(DiscoveryCandidate candidate)
     {
         ArgumentNullException.ThrowIfNull(candidate);
-        return candidate.ConfigDrafts.Any(draft => draft.Kind == MinecraftKind)
-            ? MinecraftDefinitionIdentity
-            : null;
+        if (candidate.ConfigDrafts.Any(draft => draft.Kind == BedrockKind)) return BedrockDefinitionIdentity;
+        return candidate.ConfigDrafts.Any(draft => draft.Kind == MinecraftKind) ? MinecraftDefinitionIdentity : null;
     }
 
     public async ValueTask<IConsistencyLease> AcquireAsync(
@@ -437,6 +432,12 @@ public sealed partial class MinecraftSavesPlugin :
         TryString(request.Arguments, "configId", out var configId);
         var hasExplicitConfig = !string.IsNullOrWhiteSpace(configId);
         ConfigSnapshot? config = null;
+        if (hasExplicitConfig)
+        {
+            config = await context.HostServices.Configs.FindAsync(configId!, context.OperationCancellation).ConfigureAwait(false);
+            if (config is null || config.Kind != MinecraftKind)
+                return CommandFailure("minerewind.command_kind_unsupported");
+        }
         if (string.IsNullOrWhiteSpace(configId))
         {
             config = await FindActiveConfigAsync(context).ConfigureAwait(false);
@@ -549,135 +550,19 @@ public sealed partial class MinecraftSavesPlugin :
             Data: state.Data.Clone()));
     }
 
-    private sealed record DiscoveredMinecraftInstance(
-        string InstancePath,
-        string DisplayName,
-        IReadOnlyList<string> WorldPaths,
-        string ModsPath);
-
-    private static IEnumerable<DiscoveredMinecraftInstance> DiscoverInstances(
-        string userRoot,
-        ICollection<PluginDiagnostic> diagnostics)
+    private static DiscoveryCandidate CreateCandidate(MinecraftDiscoveredInstance instance)
     {
-        if (string.IsNullOrWhiteSpace(userRoot)) yield break;
-        string root;
-        try
-        {
-            root = Path.GetFullPath(userRoot);
-        }
-        catch (Exception ex)
-        {
-            diagnostics.Add(Diagnostic(
-                "minerewind.discovery_root_invalid",
-                DiagnosticSeverity.Warning,
-                "Discovery",
-                ("message", ex.Message)));
-            yield break;
-        }
-        if (!Directory.Exists(root)) yield break;
-
-        if (IsWorld(root))
-        {
-            yield return new DiscoveredMinecraftInstance(
-                root,
-                Path.GetFileName(Path.TrimEndingDirectorySeparator(root)),
-                [root],
-                string.Empty);
-            yield break;
-        }
-
-        foreach (var minecraftRoot in CandidateMinecraftRoots(root))
-        {
-            if (string.Equals(Path.GetFileName(minecraftRoot), "saves", StringComparison.OrdinalIgnoreCase))
-            {
-                var instanceRoot = Directory.GetParent(minecraftRoot)?.FullName;
-                var instance = CreateInstance(instanceRoot, Path.GetFileName(instanceRoot));
-                if (instance != null) yield return instance;
-                continue;
-            }
-
-            var defaultName = string.Equals(Path.GetFileName(minecraftRoot), ".minecraft", StringComparison.OrdinalIgnoreCase)
-                ? "Default"
-                : Path.GetFileName(Path.TrimEndingDirectorySeparator(minecraftRoot));
-            var defaultInstance = CreateInstance(minecraftRoot, defaultName);
-            if (defaultInstance != null) yield return defaultInstance;
-
-            var versions = Path.Combine(minecraftRoot, "versions");
-            if (!Directory.Exists(versions)) continue;
-            IEnumerable<string> versionDirectories;
-            try { versionDirectories = Directory.EnumerateDirectories(versions); }
-            catch { continue; }
-            foreach (var version in versionDirectories.OrderBy(path => path, StringComparer.OrdinalIgnoreCase))
-            {
-                var instance = CreateInstance(version, Path.GetFileName(version));
-                if (instance != null) yield return instance;
-            }
-        }
-    }
-
-    private static IEnumerable<string> CandidateMinecraftRoots(string root)
-    {
-        yield return root;
-        var nested = Path.Combine(root, ".minecraft");
-        if (!string.Equals(root, nested, StringComparison.OrdinalIgnoreCase) && Directory.Exists(nested))
-        {
-            yield return nested;
-        }
-    }
-
-    private static DiscoveredMinecraftInstance? CreateInstance(string? instancePath, string? displayName)
-    {
-        if (string.IsNullOrWhiteSpace(instancePath)) return null;
-        var normalizedInstance = Path.GetFullPath(instancePath);
-        var savesPath = Path.Combine(normalizedInstance, "saves");
-        if (!Directory.Exists(savesPath)) return null;
-
-        IReadOnlyList<string> worlds;
-        try
-        {
-            worlds = Directory.EnumerateDirectories(savesPath)
-                .Where(IsWorld)
-                .Select(Path.GetFullPath)
-                .OrderBy(path => path, StringComparer.OrdinalIgnoreCase)
-                .ToArray();
-        }
-        catch
-        {
-            return null;
-        }
-        if (worlds.Count == 0) return null;
-
-        var modsPath = Path.Combine(normalizedInstance, "mods");
-        return new DiscoveredMinecraftInstance(
-            normalizedInstance,
-            string.IsNullOrWhiteSpace(displayName) ? Path.GetFileName(normalizedInstance) : displayName,
-            worlds,
-            Directory.Exists(modsPath) ? modsPath : string.Empty);
-    }
-
-    private static DiscoveryCandidate CreateCandidate(DiscoveredMinecraftInstance instance)
-    {
-        var folders = instance.WorldPaths
-            .Select(worldPath => new FolderDraft(
-                worldPath,
-                Path.GetFileName(Path.TrimEndingDirectorySeparator(worldPath)),
-                EmptyDraftStates))
-            .ToList();
-        if (!string.IsNullOrWhiteSpace(instance.ModsPath))
-        {
+        var folders = instance.Worlds.OrderBy(world => world.Path, StringComparer.OrdinalIgnoreCase)
+            .Select(world => new FolderDraft(world.Path, world.Name, EmptyDraftStates)).ToList();
+        if (!string.IsNullOrWhiteSpace(instance.ModsPath)
+            && !folders.Any(folder => string.Equals(folder.Path, instance.ModsPath, StringComparison.OrdinalIgnoreCase)))
             folders.Add(new FolderDraft(instance.ModsPath, "mods", EmptyDraftStates));
-        }
-        var config = new ConfigDraft(
-            MinecraftKind,
-            instance.DisplayName,
-            folders,
-            EmptyDraftStates);
-        return new DiscoveryCandidate(
-            StableId(instance.InstancePath),
-            instance.DisplayName,
-            [config]);
+        var kind = instance.Edition == MinecraftEdition.Bedrock ? BedrockKind : MinecraftKind;
+        var config = new ConfigDraft(kind, instance.Name, folders, EmptyDraftStates);
+        var identity = instance.Edition == MinecraftEdition.Java
+            ? StableId(instance.Path) : "bedrock-" + StableId(instance.Path);
+        return new DiscoveryCandidate(identity, instance.Name, [config]);
     }
-
     private static string StableId(string path)
     {
         var normalized = Path.GetFullPath(path)

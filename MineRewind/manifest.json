@@ -6,7 +6,7 @@
     "en-US": "MineRewind",
     "zh-CN": "MineRewind"
   },
-  "version": "1.9.3",
+  "version": "1.9.4",
   "author": "Leafuke",
   "description": "Enhanced Minecraft saves backup with discovery, reconciliation, region scope, consistency, metadata, hot restore, and commands.",
   "localizedDescription": {
@@ -15,7 +15,7 @@
   },
   "pluginApi": {
     "major": 3,
-    "minor": 5
+    "minor": 6
   },
   "entryAssembly": "MineRewind.dll",
   "entryType": "MineRewind.MinecraftSavesPlugin",
@@ -36,6 +36,23 @@
       "icon": "minecraft",
       "backupFallback": "rawWithWarnings",
       "restoreCoordination": "required"
+    },
+    {
+      "ownerId": "com.folderrewind.minerewind",
+      "kindId": "minecraft-bedrock-saves",
+      "displayName": "Minecraft Bedrock Saves",
+      "localizedDisplayName": {
+        "en-US": "Minecraft Bedrock Saves",
+        "zh-CN": "Minecraft 基岩版存档"
+      },
+      "description": "Ordinary folder backup and restore. Close Minecraft before use; Java enhancements do not apply.",
+      "localizedDescription": {
+        "en-US": "Ordinary folder backup and restore. Close Minecraft before use; Java enhancements do not apply.",
+        "zh-CN": "普通目录备份与还原，请先关闭游戏；不提供 Java 版的区域备份、玩家保留或热还原。"
+      },
+      "icon": "minecraft",
+      "backupFallback": "rawWithWarnings",
+      "restoreCoordination": "none"
     }
   ],
   "settingsSchema": "settings.schema.json",

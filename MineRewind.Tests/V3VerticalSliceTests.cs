@@ -39,7 +39,7 @@ public sealed class V3VerticalSliceTests
             new DiscoveryRequest([world.Root]),
             fixture.Invocation);
 
-        var definition = catalog.Definitions.Single();
+        var definition = catalog.Definitions.Single(value => value.DefinitionId == V3Plugin.MinecraftDefinitionIdentity);
         Assert.AreEqual(V3Plugin.MinecraftDefinitionIdentity, definition.DefinitionId);
         Assert.AreEqual("Minecraft: Java Edition", definition.DisplayName);
         Assert.AreEqual(V3Plugin.MinecraftDefinitionIdentity, catalog.ResolveDefinitionId(result.Candidates.Single()));
