@@ -45,12 +45,6 @@ public sealed partial class MinecraftSavesPlugin
                 if (pendingRejoin is null || !pendingRejoin.TrySetResult(rejoined))
                     return CommandFailure("minerewind.knotlink_ack_not_expected");
                 return Success("Rejoin result acknowledged.");
-            case "BACKUP":
-                return await RequestCurrentBackupAsync(arguments, context).ConfigureAwait(false);
-            case "LIST_BACKUPS":
-                return await ListCurrentBackupsAsync(context).ConfigureAwait(false);
-            case "RESTORE":
-                return await RequestCurrentRestoreAsync(arguments, context).ConfigureAwait(false);
             default:
                 return CommandFailure("minerewind.knotlink_command_unavailable");
         }
@@ -333,108 +327,6 @@ public sealed partial class MinecraftSavesPlugin
         if (pending is null || !pending.TrySetResult(true))
             return CommandFailure("minerewind.knotlink_ack_not_expected");
         return Success(message);
-    }
-
-    private static async ValueTask<(ConfigSnapshot Config, FolderSnapshot Folder)?> FindActiveWorldAsync(
-        PluginInvocationContext context)
-    {
-        var config = await FindActiveConfigAsync(context).ConfigureAwait(false);
-        var folder = FindActiveFolder(config);
-        return config is null || folder is null ? null : (config, folder);
-    }
-
-    private static async ValueTask<PluginCommandResult> RequestCurrentBackupAsync(
-        IReadOnlyDictionary<string, string> arguments,
-        PluginInvocationContext context)
-    {
-        var active = await FindActiveWorldAsync(context).ConfigureAwait(false);
-        if (!active.HasValue) return CommandFailure("minerewind.command_active_world_not_found");
-        var (config, folder) = active.Value;
-
-        var options = new BackupRequestOptions
-        {
-            Comment = TryGetValue(arguments, "comment", out var comment) ? comment : string.Empty
-        };
-
-        // KnotLink responder 串行处理消息：必须先回复 BACKUP，后台备份才能继续接收 WORLD_SAVED。
-        QueueHostOperation(
-            context,
-            "BACKUP current_save",
-            cancellationToken => context.HostServices.Backups.RequestAsync(
-                config.ConfigId,
-                folder.FolderId,
-                options,
-                cancellationToken));
-        return Success($"Backup started for '{folder.DisplayName}'.");
-    }
-
-    private static async ValueTask<PluginCommandResult> ListCurrentBackupsAsync(
-        PluginInvocationContext context)
-    {
-        var active = await FindActiveWorldAsync(context).ConfigureAwait(false);
-        if (!active.HasValue) return CommandFailure("minerewind.command_active_world_not_found");
-        var (config, folder) = active.Value;
-        var history = await context.HostServices.History.QueryAsync(
-            config.ConfigId,
-            folder.FolderId,
-            context.OperationCancellation).ConfigureAwait(false);
-        var data = string.Join(
-            ';',
-            history.OrderByDescending(item => item.CreatedAt)
-                .Select(item => item.ArchiveFileName)
-                .Where(item => !string.IsNullOrWhiteSpace(item)));
-        return new PluginCommandResult(
-            OperationOutcome.Success,
-            new Dictionary<string, JsonElement>(StringComparer.Ordinal)
-            {
-                ["data"] = JsonSerializer.SerializeToElement(data)
-            },
-            Array.Empty<PluginDiagnostic>());
-    }
-
-    private async ValueTask<PluginCommandResult> RequestCurrentRestoreAsync(
-        IReadOnlyDictionary<string, string> arguments,
-        PluginInvocationContext context)
-    {
-        var active = await FindActiveWorldAsync(context).ConfigureAwait(false);
-        if (!active.HasValue) return CommandFailure("minerewind.command_active_world_not_found");
-        var (config, folder) = active.Value;
-        var requestedFile = TryGetValue(arguments, "file", out var file) ? file : null;
-        var forcePreserve = TryBoolean(arguments, "preserve_player_data");
-
-        if (string.IsNullOrWhiteSpace(requestedFile))
-        {
-
-            // 未指定归档时必须交由宿主按活动 Workspace 的唯一局部分支尖端解析，
-            // 不能用展示时间倒序猜测恢复目标，否则其他分支的新提交会污染 Quick Restore。
-            QueueHostOperation(
-                context,
-                "RESTORE current_save",
-                cancellationToken => context.HostServices.Restores.RequestQuickAsync(
-                    config.ConfigId,
-                    folder.FolderId,
-                    new RestoreRequestOptions(forcePreserve), cancellationToken));
-            return Success($"Restore started for '{folder.DisplayName}'.");
-        }
-
-        var history = await context.HostServices.History.QueryAsync(
-            config.ConfigId,
-            folder.FolderId,
-            context.OperationCancellation).ConfigureAwait(false);
-        var item = history.FirstOrDefault(value =>
-            string.Equals(value.ArchiveFileName, requestedFile, StringComparison.OrdinalIgnoreCase));
-        if (item is null) return CommandFailure("minerewind.command_history_not_found");
-
-        // 热还原会等待 WORLD_SAVE_AND_EXIT_COMPLETE；不能在当前 responder 回调内同步等待。
-        QueueHostOperation(
-            context,
-            "RESTORE current_save",
-            cancellationToken => context.HostServices.Restores.RequestAsync(
-                config.ConfigId,
-                folder.FolderId,
-                item.VersionId,
-                new RestoreRequestOptions(forcePreserve), cancellationToken));
-        return Success($"Restore started for '{folder.DisplayName}'.");
     }
 
     private static bool TryBoolean(IReadOnlyDictionary<string, string> values, string key)

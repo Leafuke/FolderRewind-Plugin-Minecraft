@@ -42,11 +42,17 @@ MineRewind 1.9.0 起实现 FolderRewind 统一发现提供程序接口，最低�
 - 定义 `Minecraft Saves` 配置类型
 - 自动为每个实例创建独立配置，并直接使用实例名称作为配置名
 
-### 7. KnotLink 扩展
-- 使用严格键值对 v2：`cmd=BACKUP;current_save=true`、`cmd=LIST_BACKUPS;current_save=true`、`cmd=RESTORE;current_save=true[;file=...]`
-- 当前世界备份支持一次性 `backup_mode`、`compression_method`、`compression_level` 参数；参数只影响本次归档，不写回 FolderRewind 配置
-- 所有值按 RFC 3986 percent-encoding；省略 `file` 时还原最新备份，添加 `preserve_player_data=true` 时保留玩家数据
-- 便于与 MineBackup 或其他支持 KnotLink 的组件联动
+### 7. KnotLink 扩展（MineRewind 1.9.3 / Plugin API 3.5）
+
+- 严格 v2 键值对及 RFC 3986 percent-encoding。`BACKUP`、`LIST_BACKUPS`、`RESTORE`、`AUTO_BACKUP`、`STOP_AUTO_BACKUP`、`MARK_IMPORTANT` 可用 `current_save=true` 选择唯一运行世界，不能同时传 `config_id/folder`；无世界、多个活动世界或插件不可用时返回错误。
+- 当前世界选择只解析稳定目标，操作由 FolderRewind 共用处理器执行。备份支持备注、`backup_mode`、`compression_method`、`compression_level`、黑白名单及 `backup_scope` / `scope_*`；自动备份固定启动时的世界和选项。
+- 所有有副作用的命令必须提供 `from` 和 `request_id`，例如 `cmd=RESTORE;current_save=true;preserve_player_data=false;from=my.client;request_id=restore-001`。
+- 两种远程 `RESTORE` 默认均为 `clean`；显式 `mode=overwrite` 可覆盖，部分备份始终使用覆盖还原。两种路径省略 `file` 时均恢复活动 Workspace 的唯一局部分支尖端，不按归档时间选择其他分支。
+- `preserve_player_data` 缺省继承插件本地设置，显式 true/false 覆盖本次操作。标量选项只影响本次操作，黑白名单列表追加去重，不写回本地配置。
+- 开启保留时，保留全部玩家（包括离线玩家）的现有位置、朝向、维度、背包、末影箱、经验、分数、游戏模式、生命值、饥饿及饱和度字段。目标备份没有的 UUID 保留完整当前 NBT；其他字段、进度与统计正常回档。
+- 保留适配旧版 `level.dat/Data/Player` 和 `playerdata`，以及 26.1 的 `singleplayer_uuid` 和 `players/data`；开启保留时禁止跨布局还原。损坏、身份冲突、越界或超限阻止整次还原，不返回部分玩家结果。上限 4,096 个提案、64 MiB；`.dat_old` 不作为玩家主体或自动回退源。
+- `GET_CAPABILITIES` 发布六个独立名称的当前世界能力、四个模组回执和协作事件；如 `minerewind_restore_current_save` 仍发送 `cmd=RESTORE;current_save=true`。
+- 上述存档结构已按官方资料及生成 NBT 测试验证，真实 1.21.11 / 26.1 单人和多人游戏加载验收仍待完成。
 
 ### 8. 指定区域备份
 
@@ -71,7 +77,7 @@ MineRewind 1.9.0 起实现 FolderRewind 统一发现提供程序接口，最低�
 |--------|------|--------|------|
 | AutoDiscoverSaves | Boolean | true | 启动时向已有 Minecraft 实例配置补充新世界 |
 | AutoCreateConfigs | Boolean | false | 从已有 Minecraft 配置定位 `.minecraft`，自动为未管理实例创建配置 |
-| PreservePlayerData | Boolean | false | 还原时保留玩家位置、物品栏、经验等数据 |
+| PreservePlayerData | Boolean | false | 普通还原时保留所有玩家的选定 NBT 字段；远程显式 true/false 可覆盖本次设置 |
 
 ## 热键
 

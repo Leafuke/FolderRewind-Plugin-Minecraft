@@ -23,7 +23,7 @@ namespace MineRewind
     ///          │    ├─ TAG_Int "Score"
     ///          │    ├─ TAG_Int "playerGameType"
     ///          │    ├─ TAG_String "Dimension"  (1.16+: 命名空间字符串)
-    ///          │    ├─ TAG_Short "Health"
+    ///          │    ├─ TAG_Float "Health"
     ///          │    ├─ TAG_Short "HurtTime"
     ///          │    ├─ TAG_Int "foodLevel"
     ///          │    ├─ TAG_Float "foodSaturationLevel"
@@ -38,44 +38,10 @@ namespace MineRewind
     /// </summary>
     public static class NbtHelper
     {
-        public static async Task<IReadOnlyList<FolderRewind.Plugin.Abstractions.RestoreStagedFileProposal>>
+        public static Task<IReadOnlyList<FolderRewind.Plugin.Abstractions.RestoreStagedFileProposal>>
             PreparePlayerDataAsync(FolderRewind.Plugin.Abstractions.IVersionMetadataSourceView current,
                 FolderRewind.Plugin.Abstractions.IVersionMetadataSourceView target, CancellationToken token)
-        {
-            async Task<NbtFile> Read(FolderRewind.Plugin.Abstractions.IVersionMetadataSourceView view, string path)
-            {
-                await using var input = await view.OpenReadAsync(path, token).ConfigureAwait(false);
-                var file = new NbtFile(); file.LoadFromStream(input, NbtCompression.AutoDetect); return file;
-            }
-            NbtFile source;
-            try { source = await Read(current, "level.dat"); }
-            catch (FileNotFoundException) { return []; }
-            if (source.RootTag["Data"] is not NbtCompound data) return [];
-            var sourceUuid = GetSinglePlayerUuid(data);
-            var player = sourceUuid is null ? data["Player"] as NbtCompound
-                : (await Read(current, $"players/data/{sourceUuid}.dat")).RootTag;
-            if (player is null) return [];
-            var snapshot = BuildPlayerSnapshot(player, true, true, true);
-            if (snapshot is null) return [];
-            var destination = await Read(target, "level.dat");
-            if (destination.RootTag["Data"] is not NbtCompound targetData)
-                throw new InvalidDataException("Restore target has no Data compound.");
-            var targetUuid = GetSinglePlayerUuid(targetData);
-            var relative = targetUuid is null ? "level.dat" : $"players/data/{targetUuid}.dat";
-            NbtCompound targetPlayer;
-            if (targetUuid is null)
-            {
-                targetPlayer = targetData["Player"] as NbtCompound ?? new NbtCompound("Player");
-                if (!targetData.Contains("Player")) targetData.Add(targetPlayer);
-            }
-            else
-            {
-                destination = await Read(target, relative);
-                targetPlayer = destination.RootTag;
-            }
-            ApplySnapshotToPlayerCompound(targetPlayer, snapshot);
-            return [new(relative, destination.SaveToBuffer(NbtCompression.GZip))];
-        }
+            => NbtPlayerPreservation.PrepareAsync(current, target, token);
 
         /// <summary>
         /// 玩家数据快照 —— 在还原前从当前 level.dat 提取，还原后写回。
@@ -113,7 +79,7 @@ namespace MineRewind
             public NbtInt? PlayerGameType { get; set; }
 
             /// <summary>生命值</summary>
-            public NbtShort? Health { get; set; }
+            public NbtTag? Health { get; set; }
 
             /// <summary>饱食度</summary>
             public NbtInt? FoodLevel { get; set; }
@@ -294,7 +260,7 @@ namespace MineRewind
                 snapshot.XpTotal = CloneTag<NbtInt>(player, "XpTotal");
                 snapshot.Score = CloneTag<NbtInt>(player, "Score");
                 snapshot.PlayerGameType = CloneTag<NbtInt>(player, "playerGameType");
-                snapshot.Health = CloneTag<NbtShort>(player, "Health");
+                snapshot.Health = CloneTag(player, "Health");
                 snapshot.FoodLevel = CloneTag<NbtInt>(player, "foodLevel");
                 snapshot.FoodSaturationLevel = CloneTag<NbtFloat>(player, "foodSaturationLevel");
             }

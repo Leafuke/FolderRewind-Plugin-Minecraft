@@ -66,21 +66,54 @@ public sealed partial class MinecraftSavesPlugin
     [
         CurrentSaveCommand("BACKUP", "Back up the currently active Minecraft world"),
         CurrentSaveCommand("LIST_BACKUPS", "List backups for the currently active Minecraft world"),
-        CurrentSaveCommand("RESTORE", "Restore the currently active Minecraft world"),
-        new("HANDSHAKE_RESPONSE", "Report the companion mod version"),
-        new("WORLD_SAVED", "Acknowledge that the active world was saved"),
-        new("WORLD_SAVE_AND_EXIT_COMPLETE", "Acknowledge that save-and-exit completed"),
-        new("REJOIN_RESULT", "Report the automatic world rejoin result")
+        CurrentSaveCommand("RESTORE", "Restore the currently active Minecraft world; default clean"),
+        CurrentSaveCommand("AUTO_BACKUP", "Start periodic backup bound to the currently active world"),
+        CurrentSaveCommand("STOP_AUTO_BACKUP", "Stop periodic backup for the currently active world"),
+        CurrentSaveCommand("MARK_IMPORTANT", "Mark a backup of the currently active world"),
+        new("HANDSHAKE_RESPONSE", "Report the companion mod version during a pending handshake")
+            { Arguments = [new("mod_version", "Required companion mod version; minimum 3.0.0.")] },
+        new("WORLD_SAVED", "Acknowledge that the active world was saved; requires a pending save"),
+        new("WORLD_SAVE_AND_EXIT_COMPLETE", "Acknowledge save-and-exit; requires a pending restore"),
+        new("REJOIN_RESULT", "Report the automatic world rejoin result; requires a pending rejoin")
+            { Arguments = [new("result", "failure means failed; omitted or another value means success.")] }
     ];
+
+    IReadOnlyList<KnotLinkSignalDescriptor> IKnotLinkIntegrationCapability.Signals { get; } =
+    [
+        Signal("handshake", "Request companion mod handshake", "version", "action", "world", "min_mod_version"),
+        Signal("handshake_ack", "Report handshake compatibility", "status", "mod_version"),
+        Signal("pre_hot_backup", "Request world save before backup", "config", "folder_id", "world"),
+        Signal("pre_hot_restore", "Request save-and-exit before restore", "config", "folder_id", "history_id", "world"),
+        Signal("restore_cancelled", "Restore was canceled before mutation", "config", "folder_id", "history_id", "world", "reason"),
+        Signal("restore_finished", "Host restore mutation finished", "config", "folder_id", "history_id", "world", "status"),
+        Signal("rejoin_world", "Request automatic world rejoin", "config", "folder_id", "history_id", "world"),
+        Signal("hot_restore_complete", "Final restore/rejoin result", "config", "folder_id", "history_id", "world", "status")
+    ];
+
+    private static KnotLinkSignalDescriptor Signal(string name, string description, params string[] fields)
+        => new(name, description, fields.ToDictionary(field => field, field => $"Signal {field}.", StringComparer.Ordinal));
 
     private static KnotLinkCommandDescriptor CurrentSaveCommand(string command, string description)
         => new(command, description)
         {
-            RequiredArguments = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
-            {
-                ["current_save"] = "true"
-            }
+            FunctionName = "minerewind_" + command.ToLowerInvariant() + "_current_save",
+            IsTargetSelector = true,
+            Returns = KnotLinkCoreCommands.Find(command)!.Returns,
+            RequiredArguments = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase) { ["current_save"] = "true" }
         };
+
+    public async ValueTask<KnotLinkTargetResolution> ResolveTargetAsync(string command,
+        IReadOnlyDictionary<string, string> arguments, PluginInvocationContext context)
+    {
+        EnsureActivated();
+        if (!KnotLinkCoreCommands.FolderCommands.Contains(command)) return new(null, []);
+        var configs = await context.HostServices.Configs.QueryAsync(MinecraftKind, context.OperationCancellation).ConfigureAwait(false);
+        var active = configs.SelectMany(config => config.Folders.Where(folder => IsSessionLockHeld(folder.Path))
+            .Select(folder => new KnotLinkTarget(config.ConfigId, folder.FolderId))).Take(2).ToArray();
+        return active.Length == 1 ? new(active[0], []) : new(null,
+            [Diagnostic(active.Length == 0 ? "minerewind.command_active_world_not_found" : "minerewind.command_multiple_active_worlds",
+                DiagnosticSeverity.Error, "KnotLinkTargetResolution")]);
+    }
 
     public ValueTask<FilePolicyResult> ResolveAsync(
         FilePolicyRequest request,

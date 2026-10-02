@@ -19,6 +19,7 @@ public sealed partial class MinecraftSavesPlugin :
     IRestoreStagingPreparationCapability,
     IPluginCommandCapability,
     IKnotLinkIntegrationCapability,
+    IKnotLinkTargetResolver,
     IProviderStateMigrationCapability
 {
     public const string PluginIdentity = "com.folderrewind.minerewind";
@@ -74,6 +75,7 @@ public sealed partial class MinecraftSavesPlugin :
     public ConfigKindRef Kind => MinecraftKind;
     public StateOwnerId StateOwnerId => MineRewindStateOwnerId;
     public int CurrentSchemaVersion => 1;
+    public bool SupportsPlayerDataOverride => true;
 
     public IReadOnlyList<PluginCommandDescriptor> Commands { get; } =
     [
@@ -265,7 +267,7 @@ public sealed partial class MinecraftSavesPlugin :
     {
         EnsureActivated();
         ValidateKind(request.Config.Kind);
-        if (!_preservePlayerData && !request.PreservePlayerData) return new([], []);
+        if (!(request.PreservePlayerDataOverride ?? (_preservePlayerData || request.PreservePlayerData))) return new([], []);
         try
         {
             return new(await NbtHelper.PreparePlayerDataAsync(request.Current, request.Target,
@@ -274,7 +276,7 @@ public sealed partial class MinecraftSavesPlugin :
         catch (OperationCanceledException) when (context.OperationCancellation.IsCancellationRequested) { throw; }
         catch (Exception ex)
         {
-            return new([], [Diagnostic("minerewind.playerdata_restore_failed", DiagnosticSeverity.Warning,
+            return new([], [Diagnostic("minerewind.playerdata_restore_failed", DiagnosticSeverity.Error,
                 "RestoreStagingPreparation", ("message", ex.Message))]);
         }
     }
