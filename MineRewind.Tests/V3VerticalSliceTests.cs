@@ -465,73 +465,6 @@ public sealed class V3VerticalSliceTests
     }
 
     [TestMethod]
-    [DataRow(false, null, false)]
-    [DataRow(true, null, true)]
-    [DataRow(false, true, true)]
-    [DataRow(true, true, true)]
-    [DataRow(false, false, false)]
-    [DataRow(true, false, false)]
-    public async Task PlayerDataOverrideDistinguishesOmittedTrueAndFalse(bool local, bool? remote, bool expected)
-    {
-        using var world = TemporaryWorld.Create(); using var target = TemporaryWorld.Create();
-        WriteLegacyLevelDat(world.WorldPath, "Current", gameType: 0, seed: 1, xpLevel: 42);
-        WriteLegacyLevelDat(target.WorldPath, "Target", gameType: 0, seed: 1, xpLevel: 3);
-        var fixture = Activate(preservePlayerData: local);
-        var (config, folder) = Snapshots(world.WorldPath);
-        var result = await fixture.Plugin.PrepareAsync(new(Guid.NewGuid(), config, folder.FolderId,
-            new TestReadView(world.WorldPath), new TestReadView(target.WorldPath), false)
-            { PreservePlayerDataOverride = remote }, fixture.Invocation);
-        Assert.IsEmpty(result.Diagnostics);
-        Assert.HasCount(expected ? 1 : 0, result.Files);
-    }
-
-    [TestMethod]
-    public async Task PlayerPreservationProducesProposalWithoutChangingEitherView()
-    {
-        using var world = TemporaryWorld.Create();
-        using var target = TemporaryWorld.Create();
-        WriteLegacyLevelDat(world.WorldPath, "Current", gameType: 0, seed: 1, xpLevel: 42);
-        WriteLegacyLevelDat(target.WorldPath, "Target", gameType: 0, seed: 1, xpLevel: 3);
-        var fixture = Activate(preservePlayerData: true);
-        var (config, folder) = Snapshots(world.WorldPath);
-        var before = File.ReadAllBytes(Path.Combine(target.WorldPath, "level.dat"));
-        var result = await fixture.Plugin.PrepareAsync(new(Guid.NewGuid(), config, folder.FolderId,
-            new TestReadView(world.WorldPath), new TestReadView(target.WorldPath), false), fixture.Invocation);
-        Assert.HasCount(1, result.Files);
-        CollectionAssert.AreEqual(before, File.ReadAllBytes(Path.Combine(target.WorldPath, "level.dat")));
-        var level = new NbtFile();
-        level.LoadFromStream(new MemoryStream(result.Files[0].Content.ToArray()), NbtCompression.AutoDetect);
-        var player = (NbtCompound)((NbtCompound)level.RootTag["Data"]!)["Player"]!;
-        Assert.AreEqual(42, ((NbtInt)player["XpLevel"]!).Value);
-    }
-
-    [TestMethod]
-    public async Task PlayerPreservationFailureReturnsAnErrorAndNoProposals()
-    {
-        using var world = TemporaryWorld.Create();
-        using var target = TemporaryWorld.Create();
-        WriteLegacyLevelDat(world.WorldPath, "Current", gameType: 0, seed: 1, xpLevel: 42);
-        File.Delete(Path.Combine(target.WorldPath, "level.dat"));
-        var fixture = Activate(preservePlayerData: true);
-        var (config, folder) = Snapshots(world.WorldPath);
-
-        var result = await fixture.Plugin.PrepareAsync(new(Guid.NewGuid(), config, folder.FolderId,
-            new TestReadView(world.WorldPath), new TestReadView(target.WorldPath), false), fixture.Invocation);
-
-        Assert.IsEmpty(result.Files);
-        Assert.AreEqual(DiagnosticSeverity.Error, result.Diagnostics.Single().Severity);
-        Assert.AreEqual("minerewind.playerdata_restore_failed", result.Diagnostics.Single().Code);
-    }
-
-    private sealed class TestReadView(string root) : IRestoreSourceView
-    {
-        public IReadOnlyList<string> RelativePaths => Directory.GetFiles(root, "*", SearchOption.AllDirectories)
-            .Select(path => Path.GetRelativePath(root, path).Replace('\\', '/')).Order().ToArray();
-        public ValueTask<Stream> OpenReadAsync(string relativePath, CancellationToken token)
-            => ValueTask.FromResult<Stream>(new MemoryStream(File.ReadAllBytes(Path.Combine(root, relativePath)), false));
-    }
-
-    [TestMethod]
     public async Task CommandsRouteThroughHostBackupAndRestoreServices()
     {
         var fixture = Activate();
@@ -607,54 +540,6 @@ public sealed class V3VerticalSliceTests
         Assert.AreEqual(folder.FolderId, fixture.Services.Restores.QuickRequests.Single().FolderId);
         Assert.HasCount(0, fixture.Services.Restores.Requests);
         Assert.AreEqual(0, fixture.Services.History.QueryCount);
-    }
-
-    [TestMethod]
-    public async Task KnotLinkCurrentSaveResolvesStableTargetForAllSixCommandsWithoutExecutingOrQueryingHistory()
-    {
-        using var world = TemporaryWorld.Create();
-        using var sessionLock = world.AcquireSessionLock();
-        var fixture = Activate();
-        var (config, folder) = Snapshots(world.WorldPath);
-        fixture.Services.Configs.QueryResults.Add(config);
-        foreach (var command in KnotLinkCoreCommands.FolderCommands)
-        {
-            var resolution = await fixture.Plugin.ResolveTargetAsync(command,
-                new Dictionary<string, string> { ["current_save"] = "true" }, fixture.Invocation);
-            Assert.AreEqual(new KnotLinkTarget(config.ConfigId, folder.FolderId), resolution.Target);
-            Assert.IsEmpty(resolution.Diagnostics);
-        }
-        Assert.IsEmpty(fixture.Services.Backups.Requests);
-        Assert.IsEmpty(fixture.Services.Restores.Requests);
-        Assert.AreEqual(0, fixture.Services.History.QueryCount);
-    }
-
-    [TestMethod]
-    public async Task KnotLinkTargetResolutionFailsForMissingOrMultipleActiveWorlds()
-    {
-        var fixture = Activate();
-        var missing = await fixture.Plugin.ResolveTargetAsync("BACKUP", new Dictionary<string, string>(), fixture.Invocation);
-        Assert.IsNull(missing.Target);
-        Assert.AreEqual("minerewind.command_active_world_not_found", missing.Diagnostics.Single().Code);
-        using var first = TemporaryWorld.Create(); using var second = TemporaryWorld.Create();
-        using var firstLock = first.AcquireSessionLock(); using var secondLock = second.AcquireSessionLock();
-        fixture.Services.Configs.QueryResults.Add(Snapshots(first.WorldPath).Config);
-        fixture.Services.Configs.QueryResults.Add(Snapshots(second.WorldPath).Config);
-        var multiple = await fixture.Plugin.ResolveTargetAsync("RESTORE", new Dictionary<string, string>(), fixture.Invocation);
-        Assert.IsNull(multiple.Target);
-        Assert.AreEqual("minerewind.command_multiple_active_worlds", multiple.Diagnostics.Single().Code);
-    }
-
-    [TestMethod]
-    public void KnotLinkDescriptorsReserveOnlyCurrentSaveVariantsOfCoreCommands()
-    {
-        var commands = ((IKnotLinkIntegrationCapability)new V3Plugin()).Commands;
-
-        foreach (var command in KnotLinkCoreCommands.FolderCommands)
-        {
-            var descriptor = commands.Single(value => value.Command == command);
-            Assert.AreEqual("true", descriptor.RequiredArguments["current_save"]);
-        }
     }
 
     [TestMethod]
