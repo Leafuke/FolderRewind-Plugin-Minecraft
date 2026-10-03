@@ -159,8 +159,9 @@ public sealed partial class MinecraftSavesPlugin :
     {
         EnsureActivated();
         ValidateKind(request.Config.Kind);
-        var sourcePath = ResolveWorldPath(request.Folder.Path)
-            ?? throw new InvalidOperationException("Minecraft consistency requires a valid world folder.");
+        var sourcePath = ResolveWorldPath(request.Folder.Path);
+        // Ordinary folders in a Minecraft configuration do not require world coordination.
+        if (sourcePath is null) return new MinecraftConsistencyLease(request.Folder.Path, [], null);
         var diagnostics = new List<PluginDiagnostic>();
         var worldIsActive = IsSessionLockHeld(sourcePath);
 
@@ -262,6 +263,8 @@ public sealed partial class MinecraftSavesPlugin :
     {
         EnsureActivated();
         ValidateKind(request.Config.Kind);
+        var folder = request.Config.Folders.FirstOrDefault(value => value.FolderId == request.FolderId);
+        if (folder is null || ResolveWorldPath(folder.Path) is null) return new([], []);
         if (!(request.PreservePlayerDataOverride ?? (_preservePlayerData || request.PreservePlayerData))) return new([], []);
         try
         {
@@ -286,11 +289,13 @@ public sealed partial class MinecraftSavesPlugin :
         var affected = request.Folders.ToArray();
         if (affected.Length == 0)
             return new(await request.ContinueMutationAsync(context.OperationCancellation), diagnostics);
-        var active = affected.Where(folder => IsSessionLockHeld(folder.Path)).ToArray();
+        var worlds = affected.Where(folder => ResolveWorldPath(folder.Path) is not null).ToArray();
+        if (worlds.Length == 0) return new(await request.ContinueMutationAsync(context.OperationCancellation), diagnostics);
+        var active = worlds.Where(folder => IsSessionLockHeld(folder.Path)).ToArray();
         if (active.Length > 1)
             return new(OperationOutcome.Blocked, [Diagnostic("minerewind.restore_multiple_active_worlds",
                 DiagnosticSeverity.Error, "RestoreCoordinator")]);
-        request = request with { Folders = [active.SingleOrDefault() ?? affected[0]] };
+        request = request with { Folders = [active.SingleOrDefault() ?? worlds[0]] };
         var worldWasActive = IsSessionLockHeld(request.Folders.Single().Path);
         var signalGateHeld = false;
         var prepared = false;
@@ -350,7 +355,7 @@ public sealed partial class MinecraftSavesPlugin :
                 }
             }
 
-            if ((!worldWasActive || prepared) && affected.All(folder => !IsSessionLockHeld(folder.Path)))
+            if ((!worldWasActive || prepared) && worlds.All(folder => !IsSessionLockHeld(folder.Path)))
             {
                 outcome = await request.ContinueMutationAsync(context.OperationCancellation).ConfigureAwait(false);
             }

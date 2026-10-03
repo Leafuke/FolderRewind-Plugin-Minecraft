@@ -121,6 +121,8 @@ public sealed partial class MinecraftSavesPlugin
     {
         EnsureActivated();
         ValidateKind(request.Config.Kind);
+        if (ResolveWorldPath(request.Folder.Path) is null)
+            return ValueTask.FromResult(new FilePolicyResult([], [], []));
         return ValueTask.FromResult(new FilePolicyResult(
             [
                 "session.lock",
@@ -159,9 +161,9 @@ public sealed partial class MinecraftSavesPlugin
             StringComparer.OrdinalIgnoreCase);
         var sourceRoot = Path.GetFullPath(request.Folder.Path);
         var worldPath = ResolveWorldPath(sourceRoot);
+        if (worldPath is null) return ValueTask.FromResult(new BackupScopeResult(OperationReadiness.Ready, ["**"], []));
         var errorCode = string.Empty;
-        if (worldPath is null
-            || !MinecraftRegionBackupScope.TryBuild(sourceRoot, worldPath, parameters, out var patterns, out errorCode))
+        if (!MinecraftRegionBackupScope.TryBuild(sourceRoot, worldPath, parameters, out var patterns, out errorCode))
         {
             return ValueTask.FromResult(new BackupScopeResult(
                 OperationReadiness.Blocked,
@@ -188,7 +190,7 @@ public sealed partial class MinecraftSavesPlugin
         {
             return ValueTask.FromResult(new FolderMetadataResult(
                 Array.Empty<FolderMetadataField>(),
-                [Diagnostic("minerewind.metadata_world_missing", DiagnosticSeverity.Warning, "FolderMetadata")]));
+                Array.Empty<PluginDiagnostic>()));
         }
         var details = NbtHelper.TryGetWorldDetails(path);
         var regionCount = Directory.EnumerateFiles(path, "r.*.*.mca", SearchOption.AllDirectories).Count();
@@ -237,6 +239,7 @@ public sealed partial class MinecraftSavesPlugin
     {
         EnsureActivated();
         ValidateKind(request.Config.Kind);
+        if (ResolveWorldPath(request.Folder.Path) is null) return new([], []);
         try
         {
             await using var stream = await request.Source.OpenReadAsync(
