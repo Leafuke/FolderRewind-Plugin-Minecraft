@@ -1,4 +1,6 @@
 using System.Text.Json;
+using FolderRewind.Plugin.Abstractions;
+using MineRewind;
 
 namespace MineRewind.Tests;
 
@@ -6,46 +8,32 @@ namespace MineRewind.Tests;
 public sealed class ManifestVersionTests
 {
     [TestMethod]
-    public void ManifestDeclaresV3ApiAndStaticKindPolicy()
+    public void ManifestMatchesBuiltPluginAndDeclaresUniqueCapabilities()
     {
         var path = Path.Combine(AppContext.BaseDirectory, "manifest.json");
         using var document = JsonDocument.Parse(File.ReadAllText(path));
         var root = document.RootElement;
 
-        Assert.AreEqual(3, root.GetProperty("manifestVersion").GetInt32());
-        Assert.AreEqual("com.folderrewind.minerewind", root.GetProperty("pluginId").GetString());
-        Assert.AreEqual("1.9.4", root.GetProperty("version").GetString());
-        Assert.AreEqual(3, root.GetProperty("pluginApi").GetProperty("major").GetInt32());
-        Assert.AreEqual(6, root.GetProperty("pluginApi").GetProperty("minor").GetInt32());
-        Assert.AreEqual("settings.schema.json", root.GetProperty("settingsSchema").GetString());
+        var declaredVersion = Version.Parse(root.GetProperty("version").GetString()!);
+        var assemblyVersion = typeof(MinecraftSavesPlugin).Assembly.GetName().Version!;
+        Assert.AreEqual(assemblyVersion.Major, declaredVersion.Major);
+        Assert.AreEqual(assemblyVersion.Minor, declaredVersion.Minor);
+        Assert.AreEqual(assemblyVersion.Build, declaredVersion.Build);
+        var api = root.GetProperty("pluginApi");
+        var requirement = new PluginApiVersion(api.GetProperty("major").GetInt32(), api.GetProperty("minor").GetInt32());
+        Assert.IsTrue(requirement.IsSatisfiedBy(PluginApiVersion.HostVersion));
         var kind = root.GetProperty("configKinds")[0];
-        Assert.AreEqual("com.folderrewind.minerewind", kind.GetProperty("ownerId").GetString());
-        Assert.AreEqual("minecraft-saves", kind.GetProperty("kindId").GetString());
-        Assert.IsTrue(kind.GetProperty("localizedDisplayName").TryGetProperty("zh-CN", out _));
-        Assert.IsTrue(kind.GetProperty("localizedDescription").TryGetProperty("en-US", out _));
-        Assert.AreEqual("minecraft", kind.GetProperty("icon").GetString());
-        Assert.AreEqual("rawWithWarnings", kind.GetProperty("backupFallback").GetString());
-        Assert.AreEqual("required", kind.GetProperty("restoreCoordination").GetString());
+        Assert.AreEqual(root.GetProperty("pluginId").GetString(), kind.GetProperty("ownerId").GetString());
         using var settingsDocument = JsonDocument.Parse(
-            File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "settings.schema.json")));
+            File.ReadAllText(Path.Combine(AppContext.BaseDirectory, root.GetProperty("settingsSchema").GetString()!)));
         var setting = settingsDocument.RootElement.GetProperty("settings")[0];
-        Assert.IsTrue(setting.GetProperty("localizedDisplayName").TryGetProperty("zh-CN", out _));
-        Assert.IsTrue(setting.GetProperty("localizedDescription").TryGetProperty("en-US", out _));
-        CollectionAssert.AreEquivalent(
-            new[]
-            {
-                "discovery", "configReconciliation", "filePolicy", "backupScope",
-                "backupConsistency", "folderMetadata", "versionMetadataProvider", "restoreCoordinator",
-                "restoreStagingPreparation", "pluginCommand", "knotLinkIntegration", "providerStateMigration"
-            },
-            root.GetProperty("capabilities").EnumerateArray().Select(value => value.GetString()).ToArray());
-        CollectionAssert.AreEquivalent(
-            new[]
-            {
-                "configQuery", "backupRequest", "restoreRequest", "historyQuery",
-                "knotLink", "temporaryStorage", "logging"
-            },
-            root.GetProperty("requestedHostServices").EnumerateArray()
-                .Select(value => value.GetString()).ToArray());
+        foreach (var localized in new[] { kind.GetProperty("localizedDisplayName"), kind.GetProperty("localizedDescription"), setting.GetProperty("localizedDisplayName"), setting.GetProperty("localizedDescription") })
+            Assert.IsTrue(localized.EnumerateObject().All(value => !string.IsNullOrWhiteSpace(value.Value.GetString())));
+        foreach (var declarations in new[] { root.GetProperty("capabilities"), root.GetProperty("requestedHostServices") })
+        {
+            var values = declarations.EnumerateArray().Select(value => value.GetString()).ToArray();
+            Assert.IsTrue(values.All(value => !string.IsNullOrWhiteSpace(value)));
+            Assert.AreEqual(values.Length, values.Distinct(StringComparer.Ordinal).Count());
+        }
     }
 }

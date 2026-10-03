@@ -2,7 +2,7 @@
 
 为 [FolderRewind](https://github.com/Leafuke/FolderRewind) 提供 Minecraft 存档备份增强功能，重点覆盖热备份、热还原、自动发现世界存档，以及从现有配置识别 `.minecraft` 实例并创建配置。
 
-MineRewind 1.9.0 起实现 FolderRewind 统一发现提供程序接口。当前 1.9.4 要求支持 Plugin API 3.6 的 Host；SDK 3.6.0 与插件目前为本地候选，不代表已经公开发布。旧的手动发现与批量创建入口继续兼容。
+MineRewind 1.9.0 起实现 FolderRewind 统一发现提供程序接口。当前 1.9.5 要求支持 Plugin API 3.6 的 Host（FolderRewind 1.9.3），构建依赖 NuGet 包 FolderRewind.Plugin.Abstractions 3.6.0。旧的手动发现与批量创建入口继续兼容。正式版本以 GitHub Release 和 nuget.org 的公开记录为准。
 
 Java 的热备份、热还原、NBT 玩家保留和区域备份只适用于 `Minecraft Saves`。新增 `Minecraft Bedrock Saves` 使用普通目录备份与还原，请先关闭游戏。
 
@@ -48,7 +48,7 @@ Java 的热备份、热还原、NBT 玩家保留和区域备份只适用于 `Min
 - 定义 `Minecraft Bedrock Saves`，不注册 Java 专属能力；普通文件流程会保留整个世界目录，包括 `db`
 - 自动为每个实例创建独立配置，并直接使用实例名称作为配置名
 
-### 启动器发现边界（1.9.4）
+### 启动器发现边界（1.9.5）
 
 | 来源 | 简单定位方法 | 手选兜底范围 |
 | --- | --- | --- |
