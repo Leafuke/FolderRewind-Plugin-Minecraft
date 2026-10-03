@@ -1,4 +1,4 @@
-﻿<Project Sdk="Microsoft.NET.Sdk">
+<Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
     <TargetFramework>net10.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
@@ -7,11 +7,12 @@
     <GenerateDependencyFile>false</GenerateDependencyFile>
     <CopyLocalLockFileAssemblies>true</CopyLocalLockFileAssemblies>
     <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+    <Version>1.9.5</Version>
   </PropertyGroup>
   <ItemGroup>
-    <ProjectReference Include="..\..\FolderRewind.Plugin.Abstractions\FolderRewind.Plugin.Abstractions.csproj">
+    <PackageReference Include="FolderRewind.Plugin.Abstractions" Version="3.6.0">
       <Private>false</Private>
-    </ProjectReference>
+    </PackageReference>
     <PackageReference Include="fNbt" Version="1.0.0" />
   </ItemGroup>
   <Target Name="PackFrPlugin" DependsOnTargets="Build">

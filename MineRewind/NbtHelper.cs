@@ -23,7 +23,7 @@ namespace MineRewind
     ///          │    ├─ TAG_Int "Score"
     ///          │    ├─ TAG_Int "playerGameType"
     ///          │    ├─ TAG_String "Dimension"  (1.16+: 命名空间字符串)
-    ///          │    ├─ TAG_Short "Health"
+    ///          │    ├─ TAG_Float "Health"
     ///          │    ├─ TAG_Short "HurtTime"
     ///          │    ├─ TAG_Int "foodLevel"
     ///          │    ├─ TAG_Float "foodSaturationLevel"
@@ -38,6 +38,11 @@ namespace MineRewind
     /// </summary>
     public static class NbtHelper
     {
+        public static Task<IReadOnlyList<FolderRewind.Plugin.Abstractions.RestoreStagedFileProposal>>
+            PreparePlayerDataAsync(FolderRewind.Plugin.Abstractions.IVersionMetadataSourceView current,
+                FolderRewind.Plugin.Abstractions.IVersionMetadataSourceView target, CancellationToken token)
+            => NbtPlayerPreservation.PrepareAsync(current, target, token);
+
         /// <summary>
         /// 玩家数据快照 —— 在还原前从当前 level.dat 提取，还原后写回。
         /// </summary>
@@ -74,7 +79,7 @@ namespace MineRewind
             public NbtInt? PlayerGameType { get; set; }
 
             /// <summary>生命值</summary>
-            public NbtShort? Health { get; set; }
+            public NbtTag? Health { get; set; }
 
             /// <summary>饱食度</summary>
             public NbtInt? FoodLevel { get; set; }
@@ -255,7 +260,7 @@ namespace MineRewind
                 snapshot.XpTotal = CloneTag<NbtInt>(player, "XpTotal");
                 snapshot.Score = CloneTag<NbtInt>(player, "Score");
                 snapshot.PlayerGameType = CloneTag<NbtInt>(player, "playerGameType");
-                snapshot.Health = CloneTag<NbtShort>(player, "Health");
+                snapshot.Health = CloneTag(player, "Health");
                 snapshot.FoodLevel = CloneTag<NbtInt>(player, "foodLevel");
                 snapshot.FoodSaturationLevel = CloneTag<NbtFloat>(player, "foodSaturationLevel");
             }
@@ -273,7 +278,7 @@ namespace MineRewind
         /// <summary>
         /// 将先前提取的玩家数据写回 level.dat。
         /// 自动适配 26.1 前后两种存档格式。
-        /// 应在还原操作完成后调用。
+        /// 仅用于受控目录；Host 插件入口使用 PreparePlayerDataAsync 返回 staging proposal。
         /// </summary>
         /// <param name="worldPath">存档根目录路径</param>
         /// <param name="snapshot">之前通过 ExtractPlayerData 获取的快照</param>

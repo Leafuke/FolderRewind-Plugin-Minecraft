@@ -1,9 +1,7 @@
-extern alias v3;
-
 using System.Text.Json;
 using fNbt;
 using FolderRewind.Plugin.Abstractions;
-using V3Plugin = v3::MineRewind.MinecraftSavesPlugin;
+using V3Plugin = MineRewind.MinecraftSavesPlugin;
 
 namespace MineRewind.Tests;
 
@@ -31,10 +29,73 @@ public sealed class V3VerticalSliceTests
     }
 
     [TestMethod]
-    public async Task ConsistencyLeaseUsesCoordinatedSourceBeforeHostCapture()
+    public async Task DiscoveryCatalogMapsWorldCandidatesToMinecraftJava()
     {
         using var world = TemporaryWorld.Create();
         var fixture = Activate();
+        var catalog = (IDiscoveryDefinitionCatalog)fixture.Plugin;
+
+        var result = await fixture.Plugin.DiscoverAsync(
+            new DiscoveryRequest([world.Root]),
+            fixture.Invocation);
+
+        var definition = catalog.Definitions.Single(value => value.DefinitionId == V3Plugin.MinecraftDefinitionIdentity);
+        Assert.AreEqual(V3Plugin.MinecraftDefinitionIdentity, definition.DefinitionId);
+        Assert.AreEqual("Minecraft: Java Edition", definition.DisplayName);
+        Assert.AreEqual(V3Plugin.MinecraftDefinitionIdentity, catalog.ResolveDefinitionId(result.Candidates.Single()));
+        Assert.AreNotEqual(V3Plugin.MinecraftDefinitionIdentity, result.Candidates.Single().CandidateId);
+    }
+
+    [TestMethod]
+    public async Task DiscoveryGroupsMultipleWorldsIntoOneStableInstanceCandidate()
+    {
+        using var world = TemporaryWorld.Create();
+        var secondWorld = Path.Combine(world.Root, ".minecraft", "saves", "World 2");
+        Directory.CreateDirectory(secondWorld);
+        File.WriteAllText(Path.Combine(secondWorld, "level.dat"), "fixture");
+        var fixture = Activate();
+
+        var first = await fixture.Plugin.DiscoverAsync(
+            new DiscoveryRequest([world.Root]),
+            fixture.Invocation);
+        var second = await fixture.Plugin.DiscoverAsync(
+            new DiscoveryRequest([world.Root + Path.DirectorySeparatorChar]),
+            fixture.Invocation);
+
+        Assert.HasCount(1, first.Candidates);
+        CollectionAssert.AreEquivalent(
+            first.Candidates.Select(candidate => candidate.CandidateId).ToArray(),
+            second.Candidates.Select(candidate => candidate.CandidateId).ToArray());
+        var draft = first.Candidates.Single().ConfigDrafts.Single();
+        Assert.HasCount(2, draft.Folders);
+        CollectionAssert.AreEquivalent(
+            new[] { world.WorldPath, Path.GetFullPath(secondWorld) },
+            draft.Folders.Select(folder => folder.Path).ToArray());
+    }
+
+    [TestMethod]
+    public async Task ConsistencyLeaseUsesCoordinatedSourceBeforeHostCapture()
+    {
+        using var world = TemporaryWorld.Create();
+        using var sessionLock = world.AcquireSessionLock();
+        var fixture = Activate();
+        fixture.Services.KnotLink.OnSendAsync = async (eventName, _, _) =>
+        {
+            if (eventName == "handshake")
+            {
+                await fixture.Plugin.ExecuteAsync(
+                    "HANDSHAKE_RESPONSE",
+                    new Dictionary<string, string> { ["mod_version"] = "3.0.0" },
+                    fixture.Invocation);
+            }
+            else if (eventName == "pre_hot_backup")
+            {
+                await fixture.Plugin.ExecuteAsync(
+                    "WORLD_SAVED",
+                    new Dictionary<string, string>(),
+                    fixture.Invocation);
+            }
+        };
         var (config, folder) = Snapshots(world.WorldPath);
 
         var lease = await fixture.Plugin.AcquireAsync(
@@ -43,26 +104,107 @@ public sealed class V3VerticalSliceTests
 
         var snapshotPath = lease.SourcePath;
         Assert.AreNotEqual(world.WorldPath, snapshotPath);
+        Assert.IsTrue(lease.IsStableSourceView);
         Assert.IsTrue(File.Exists(Path.Combine(snapshotPath, "level.dat")));
-        Assert.AreEqual("minebackup.save", fixture.Services.KnotLink.Events.Single().Name);
+        CollectionAssert.AreEqual(
+            new[] { "handshake", "handshake_ack", "pre_hot_backup" },
+            fixture.Services.KnotLink.Events.Select(value => value.Name).ToArray());
         Assert.IsEmpty(lease.Diagnostics);
         await lease.DisposeAsync();
         Assert.IsFalse(Directory.Exists(snapshotPath));
     }
 
     [TestMethod]
+    [DataRow(true)]
+    [DataRow(false)]
+    public async Task MergeCoordinatesOnlyAffectedWorlds(bool includeActiveWorlds)
+    {
+        using var first = TemporaryWorld.Create();
+        using var second = TemporaryWorld.Create();
+        using var inactive = TemporaryWorld.Create();
+        using var firstLock = first.AcquireSessionLock();
+        using var secondLock = second.AcquireSessionLock();
+        var fixture = Activate();
+        var (config, firstFolder) = Snapshots(first.WorldPath);
+        var (_, secondFolder) = Snapshots(second.WorldPath);
+        var (_, inactiveFolder) = Snapshots(inactive.WorldPath);
+        var calls = 0;
+        var result = await fixture.Plugin.CoordinateAsync(new RestoreCoordinatorRequest(config,
+            includeActiveWorlds ? [firstFolder, secondFolder] : [inactiveFolder], "merge", Guid.NewGuid(),
+            WorkspaceOperationKind.Merge, _ => { calls++; return ValueTask.FromResult(OperationOutcome.Success); }), fixture.Invocation);
+        Assert.AreEqual(includeActiveWorlds ? OperationOutcome.Blocked : OperationOutcome.Success, result.Outcome);
+        Assert.AreEqual(includeActiveWorlds ? 0 : 1, calls);
+        Assert.IsFalse(fixture.Services.KnotLink.Events.Any(e => e.Name is "pre_hot_restore" or "rejoin_world"));
+        Assert.IsEmpty(fixture.Services.Backups.Requests);
+    }
+
+    [TestMethod]
+    public async Task IncompatibleCompanionFallsBackWithWarningForPreferredBackupConsistency()
+    {
+        using var world = TemporaryWorld.Create();
+        using var sessionLock = world.AcquireSessionLock();
+        var fixture = Activate();
+        fixture.Services.KnotLink.OnSendAsync = async (eventName, _, _) =>
+        {
+            if (eventName != "handshake") return;
+            await fixture.Plugin.ExecuteAsync(
+                "HANDSHAKE_RESPONSE",
+                new Dictionary<string, string> { ["mod_version"] = "2.9.9" },
+                fixture.Invocation);
+        };
+        var (config, folder) = Snapshots(world.WorldPath);
+
+        await using var lease = await fixture.Plugin.AcquireAsync(
+            new BackupConsistencyRequest(config, folder, ConsistencyIntent.Prefer),
+            fixture.Invocation);
+
+        Assert.IsTrue(lease.Diagnostics.Any(value =>
+            value.Code == "minerewind.consistency_handshake_unavailable"));
+        CollectionAssert.AreEqual(
+            new[] { "handshake", "handshake_ack" },
+            fixture.Services.KnotLink.Events.Select(value => value.Name).ToArray());
+    }
+
+    [TestMethod]
     public async Task RestoreCoordinatorRunsContinuationOnceAndRejoinsWithoutOwningHostSafetyBackup()
     {
         using var world = TemporaryWorld.Create();
+        using var sessionLock = world.AcquireSessionLock();
         var fixture = Activate();
+        fixture.Services.KnotLink.OnSendAsync = async (eventName, _, _) =>
+        {
+            if (eventName == "handshake")
+            {
+                await fixture.Plugin.ExecuteAsync(
+                    "HANDSHAKE_RESPONSE",
+                    new Dictionary<string, string> { ["mod_version"] = "3.0.0" },
+                    fixture.Invocation);
+            }
+            else if (eventName == "pre_hot_restore")
+            {
+                sessionLock.Dispose();
+                await fixture.Plugin.ExecuteAsync(
+                    "WORLD_SAVE_AND_EXIT_COMPLETE",
+                    new Dictionary<string, string>(),
+                    fixture.Invocation);
+            }
+            else if (eventName == "rejoin_world")
+            {
+                await fixture.Plugin.ExecuteAsync(
+                    "REJOIN_RESULT",
+                    new Dictionary<string, string> { ["result"] = "success" },
+                    fixture.Invocation);
+            }
+        };
         var (config, folder) = Snapshots(world.WorldPath);
         var mutationCalls = 0;
 
         var result = await fixture.Plugin.CoordinateAsync(
             new RestoreCoordinatorRequest(
                 config,
-                folder,
+                [folder],
                 "history",
+                Guid.NewGuid(), WorkspaceOperationKind.Restore,
                 _ =>
                 {
                     mutationCalls++;
@@ -74,34 +216,123 @@ public sealed class V3VerticalSliceTests
         Assert.AreEqual(1, mutationCalls);
         Assert.IsEmpty(fixture.Services.Backups.Requests);
         CollectionAssert.AreEqual(
-            new[] { "minebackup.save-and-exit", "minebackup.rejoin" },
+            new[]
+            {
+                "handshake",
+                "handshake_ack",
+                "pre_hot_restore",
+                "restore_finished",
+                "rejoin_world",
+                "hot_restore_complete"
+            },
             fixture.Services.KnotLink.Events.Select(value => value.Name).ToArray());
+        var restoreFinished = fixture.Services.KnotLink.Events.Single(value => value.Name == "restore_finished");
+        var rejoinWorld = fixture.Services.KnotLink.Events.Single(value => value.Name == "rejoin_world");
+        var hotRestoreComplete = fixture.Services.KnotLink.Events.Single(value => value.Name == "hot_restore_complete");
+        Assert.AreEqual("success", restoreFinished.Arguments["status"]);
+        Assert.IsGreaterThanOrEqualTo(
+            TimeSpan.FromMilliseconds(2_800),
+            rejoinWorld.SentAt - restoreFinished.SentAt,
+            "rejoin_world 必须等待模组完成退出世界后的状态切换，不能紧跟 restore_finished 发送。");
+        Assert.AreEqual("full_success", hotRestoreComplete.Arguments["status"]);
     }
 
     [TestMethod]
-    public async Task FailedMutationStillRejoins()
+    [DataRow(OperationOutcome.Failed, true, WorkspaceOperationKind.Restore)]
+    [DataRow(OperationOutcome.Success, true, WorkspaceOperationKind.Merge)]
+    [DataRow(OperationOutcome.RecoveryRequired, false, WorkspaceOperationKind.Merge)]
+    [DataRow(OperationOutcome.CommittedRecoveryRequired, false, WorkspaceOperationKind.Merge)]
+    [DataRow(OperationOutcome.RecoveryRequired, false, WorkspaceOperationKind.Restore)]
+    [DataRow(OperationOutcome.CommittedRecoveryRequired, false, WorkspaceOperationKind.Restore)]
+    public async Task RecoveryStateControlsRejoinForSecondAffectedWorld(OperationOutcome mutationOutcome, bool shouldRejoin, WorkspaceOperationKind operation)
     {
         using var world = TemporaryWorld.Create();
+        using var sessionLock = world.AcquireSessionLock();
         var services = new FakeHostServices();
         var fixture = Activate(services);
+        fixture.Services.KnotLink.OnSendAsync = async (eventName, _, _) =>
+        {
+            if (eventName == "handshake")
+            {
+                await fixture.Plugin.ExecuteAsync(
+                    "HANDSHAKE_RESPONSE",
+                    new Dictionary<string, string> { ["mod_version"] = "3.0.0" },
+                    fixture.Invocation);
+            }
+            else if (eventName == "pre_hot_restore")
+            {
+                sessionLock.Dispose();
+                await fixture.Plugin.ExecuteAsync(
+                    "WORLD_SAVE_AND_EXIT_COMPLETE",
+                    new Dictionary<string, string>(),
+                    fixture.Invocation);
+            }
+            else if (eventName == "rejoin_world")
+            {
+                await fixture.Plugin.ExecuteAsync(
+                    "REJOIN_RESULT",
+                    new Dictionary<string, string> { ["result"] = "success" },
+                    fixture.Invocation);
+            }
+        };
+        using var inactiveWorld = TemporaryWorld.Create();
+        var (_, inactiveFolder) = Snapshots(inactiveWorld.WorldPath);
         var (config, folder) = Snapshots(world.WorldPath);
         var mutationCalls = 0;
 
         var result = await fixture.Plugin.CoordinateAsync(
             new RestoreCoordinatorRequest(
                 config,
-                folder,
+                [inactiveFolder, folder],
                 "history",
+                Guid.NewGuid(), operation,
                 _ =>
                 {
                     mutationCalls++;
-                    return ValueTask.FromResult(OperationOutcome.Failed);
+                    return ValueTask.FromResult(mutationOutcome);
                 }),
             fixture.Invocation);
 
-        Assert.AreEqual(OperationOutcome.Failed, result.Outcome);
+        Assert.AreEqual(mutationOutcome, result.Outcome);
         Assert.AreEqual(1, mutationCalls);
-        Assert.IsTrue(fixture.Services.KnotLink.Events.Any(value => value.Name == "minebackup.rejoin"));
+        Assert.AreEqual(shouldRejoin, fixture.Services.KnotLink.Events.Any(value => value.Name == "rejoin_world"));
+    }
+
+    [TestMethod]
+    public async Task IncompatibleCompanionBlocksActiveRestoreBeforeMutation()
+    {
+        using var world = TemporaryWorld.Create();
+        using var sessionLock = world.AcquireSessionLock();
+        var fixture = Activate();
+        fixture.Services.KnotLink.OnSendAsync = async (eventName, _, _) =>
+        {
+            if (eventName != "handshake") return;
+            await fixture.Plugin.ExecuteAsync(
+                "HANDSHAKE_RESPONSE",
+                new Dictionary<string, string> { ["mod_version"] = "2.9.9" },
+                fixture.Invocation);
+        };
+        var (config, folder) = Snapshots(world.WorldPath);
+        var mutationCalls = 0;
+
+        var result = await fixture.Plugin.CoordinateAsync(
+            new RestoreCoordinatorRequest(
+                config,
+                [folder],
+                "history",
+                Guid.NewGuid(), WorkspaceOperationKind.Restore,
+                _ =>
+                {
+                    mutationCalls++;
+                    return ValueTask.FromResult(OperationOutcome.Success);
+                }),
+            fixture.Invocation);
+
+        Assert.AreEqual(OperationOutcome.Blocked, result.Outcome);
+        Assert.AreEqual(0, mutationCalls);
+        CollectionAssert.AreEqual(
+            new[] { "handshake", "handshake_ack", "restore_cancelled" },
+            fixture.Services.KnotLink.Events.Select(value => value.Name).ToArray());
     }
 
     [TestMethod]
@@ -115,8 +346,9 @@ public sealed class V3VerticalSliceTests
         var result = await fixture.Plugin.CoordinateAsync(
             new RestoreCoordinatorRequest(
                 config,
-                folder,
+                [folder],
                 "history",
+                Guid.NewGuid(), WorkspaceOperationKind.Restore,
                 _ => ValueTask.FromResult(OperationOutcome.SuccessWithWarnings)),
             fixture.Invocation);
 
@@ -140,8 +372,9 @@ public sealed class V3VerticalSliceTests
 
         Assert.AreEqual(OperationReadiness.Ready, result.Readiness);
         Assert.Contains("region/r.0.0.mca", result.IncludePatterns);
-        Assert.Contains("dimensions/**/poi/r.-1.2.mca", result.IncludePatterns);
-        Assert.Contains("playerdata/**", result.IncludePatterns);
+        Assert.Contains("poi/r.-1.2.mca", result.IncludePatterns);
+        Assert.Contains("region/c.*.*.mcc", result.IncludePatterns);
+        Assert.Contains("playerdata", result.IncludePatterns);
     }
 
     [TestMethod]
@@ -171,39 +404,64 @@ public sealed class V3VerticalSliceTests
             new FolderMetadataRequest(config, folder),
             fixture.Invocation);
 
-        Assert.AreEqual("NBT World", result.Values["worldName"]);
-        Assert.AreEqual("Creative", result.Values["gameMode"]);
-        Assert.AreEqual("8675309", result.Values["seed"]);
-        Assert.AreEqual("True", result.Values["hasPlayerData"]);
-        Assert.AreEqual("legacy", result.Values["worldFormat"]);
+        var fields = result.Fields.ToDictionary(field => field.Key, StringComparer.Ordinal);
+        Assert.AreEqual("NBT World", fields["worldName"].Value.Default);
+        Assert.AreEqual("World name", fields["worldName"].DisplayName.Default);
+        Assert.AreEqual("世界名称", fields["worldName"].DisplayName.Translations["zh-CN"]);
+        Assert.AreEqual("Creative", fields["gameMode"].Value.Default);
+        Assert.AreEqual("创造模式", fields["gameMode"].Value.Translations["zh-CN"]);
+        Assert.AreEqual("8675309", fields["seed"].Value.Default);
+        Assert.AreEqual("Yes", fields["hasPlayerData"].Value.Default);
+        Assert.AreEqual("是", fields["hasPlayerData"].Value.Translations["zh-CN"]);
+        Assert.AreEqual("Legacy (< 26.1)", fields["worldFormat"].Value.Default);
+        Assert.AreEqual("旧版 (< 26.1)", fields["worldFormat"].Value.Translations["zh-CN"]);
+        Assert.Contains("regionFileCount", fields.Keys);
         Assert.IsEmpty(result.Diagnostics);
     }
 
     [TestMethod]
-    public async Task RestoreCoordinatorPreservesLegacyLevelDatPlayerState()
+    public async Task CaptureMetadataReadsHostStableViewInsteadOfMutatedLiveFolder()
     {
         using var world = TemporaryWorld.Create();
-        WriteLegacyLevelDat(world.WorldPath, "Current", gameType: 0, seed: 1, xpLevel: 42);
-        var fixture = Activate(preservePlayerData: true);
+        WriteLegacyLevelDat(world.WorldPath, "Captured World", gameType: 1, seed: 8675309, xpLevel: 7);
+        var capturedLevelDat = File.ReadAllBytes(Path.Combine(world.WorldPath, "level.dat"));
+        WriteLegacyLevelDat(world.WorldPath, "Live World Changed", gameType: 0, seed: 1, xpLevel: 1);
+        var fixture = Activate();
         var (config, folder) = Snapshots(world.WorldPath);
+        var source = new MemoryMetadataSourceView(new Dictionary<string, byte[]>
+        {
+            ["level.dat"] = capturedLevelDat
+        });
 
-        var result = await fixture.Plugin.CoordinateAsync(
-            new RestoreCoordinatorRequest(
-                config,
-                folder,
-                "history",
-                _ =>
-                {
-                    WriteLegacyLevelDat(world.WorldPath, "Restored", gameType: 0, seed: 1, xpLevel: 3);
-                    return ValueTask.FromResult(OperationOutcome.Success);
-                }),
+        var result = await fixture.Plugin.CaptureAsync(
+            new VersionMetadataCaptureRequest(config, folder, source),
             fixture.Invocation);
 
-        Assert.AreEqual(OperationOutcome.Success, result.Outcome);
-        var level = new NbtFile();
-        level.LoadFromFile(Path.Combine(world.WorldPath, "level.dat"));
-        var player = (NbtCompound)((NbtCompound)level.RootTag["Data"]!)["Player"]!;
-        Assert.AreEqual(42, ((NbtInt)player["XpLevel"]!).Value);
+        var metadata = result.Snapshots.Single();
+        Assert.AreEqual("minecraft.world", metadata.SchemaId);
+        Assert.AreEqual(1, metadata.SchemaVersion);
+        Assert.AreEqual("Captured World", metadata.Payload.GetProperty("levelName").GetString());
+        Assert.AreEqual(4321, metadata.Payload.GetProperty("dataVersion").GetInt32());
+        Assert.IsEmpty(result.Diagnostics);
+    }
+
+    [TestMethod]
+    public async Task CaptureMetadataFailureReturnsWarningWithoutEmptySnapshot()
+    {
+        using var world = TemporaryWorld.Create();
+        var fixture = Activate();
+        var (config, folder) = Snapshots(world.WorldPath);
+        var source = new MemoryMetadataSourceView(new Dictionary<string, byte[]>
+        {
+            ["level.dat"] = [1, 2, 3]
+        });
+
+        var result = await fixture.Plugin.CaptureAsync(
+            new VersionMetadataCaptureRequest(config, folder, source),
+            fixture.Invocation);
+
+        Assert.IsEmpty(result.Snapshots);
+        Assert.AreEqual(DiagnosticSeverity.Warning, result.Diagnostics.Single().Severity);
     }
 
     [TestMethod]
@@ -228,11 +486,32 @@ public sealed class V3VerticalSliceTests
         Assert.AreEqual(OperationOutcome.Success, backup.Outcome);
         Assert.AreEqual(OperationOutcome.Success, restore.Outcome);
         Assert.HasCount(1, fixture.Services.Backups.Requests);
+        Assert.AreEqual(string.Empty, fixture.Services.Backups.Requests.Single().Options.Comment);
         Assert.HasCount(1, fixture.Services.Restores.Requests);
     }
 
     [TestMethod]
-    public async Task DefaultHotkeyCommandsResolveLockedWorldAndLatestHistory()
+    [DataRow(OperationOutcome.Failed)]
+    [DataRow(OperationOutcome.Blocked)]
+    [DataRow(OperationOutcome.Canceled)]
+    public async Task HotBackupCommandPreservesNonSuccessHostOutcome(OperationOutcome hostOutcome)
+    {
+        var services = new FakeHostServices();
+        services.Backups.NextOutcome = hostOutcome;
+        var fixture = Activate(services);
+
+        var result = await fixture.Plugin.ExecuteAsync(
+            new PluginCommandRequest(
+                new PluginCommandId(PluginId, "hotbackup.active-world"),
+                Arguments(("configId", "config"))),
+            fixture.Invocation);
+
+        Assert.AreEqual(hostOutcome, result.Outcome);
+        Assert.AreNotEqual(OperationOutcome.NoChanges, result.Outcome);
+    }
+
+    [TestMethod]
+    public async Task DefaultHotkeyRestoreUsesSemanticQuickRestoreWithoutHistoryQuery()
     {
         using var world = TemporaryWorld.Create();
         File.WriteAllBytes(Path.Combine(world.WorldPath, "session.lock"), [0]);
@@ -244,14 +523,6 @@ public sealed class V3VerticalSliceTests
         var fixture = Activate();
         var (config, folder) = Snapshots(world.WorldPath);
         fixture.Services.Configs.QueryResults.Add(config);
-        fixture.Services.History.Items.Add(new HistoryItemSnapshot(
-            "history-latest",
-            folder.FolderId,
-            folder.Path,
-            "latest.7z",
-            DateTimeOffset.UtcNow,
-            OperationOutcome.Success));
-
         var backup = await fixture.Plugin.ExecuteAsync(
             new PluginCommandRequest(
                 new PluginCommandId(PluginId, "hotbackup.active-world"),
@@ -266,7 +537,9 @@ public sealed class V3VerticalSliceTests
         Assert.AreEqual(OperationOutcome.Success, backup.Outcome);
         Assert.AreEqual(OperationOutcome.Success, restore.Outcome);
         Assert.AreEqual(folder.FolderId, fixture.Services.Backups.Requests.Single().FolderId);
-        Assert.AreEqual("history-latest", fixture.Services.Restores.Requests.Single().HistoryId);
+        Assert.AreEqual(folder.FolderId, fixture.Services.Restores.QuickRequests.Single().FolderId);
+        Assert.HasCount(0, fixture.Services.Restores.Requests);
+        Assert.AreEqual(0, fixture.Services.History.QueryCount);
     }
 
     [TestMethod]
@@ -378,6 +651,16 @@ public sealed class V3VerticalSliceTests
         FakeHostServices Services,
         PluginInvocationContext Invocation);
 
+    private sealed class MemoryMetadataSourceView(
+        IReadOnlyDictionary<string, byte[]> files) : IVersionMetadataSourceView
+    {
+        public ValueTask<Stream> OpenReadAsync(string relativePath, CancellationToken cancellationToken)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            return ValueTask.FromResult<Stream>(new MemoryStream(files[relativePath], writable: false));
+        }
+    }
+
     private sealed class FakeActivationContext : IPluginActivationContext
     {
         public FakeActivationContext(bool preservePlayerData)
@@ -444,11 +727,21 @@ public sealed class V3VerticalSliceTests
 
     private sealed class FakeBackupRequests : IBackupRequestService
     {
-        public List<(string ConfigId, Guid? FolderId)> Requests { get; } = new();
+        public List<(string ConfigId, Guid? FolderId, BackupRequestOptions Options)> Requests { get; } = new();
+        public TaskCompletionSource<bool> Requested { get; } =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
         public OperationOutcome NextOutcome { get; set; } = OperationOutcome.Success;
         public ValueTask<OperationOutcome> RequestAsync(string configId, Guid? folderId, CancellationToken cancellationToken)
+            => RequestAsync(configId, folderId, BackupRequestOptions.Default, cancellationToken);
+
+        public ValueTask<OperationOutcome> RequestAsync(
+            string configId,
+            Guid? folderId,
+            BackupRequestOptions options,
+            CancellationToken cancellationToken)
         {
-            Requests.Add((configId, folderId));
+            Requests.Add((configId, folderId, options));
+            Requested.TrySetResult(true);
             return ValueTask.FromResult(NextOutcome);
         }
     }
@@ -456,9 +749,20 @@ public sealed class V3VerticalSliceTests
     private sealed class FakeRestoreRequests : IRestoreRequestService
     {
         public List<(string ConfigId, Guid FolderId, string HistoryId)> Requests { get; } = new();
+        public List<(string ConfigId, Guid FolderId)> QuickRequests { get; } = new();
+        public TaskCompletionSource<bool> Requested { get; } =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public ValueTask<OperationOutcome> RequestQuickAsync(string configId, Guid folderId, CancellationToken cancellationToken)
+        {
+            QuickRequests.Add((configId, folderId));
+            Requested.TrySetResult(true);
+            return ValueTask.FromResult(OperationOutcome.Success);
+        }
+
         public ValueTask<OperationOutcome> RequestAsync(string configId, Guid folderId, string historyItemId, CancellationToken cancellationToken)
         {
             Requests.Add((configId, folderId, historyItemId));
+            Requested.TrySetResult(true);
             return ValueTask.FromResult(OperationOutcome.Success);
         }
     }
@@ -466,21 +770,29 @@ public sealed class V3VerticalSliceTests
     private sealed class FakeKnotLink : IKnotLinkHostService
     {
         public bool IsAvailable { get; set; } = true;
-        public List<(string Name, IReadOnlyDictionary<string, string> Arguments)> Events { get; } = new();
-        public ValueTask SendAsync(string eventName, IReadOnlyDictionary<string, string> arguments, CancellationToken cancellationToken)
+        public Func<string, IReadOnlyDictionary<string, string>, CancellationToken, Task>? OnSendAsync { get; set; }
+        public List<(string Name, IReadOnlyDictionary<string, string> Arguments, DateTimeOffset SentAt)> Events { get; } = new();
+        public async ValueTask SendAsync(string eventName, IReadOnlyDictionary<string, string> arguments, CancellationToken cancellationToken)
         {
-            Events.Add((eventName, arguments));
-            return ValueTask.CompletedTask;
+            Events.Add((eventName, arguments, DateTimeOffset.UtcNow));
+            if (OnSendAsync is not null)
+            {
+                await OnSendAsync(eventName, arguments, cancellationToken);
+            }
         }
     }
 
     private sealed class FakeHistory : IHistoryQueryService
     {
-        public List<HistoryItemSnapshot> Items { get; } = new();
-        public ValueTask<IReadOnlyList<HistoryItemSnapshot>> QueryAsync(string configId, Guid? folderId, CancellationToken cancellationToken)
-            => ValueTask.FromResult<IReadOnlyList<HistoryItemSnapshot>>(Items
-                .Where(value => !folderId.HasValue || value.FolderId == folderId)
-                .ToArray());
+        public List<HistoryVersionSnapshot> Items { get; } = new();
+        public int QueryCount { get; private set; }
+        public ValueTask<IReadOnlyList<HistoryVersionSnapshot>> QueryAsync(string configId, Guid? folderId, CancellationToken cancellationToken)
+        {
+            QueryCount++;
+            return ValueTask.FromResult<IReadOnlyList<HistoryVersionSnapshot>>(Items
+                    .Where(value => !folderId.HasValue || value.SourceId == folderId)
+                    .ToArray());
+        }
     }
 
     private sealed class FakeNotifications : IPluginNotificationService
@@ -526,6 +838,13 @@ public sealed class V3VerticalSliceTests
             Directory.CreateDirectory(world);
             File.WriteAllText(Path.Combine(world, "level.dat"), "fixture");
             return new TemporaryWorld(root, Path.GetFullPath(world));
+        }
+
+        public FileStream AcquireSessionLock()
+        {
+            var path = Path.Combine(WorldPath, "session.lock");
+            File.WriteAllBytes(path, [0]);
+            return new FileStream(path, FileMode.Open, FileAccess.ReadWrite, FileShare.None);
         }
 
         public void Dispose()

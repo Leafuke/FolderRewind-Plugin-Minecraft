@@ -1,38 +1,119 @@
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using System.Globalization;
 using FolderRewind.Plugin.Abstractions;
+using fNbt;
 
 namespace MineRewind;
 
 public sealed partial class MinecraftSavesPlugin
 {
     private static readonly BackupScopeId SelectedRegionsScopeId = new(new OwnerId(PluginIdentity), "selected-regions");
-    private static readonly JsonElement SelectedRegionsSchema = Json("""
-        {
-          "type": "object",
-          "required": ["regions"],
-          "properties": {
-            "regions": {
-              "type": "string",
-              "description": "Semicolon-separated region coordinates, for example 0,0;-1,2"
-            }
-          },
-          "additionalProperties": false
-        }
-        """);
+    private static readonly JsonElement SelectedRegionsSchema = BuildSelectedRegionsSchema();
 
     public IReadOnlyList<BackupScopeDescriptor> Scopes { get; } =
     [
-        new(SelectedRegionsScopeId, "Selected Minecraft regions", SelectedRegionsSchema)
+        new(
+            SelectedRegionsScopeId,
+            ScopeText("Selected Minecraft regions", "选定 Minecraft 区域"),
+            SelectedRegionsSchema)
     ];
+
+    private static JsonElement BuildSelectedRegionsSchema()
+        => JsonSerializer.SerializeToElement(new Dictionary<string, object?>
+        {
+            ["type"] = "object",
+            ["description"] = ScopeText(
+                "Back up selected block-coordinate areas from explicitly selected Minecraft dimensions.",
+                "仅备份所选 Minecraft 维度中的指定方块坐标区域。"),
+            ["properties"] = new Dictionary<string, object?>
+            {
+                ["dimension.overworld"] = Field("boolean", ScopeText("Overworld", "主世界"), defaultValue: true),
+                ["dimension.nether"] = Field("boolean", ScopeText("Nether", "下界"), defaultValue: false),
+                ["dimension.end"] = Field("boolean", ScopeText("The End", "末地"), defaultValue: false),
+                ["areas"] = Field(
+                    "string",
+                    ScopeText("Block-coordinate areas", "方块坐标区域"),
+                    ScopeText(
+                        "One x1,z1,x2,z2 rectangle per line. Lines beginning with # are ignored.",
+                        "每行填写一个 x1,z1,x2,z2 矩形；以 # 开头的行会被忽略。"),
+                    format: "multiline")
+            },
+            ["additionalProperties"] = false
+        });
+
+    private static Dictionary<string, object?> Field(
+        string type,
+        string title,
+        string? description = null,
+        object? defaultValue = null,
+        string? format = null)
+    {
+        var result = new Dictionary<string, object?> { ["type"] = type, ["title"] = title };
+        if (description is not null) result["description"] = description;
+        if (defaultValue is not null) result["default"] = defaultValue;
+        if (format is not null) result["format"] = format;
+        return result;
+    }
+
+    private static string ScopeText(string english, string chinese)
+        => string.Equals(CultureInfo.CurrentUICulture.TwoLetterISOLanguageName, "zh", StringComparison.OrdinalIgnoreCase)
+            ? chinese
+            : english;
 
     IReadOnlyList<KnotLinkCommandDescriptor> IKnotLinkIntegrationCapability.Commands { get; } =
     [
-        new("minebackup.save", "Flush the active world to disk"),
-        new("minebackup.save-and-exit", "Save and leave the active world before restore"),
-        new("minebackup.rejoin", "Rejoin the world after restore")
+        CurrentSaveCommand("BACKUP", "Back up the currently active Minecraft world"),
+        CurrentSaveCommand("LIST_BACKUPS", "List backups for the currently active Minecraft world"),
+        CurrentSaveCommand("RESTORE", "Restore the currently active Minecraft world; default clean"),
+        CurrentSaveCommand("AUTO_BACKUP", "Start periodic backup bound to the currently active world"),
+        CurrentSaveCommand("STOP_AUTO_BACKUP", "Stop periodic backup for the currently active world"),
+        CurrentSaveCommand("MARK_IMPORTANT", "Mark a backup of the currently active world"),
+        new("HANDSHAKE_RESPONSE", "Report the companion mod version during a pending handshake")
+            { Arguments = [new("mod_version", "Required companion mod version; minimum 3.0.0.")] },
+        new("WORLD_SAVED", "Acknowledge that the active world was saved; requires a pending save"),
+        new("WORLD_SAVE_AND_EXIT_COMPLETE", "Acknowledge save-and-exit; requires a pending restore"),
+        new("REJOIN_RESULT", "Report the automatic world rejoin result; requires a pending rejoin")
+            { Arguments = [new("result", "failure means failed; omitted or another value means success.")] }
     ];
+
+    IReadOnlyList<KnotLinkSignalDescriptor> IKnotLinkIntegrationCapability.Signals { get; } =
+    [
+        Signal("handshake", "Request companion mod handshake", "version", "action", "world", "min_mod_version"),
+        Signal("handshake_ack", "Report handshake compatibility", "status", "mod_version"),
+        Signal("pre_hot_backup", "Request world save before backup", "config", "folder_id", "world"),
+        Signal("pre_hot_restore", "Request save-and-exit before restore", "config", "folder_id", "history_id", "world"),
+        Signal("restore_cancelled", "Restore was canceled before mutation", "config", "folder_id", "history_id", "world", "reason"),
+        Signal("restore_finished", "Host restore mutation finished", "config", "folder_id", "history_id", "world", "status"),
+        Signal("rejoin_world", "Request automatic world rejoin", "config", "folder_id", "history_id", "world"),
+        Signal("hot_restore_complete", "Final restore/rejoin result", "config", "folder_id", "history_id", "world", "status")
+    ];
+
+    private static KnotLinkSignalDescriptor Signal(string name, string description, params string[] fields)
+        => new(name, description, fields.ToDictionary(field => field, field => $"Signal {field}.", StringComparer.Ordinal));
+
+    private static KnotLinkCommandDescriptor CurrentSaveCommand(string command, string description)
+        => new(command, description)
+        {
+            FunctionName = "minerewind_" + command.ToLowerInvariant() + "_current_save",
+            IsTargetSelector = true,
+            Returns = KnotLinkCoreCommands.Find(command)!.Returns,
+            RequiredArguments = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase) { ["current_save"] = "true" }
+        };
+
+    public async ValueTask<KnotLinkTargetResolution> ResolveTargetAsync(string command,
+        IReadOnlyDictionary<string, string> arguments, PluginInvocationContext context)
+    {
+        EnsureActivated();
+        if (!KnotLinkCoreCommands.FolderCommands.Contains(command)) return new(null, []);
+        var configs = await context.HostServices.Configs.QueryAsync(MinecraftKind, context.OperationCancellation).ConfigureAwait(false);
+        var active = configs.SelectMany(config => config.Folders.Where(folder => IsSessionLockHeld(folder.Path))
+            .Select(folder => new KnotLinkTarget(config.ConfigId, folder.FolderId))).Take(2).ToArray();
+        return active.Length == 1 ? new(active[0], []) : new(null,
+            [Diagnostic(active.Length == 0 ? "minerewind.command_active_world_not_found" : "minerewind.command_multiple_active_worlds",
+                DiagnosticSeverity.Error, "KnotLinkTargetResolution")]);
+    }
 
     public ValueTask<FilePolicyResult> ResolveAsync(
         FilePolicyRequest request,
@@ -40,6 +121,8 @@ public sealed partial class MinecraftSavesPlugin
     {
         EnsureActivated();
         ValidateKind(request.Config.Kind);
+        if (ResolveWorldPath(request.Folder.Path) is null)
+            return ValueTask.FromResult(new FilePolicyResult([], [], []));
         return ValueTask.FromResult(new FilePolicyResult(
             [
                 "session.lock",
@@ -66,40 +149,33 @@ public sealed partial class MinecraftSavesPlugin
                 Array.Empty<string>(),
                 [Diagnostic("minerewind.scope_unknown", DiagnosticSeverity.Error, "BackupScope")]));
         }
-        if (!TryString(request.Parameters, "regions", out var raw)
-            && !TryString(request.Parameters, "selectedRegions", out raw))
-        {
-            return ValueTask.FromResult(new BackupScopeResult(
-                OperationReadiness.Blocked,
-                Array.Empty<string>(),
-                [Diagnostic("minerewind.scope_regions_required", DiagnosticSeverity.Error, "BackupScope")]));
-        }
-
-        var regions = ParseRegions(raw);
-        if (regions.Count == 0)
-        {
-            return ValueTask.FromResult(new BackupScopeResult(
-                OperationReadiness.Blocked,
-                Array.Empty<string>(),
-                [Diagnostic("minerewind.scope_regions_invalid", DiagnosticSeverity.Error, "BackupScope")]));
-        }
-        var patterns = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
-        {
-            "level.dat", "level.dat_old", "icon.png", "datapacks/**", "data/**", "playerdata/**", "advancements/**", "stats/**"
-        };
-        foreach (var (x, z) in regions)
-        {
-            foreach (var family in new[] { "region", "entities", "poi" })
+        var parameters = request.Parameters.ToDictionary(
+            pair => pair.Key,
+            pair => pair.Value.ValueKind switch
             {
-                patterns.Add($"{family}/r.{x}.{z}.mca");
-                patterns.Add($"DIM-1/{family}/r.{x}.{z}.mca");
-                patterns.Add($"DIM1/{family}/r.{x}.{z}.mca");
-                patterns.Add($"dimensions/**/{family}/r.{x}.{z}.mca");
-            }
+                JsonValueKind.String => pair.Value.GetString() ?? string.Empty,
+                JsonValueKind.True => "true",
+                JsonValueKind.False => "false",
+                _ => pair.Value.ToString()
+            },
+            StringComparer.OrdinalIgnoreCase);
+        var sourceRoot = Path.GetFullPath(request.Folder.Path);
+        var worldPath = ResolveWorldPath(sourceRoot);
+        if (worldPath is null) return ValueTask.FromResult(new BackupScopeResult(OperationReadiness.Ready, ["**"], []));
+        var errorCode = string.Empty;
+        if (!MinecraftRegionBackupScope.TryBuild(sourceRoot, worldPath, parameters, out var patterns, out errorCode))
+        {
+            return ValueTask.FromResult(new BackupScopeResult(
+                OperationReadiness.Blocked,
+                Array.Empty<string>(),
+                [Diagnostic(
+                    worldPath is null ? "minerewind.scope_world_missing" : $"minerewind.scope_{errorCode}",
+                    DiagnosticSeverity.Error,
+                    "BackupScope")]));
         }
         return ValueTask.FromResult(new BackupScopeResult(
             OperationReadiness.Ready,
-            patterns.OrderBy(value => value, StringComparer.Ordinal).ToArray(),
+            patterns,
             Array.Empty<PluginDiagnostic>()));
     }
 
@@ -113,36 +189,169 @@ public sealed partial class MinecraftSavesPlugin
         if (path is null)
         {
             return ValueTask.FromResult(new FolderMetadataResult(
-                new Dictionary<string, string>(),
-                [Diagnostic("minerewind.metadata_world_missing", DiagnosticSeverity.Warning, "FolderMetadata")]));
+                Array.Empty<FolderMetadataField>(),
+                Array.Empty<PluginDiagnostic>()));
         }
         var details = NbtHelper.TryGetWorldDetails(path);
         var regionCount = Directory.EnumerateFiles(path, "r.*.*.mca", SearchOption.AllDirectories).Count();
         if (details is null)
         {
             return ValueTask.FromResult(new FolderMetadataResult(
-                new Dictionary<string, string>(StringComparer.Ordinal)
-                {
-                    ["worldName"] = Path.GetFileName(path),
-                    ["regionFileCount"] = regionCount.ToString(System.Globalization.CultureInfo.InvariantCulture)
-                },
+                [
+                    CreateMetadataField("worldName", "World name", "世界名称", Path.GetFileName(path)),
+                    CreateMetadataField("regionFileCount", "Region files", "区域文件数", FormatNumber(regionCount))
+                ],
                 [Diagnostic("minerewind.metadata_level_dat_invalid", DiagnosticSeverity.Warning, "FolderMetadata")]));
         }
         return ValueTask.FromResult(new FolderMetadataResult(
-            new Dictionary<string, string>(StringComparer.Ordinal)
-            {
-                ["worldName"] = string.IsNullOrWhiteSpace(details.LevelName) ? Path.GetFileName(path) : details.LevelName,
-                ["gameMode"] = details.GameMode,
-                ["seed"] = details.Seed,
-                ["totalTime"] = details.TotalTime?.ToString(System.Globalization.CultureInfo.InvariantCulture) ?? string.Empty,
-                ["dayTime"] = details.DayTime?.ToString(System.Globalization.CultureInfo.InvariantCulture) ?? string.Empty,
-                ["lastPlayed"] = details.LastPlayed?.ToString(System.Globalization.CultureInfo.InvariantCulture) ?? string.Empty,
-                ["hasPlayerData"] = details.HasPlayerData.ToString(),
-                ["dataVersion"] = details.DataVersion?.ToString(System.Globalization.CultureInfo.InvariantCulture) ?? string.Empty,
-                ["worldFormat"] = details.IsNewFormat ? "26.1+" : "legacy",
-                ["regionFileCount"] = regionCount.ToString(System.Globalization.CultureInfo.InvariantCulture)
-            },
+            [
+                CreateMetadataField(
+                    "worldName",
+                    "World name",
+                    "世界名称",
+                    string.IsNullOrWhiteSpace(details.LevelName) ? Path.GetFileName(path) : details.LevelName),
+                CreateMetadataField("gameMode", "Game mode", "游戏模式", LocalizeGameMode(details.GameMode)),
+                CreateMetadataField("seed", "Seed", "种子", details.Seed),
+                CreateMetadataField("worldDays", "World days", "世界天数", FormatWorldDays(details.TotalTime)),
+                CreateMetadataField("worldTotalTime", "World total time", "世界总时间", FormatWorldTicks(details.TotalTime)),
+                CreateMetadataField("lastPlayed", "Last played", "最近游玩", FormatLastPlayed(details.LastPlayed)),
+                CreateMetadataField(
+                    "hasPlayerData",
+                    "Player data",
+                    "玩家数据",
+                    details.HasPlayerData ? MetadataText("Yes", "是") : MetadataText("No", "否")),
+                CreateMetadataField("dataVersion", "Data version", "数据版本", FormatNumber(details.DataVersion)),
+                CreateMetadataField(
+                    "worldFormat",
+                    "Format",
+                    "存档格式",
+                    details.IsNewFormat
+                        ? MetadataValue("Minecraft 26.1+")
+                        : MetadataText("Legacy (< 26.1)", "旧版 (< 26.1)")),
+                CreateMetadataField("regionFileCount", "Region files", "区域文件数", FormatNumber(regionCount))
+            ],
             Array.Empty<PluginDiagnostic>()));
+    }
+
+    public async ValueTask<VersionMetadataCaptureResult> CaptureAsync(
+        VersionMetadataCaptureRequest request,
+        PluginInvocationContext context)
+    {
+        EnsureActivated();
+        ValidateKind(request.Config.Kind);
+        if (ResolveWorldPath(request.Folder.Path) is null) return new([], []);
+        try
+        {
+            await using var stream = await request.Source.OpenReadAsync(
+                "level.dat",
+                context.OperationCancellation).ConfigureAwait(false);
+            var file = new NbtFile();
+            file.LoadFromStream(stream, NbtCompression.AutoDetect);
+            var data = file.RootTag["Data"] as NbtCompound
+                ?? throw new InvalidDataException("level.dat has no Data compound.");
+            var payload = JsonSerializer.SerializeToElement(new Dictionary<string, object?>
+            {
+                ["dataVersion"] = (data["DataVersion"] as NbtInt)?.Value,
+                ["levelName"] = (data["LevelName"] as NbtString)?.Value,
+                ["gameType"] = (data["GameType"] as NbtInt)?.Value,
+                ["lastPlayed"] = (data["LastPlayed"] as NbtLong)?.Value
+            });
+            return new VersionMetadataCaptureResult(
+                [new CapturedVersionMetadata("minecraft.world", 1, payload)],
+                []);
+        }
+        catch (OperationCanceledException) when (context.OperationCancellation.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            return new VersionMetadataCaptureResult(
+                [],
+                [new PluginDiagnostic(
+                    "minerewind.version_metadata_read_failed",
+                    DiagnosticSeverity.Warning,
+                    "VersionMetadata",
+                    PluginIdentity,
+                    new Dictionary<string, string> { ["message"] = ex.Message })]);
+        }
+    }
+
+    private static FolderMetadataField CreateMetadataField(
+        string key,
+        string englishDisplayName,
+        string chineseDisplayName,
+        string value)
+        => CreateMetadataField(
+            key,
+            englishDisplayName,
+            chineseDisplayName,
+            MetadataValue(value));
+
+    private static FolderMetadataField CreateMetadataField(
+        string key,
+        string englishDisplayName,
+        string chineseDisplayName,
+        LocalizedText value)
+        => new(key, MetadataText(englishDisplayName, chineseDisplayName), value);
+
+    private static LocalizedText MetadataText(string english, string chinese)
+        => new(
+            english,
+            new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["en-US"] = english,
+                ["zh-CN"] = chinese
+            });
+
+    private static LocalizedText MetadataValue(string value)
+        => new(value ?? string.Empty, new Dictionary<string, string>());
+
+    private static LocalizedText LocalizeGameMode(string gameMode)
+        => gameMode switch
+        {
+            "Survival" => MetadataText("Survival", "生存模式"),
+            "Creative" => MetadataText("Creative", "创造模式"),
+            "Adventure" => MetadataText("Adventure", "冒险模式"),
+            "Spectator" => MetadataText("Spectator", "旁观模式"),
+            _ => MetadataValue(gameMode)
+        };
+
+    private static string FormatNumber(IFormattable? value)
+        => value?.ToString(null, CultureInfo.InvariantCulture) ?? string.Empty;
+
+    private static string FormatWorldTicks(long? totalTime)
+    {
+        if (totalTime is not long ticks) return string.Empty;
+        try
+        {
+            return TimeSpan.FromSeconds(ticks / 20.0)
+                .ToString(@"d\.hh\:mm\:ss", CultureInfo.InvariantCulture);
+        }
+        catch
+        {
+            return string.Empty;
+        }
+    }
+
+    private static string FormatWorldDays(long? totalTime)
+        => totalTime is long ticks
+            ? (ticks / 24000.0).ToString("F1", CultureInfo.InvariantCulture)
+            : string.Empty;
+
+    private static string FormatLastPlayed(long? lastPlayed)
+    {
+        if (lastPlayed is not long unixEpochMilliseconds) return string.Empty;
+        try
+        {
+            return DateTimeOffset.FromUnixTimeMilliseconds(unixEpochMilliseconds)
+                .ToLocalTime()
+                .ToString("yyyy-MM-dd HH:mm:ss", CultureInfo.InvariantCulture);
+        }
+        catch
+        {
+            return string.Empty;
+        }
     }
 
     public ValueTask<ConfigChangeProposal?> ProposeAsync(
@@ -194,39 +403,10 @@ public sealed partial class MinecraftSavesPlugin
     {
         EnsureActivated();
         var known = ((IKnotLinkIntegrationCapability)this).Commands.Any(value =>
-            string.Equals(value.Command, command, StringComparison.Ordinal));
-        if (!known || !context.HostServices.KnotLink.IsAvailable)
+            string.Equals(value.Command, command, StringComparison.OrdinalIgnoreCase));
+        if (!known)
             return ValueTask.FromResult(CommandFailure("minerewind.knotlink_command_unavailable"));
-        return ExecuteKnotLinkAsync(command, arguments, context);
-    }
-
-    private static async ValueTask<PluginCommandResult> ExecuteKnotLinkAsync(
-        string command,
-        IReadOnlyDictionary<string, string> arguments,
-        PluginInvocationContext context)
-    {
-        await context.HostServices.KnotLink.SendAsync(command, arguments, context.OperationCancellation)
-            .ConfigureAwait(false);
-        return new PluginCommandResult(
-            OperationOutcome.Success,
-            new Dictionary<string, JsonElement>(),
-            Array.Empty<PluginDiagnostic>());
-    }
-
-    private static IReadOnlyList<(int X, int Z)> ParseRegions(string value)
-    {
-        var result = new HashSet<(int X, int Z)>();
-        foreach (var token in value.Split(';', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries))
-        {
-            var coordinates = token.Split(',', StringSplitOptions.TrimEntries);
-            if (coordinates.Length == 2
-                && int.TryParse(coordinates[0], out var x)
-                && int.TryParse(coordinates[1], out var z))
-            {
-                result.Add((x, z));
-            }
-        }
-        return result.OrderBy(region => region.X).ThenBy(region => region.Z).ToArray();
+        return ExecuteInboundKnotLinkAsync(command, arguments, context);
     }
 
     private static string? NormalizePath(string path)

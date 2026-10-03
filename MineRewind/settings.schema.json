@@ -5,19 +5,46 @@
       "key": "AutoDiscoverSaves",
       "type": "boolean",
       "default": true,
-      "displayName": "Automatically discover Minecraft saves"
+      "displayName": "Automatically discover Minecraft saves",
+      "description": "Let MineRewind discover local Minecraft worlds and propose configuration drafts.",
+      "localizedDisplayName": {
+        "en-US": "Automatically discover Minecraft saves",
+        "zh-CN": "自动发现 Minecraft 存档"
+      },
+      "localizedDescription": {
+        "en-US": "Let MineRewind discover local Minecraft worlds and propose configuration drafts.",
+        "zh-CN": "允许 MineRewind 发现本机 Minecraft 世界，并生成可供审阅的配置草稿。"
+      }
     },
     {
       "key": "AutoCreateConfigs",
       "type": "boolean",
       "default": false,
-      "displayName": "Automatically create reviewed configurations"
+      "displayName": "Automatically create reviewed configurations",
+      "description": "After Host validation, atomically create configurations from reviewed discovery results.",
+      "localizedDisplayName": {
+        "en-US": "Automatically create reviewed configurations",
+        "zh-CN": "自动创建已审阅的配置"
+      },
+      "localizedDescription": {
+        "en-US": "After Host validation, atomically create configurations from reviewed discovery results.",
+        "zh-CN": "发现结果经 Host 校验后，自动以原子方式创建已审阅的配置。"
+      }
     },
     {
       "key": "PreservePlayerData",
       "type": "boolean",
       "default": false,
-      "displayName": "Preserve current player data during restore"
+      "displayName": "Preserve all players’ state during restore",
+      "description": "For Java Edition, keep selected NBT fields for all players during ordinary restore. A remote true/false overrides this default. Advancements and statistics still restore; players absent from the backup retain their full current NBT.",
+      "localizedDisplayName": {
+        "en-US": "Preserve all players’ state during restore",
+        "zh-CN": "还原时保留所有玩家状态"
+      },
+      "localizedDescription": {
+        "en-US": "For Java Edition, keep selected NBT fields for all players during ordinary restore. A remote true/false overrides this default. Advancements and statistics still restore; players absent from the backup retain their full current NBT.",
+        "zh-CN": "仅对 Java 版生效：普通还原时保留所有玩家的位置、背包、经验等选定 NBT 字段。远程 true/false 可覆盖本次设置；进度和统计仍回档，备份中不存在的玩家保留完整当前 NBT。"
+      }
     }
   ]
 }

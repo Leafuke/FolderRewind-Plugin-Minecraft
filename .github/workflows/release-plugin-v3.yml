@@ -2,24 +2,42 @@ name: Release Plugin v3
 
 on:
   workflow_dispatch:
+  pull_request:
   push:
-    tags: ["v*"]
+    branches: [master, main]
 
 permissions:
-  contents: write
-  pull-requests: write
+  contents: read
 
 jobs:
   package:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+      - name: Resolve and validate release version
+        shell: pwsh
+        run: |
+          $manifestVersion = (Get-Content MineRewind/manifest.json -Raw | ConvertFrom-Json).version
+          if ('${{ github.ref }}'.StartsWith('refs/tags/')) {
+            $tag = '${{ github.ref_name }}'
+            if (-not $tag.StartsWith('v')) { throw "Release tag must use v<SemVer>." }
+            $tagVersion = $tag.Substring(1)
+            if ($tagVersion -cne $manifestVersion) {
+              throw "Tag version '$tagVersion' does not match Manifest '$manifestVersion'."
+            }
+          }
+          "PLUGIN_VERSION=$manifestVersion" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
       - name: Restore
-        run: dotnet restore MineRewind/MineRewind.csproj
+        run: dotnet restore FolderRewind-Plugin-Minecraft.slnx -p:Platform=x64 --configfile NuGet.Config --no-http-cache
+      - name: Build
+        run: dotnet build FolderRewind-Plugin-Minecraft.slnx --no-restore -c Release -p:Platform=x64
       - name: Test
-        run: dotnet test MineRewind.Tests/MineRewind.Tests.csproj --no-restore -c Release
+        run: dotnet test MineRewind.Tests/MineRewind.Tests.csproj --no-restore --no-build -c Release -p:Platform=x64 --logger trx --results-directory artifacts/test-results
       - name: Pack .frplugin
-        run: dotnet msbuild MineRewind/MineRewind.csproj /t:PackFrPlugin /p:Configuration=Release /p:Version=${{ github.ref_name }}
+        run: dotnet msbuild MineRewind/MineRewind.csproj /t:PackFrPlugin /p:Configuration=Release /p:Platform=x64 /p:Version=${{ env.PLUGIN_VERSION }}
       - name: Reject bundled Abstractions
         shell: pwsh
         run: |
@@ -33,19 +51,9 @@ jobs:
         with:
           name: MineRewind-frplugin
           path: artifacts/MineRewind-*.frplugin*
-      - name: Publish GitHub Release artifact
-        if: startsWith(github.ref, 'refs/tags/')
-        uses: softprops/action-gh-release@v2
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v4
+        if: always()
         with:
-          files: artifacts/MineRewind-*.frplugin*
-      - name: Create Catalog update PR
-        if: startsWith(github.ref, 'refs/tags/')
-        env:
-          GH_TOKEN: ${{ secrets.CATALOG_PR_TOKEN }}
-          CATALOG_REPOSITORY: Leafuke/FolderRewind-Plugin-Catalog
-        shell: pwsh
-        run: |
-          $package = Get-ChildItem artifacts/*.frplugin | Select-Object -First 1
-          $sha = (Get-FileHash $package.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
-          $url = "https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/$($package.Name)"
-          gh workflow run update-plugin.yml --repo $env:CATALOG_REPOSITORY -f pluginId=com.folderrewind.minerewind -f version=${{ github.ref_name }} -f artifactUrl=$url -f sha256=$sha
+          name: MineRewind-test-results
+          path: artifacts/test-results

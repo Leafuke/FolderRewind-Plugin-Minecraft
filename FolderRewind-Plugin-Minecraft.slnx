@@ -2,7 +2,6 @@
   <Configurations>
     <Platform Name="x64" />
   </Configurations>
-  <Project Path="../FolderRewind.Plugin.Abstractions/FolderRewind.Plugin.Abstractions.csproj" />
   <Project Path="MineRewind.Tests/MineRewind.Tests.csproj">
     <Platform Solution="*|x64" Project="x64" />
   </Project>
