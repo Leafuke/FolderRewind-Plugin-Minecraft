@@ -37,7 +37,7 @@ jobs:
       - name: Test
         run: dotnet test MineRewind.Tests/MineRewind.Tests.csproj --no-restore --no-build -c Release -p:Platform=x64 --logger trx --results-directory artifacts/test-results
       - name: Pack .frplugin
-        run: dotnet msbuild MineRewind/MineRewind.csproj /t:PackFrPlugin /p:Configuration=Release /p:Platform=x64 /p:Version=${{ env.PLUGIN_VERSION }}
+        run: dotnet msbuild MineRewind/MineRewind.csproj /t:PackFrPlugin /p:Configuration=Release /p:Version=${{ env.PLUGIN_VERSION }}
       - name: Reject bundled Abstractions
         shell: pwsh
         run: |
@@ -46,6 +46,21 @@ jobs:
           $zip = [IO.Compression.ZipFile]::OpenRead($package.FullName)
           try {
             if ($zip.Entries.FullName -match '(^|/)FolderRewind.Plugin.Abstractions.dll$') { throw 'Abstractions DLL is bundled.' }
+            $reader = [IO.StreamReader]::new($zip.GetEntry('manifest.json').Open())
+            try { $manifest = $reader.ReadToEnd() | ConvertFrom-Json } finally { $reader.Dispose() }
+            if ($manifest.architectures -contains 'any') {
+              $memory = [IO.MemoryStream]::new()
+              $entry = $zip.GetEntry($manifest.entryAssembly).Open()
+              try { $entry.CopyTo($memory) } finally { $entry.Dispose() }
+              $memory.Position = 0
+              $pe = [System.Reflection.PortableExecutable.PEReader]::new($memory)
+              try {
+                if ($pe.PEHeaders.CoffHeader.Machine -ne [System.Reflection.PortableExecutable.Machine]::I386 -or
+                    ($pe.PEHeaders.CorHeader.Flags -band [System.Reflection.PortableExecutable.CorFlags]::Requires32Bit)) {
+                  throw 'A plugin declaring any architecture must have a portable entry assembly.'
+                }
+              } finally { $pe.Dispose(); $memory.Dispose() }
+            }
           } finally { $zip.Dispose() }
       - uses: actions/upload-artifact@v4
         with:
