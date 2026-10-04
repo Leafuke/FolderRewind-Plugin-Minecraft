@@ -233,7 +233,14 @@ public sealed partial class MinecraftSavesPlugin :
             var temporaryRoot = await context.HostServices.TemporaryStorage.CreateDirectoryAsync(
                 context.OperationCancellation).ConfigureAwait(false);
             snapshotPath = Path.Combine(temporaryRoot, "minerewind-snapshot-" + Guid.NewGuid().ToString("N"));
-            CopyWorldSnapshot(sourceRoot, snapshotPath, context.OperationCancellation);
+            var copy = MinecraftSnapshotCopier.Copy(sourceRoot, snapshotPath, context.OperationCancellation);
+            if (copy.SkippedLinkCount > 0)
+            {
+                diagnostics.Add(Diagnostic("minerewind.snapshot_links_skipped", DiagnosticSeverity.Warning,
+                    "BackupConsistency",
+                    ("count", copy.SkippedLinkCount.ToString(System.Globalization.CultureInfo.InvariantCulture)),
+                    ("paths", JsonSerializer.Serialize(copy.SkippedLinkPaths))));
+            }
             return new MinecraftConsistencyLease(snapshotPath, diagnostics, snapshotPath);
         }
         catch (Exception ex) when (request.Intent == ConsistencyIntent.Prefer)
@@ -660,37 +667,6 @@ public sealed partial class MinecraftSavesPlugin :
     {
         if (!_activated) throw new InvalidOperationException("MineRewind is not active.");
     }
-
-    private static void CopyWorldSnapshot(string source, string target, CancellationToken cancellationToken)
-    {
-        Directory.CreateDirectory(target);
-        foreach (var directory in Directory.EnumerateDirectories(source, "*", SearchOption.AllDirectories))
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-            if ((File.GetAttributes(directory) & FileAttributes.ReparsePoint) != 0) continue;
-            var relative = Path.GetRelativePath(source, directory).Replace('\\', '/');
-            if (IsDerivedCache(relative)) continue;
-            Directory.CreateDirectory(Path.Combine(target, relative));
-        }
-        foreach (var file in Directory.EnumerateFiles(source, "*", SearchOption.AllDirectories))
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-            if ((File.GetAttributes(file) & FileAttributes.ReparsePoint) != 0) continue;
-            var relative = Path.GetRelativePath(source, file).Replace('\\', '/');
-            if (string.Equals(Path.GetFileName(relative), "session.lock", StringComparison.OrdinalIgnoreCase)
-                || IsDerivedCache(relative)) continue;
-            var destination = Path.Combine(target, relative);
-            Directory.CreateDirectory(Path.GetDirectoryName(destination)!);
-            File.Copy(file, destination, overwrite: true);
-        }
-    }
-
-    private static bool IsDerivedCache(string relativePath)
-        => relativePath.StartsWith("voxy/", StringComparison.OrdinalIgnoreCase)
-           || relativePath.Contains("/voxy/", StringComparison.OrdinalIgnoreCase)
-           || relativePath.EndsWith("DistantHorizons.sqlite", StringComparison.OrdinalIgnoreCase)
-           || relativePath.EndsWith("DistantHorizons.sqlite-shm", StringComparison.OrdinalIgnoreCase)
-           || relativePath.EndsWith("DistantHorizons.sqlite-wal", StringComparison.OrdinalIgnoreCase);
 
     private sealed class MinecraftConsistencyLease(
         string sourcePath,
