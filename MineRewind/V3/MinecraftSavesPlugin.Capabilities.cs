@@ -69,6 +69,7 @@ public sealed partial class MinecraftSavesPlugin
         CurrentSaveCommand("RESTORE", "Restore the currently active Minecraft world; default clean"),
         CurrentSaveCommand("AUTO_BACKUP", "Start periodic backup bound to the currently active world"),
         CurrentSaveCommand("STOP_AUTO_BACKUP", "Stop periodic backup for the currently active world"),
+        CurrentSaveCommand("GET_IMPORTANCE", "Query a backup protection flag for the current world"),
         CurrentSaveCommand("MARK_IMPORTANT", "Mark a backup of the currently active world"),
         new("HANDSHAKE_RESPONSE", "Report the companion mod version during a pending handshake")
             { Arguments = [new("mod_version", "Required companion mod version; minimum 3.0.0.")] },
@@ -98,7 +99,7 @@ public sealed partial class MinecraftSavesPlugin
         {
             FunctionName = "minerewind_" + command.ToLowerInvariant() + "_current_save",
             IsTargetSelector = true,
-            Returns = KnotLinkCoreCommands.Find(command)!.Returns,
+            Returns = command == "GET_IMPORTANCE" ? ["file", "important"] : KnotLinkCoreCommands.Find(command)!.Returns,
             RequiredArguments = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase) { ["current_save"] = "true" }
         };
 
