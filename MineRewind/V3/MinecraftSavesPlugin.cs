@@ -159,11 +159,12 @@ public sealed partial class MinecraftSavesPlugin :
     {
         EnsureActivated();
         ValidateKind(request.Config.Kind);
-        var sourcePath = ResolveWorldPath(request.Folder.Path);
+        var sourceRoot = Path.GetFullPath(request.Folder.Path);
+        var worldPath = ResolveWorldPath(sourceRoot);
         // Ordinary folders in a Minecraft configuration do not require world coordination.
-        if (sourcePath is null) return new MinecraftConsistencyLease(request.Folder.Path, [], null);
+        if (worldPath is null) return new MinecraftConsistencyLease(sourceRoot, [], null);
         var diagnostics = new List<PluginDiagnostic>();
-        var worldIsActive = IsSessionLockHeld(sourcePath);
+        var worldIsActive = IsSessionLockHeld(worldPath);
 
         if (worldIsActive && context.HostServices.KnotLink.IsAvailable)
         {
@@ -171,7 +172,7 @@ public sealed partial class MinecraftSavesPlugin :
             {
                 var compatible = await PerformModHandshakeAsync(
                     "backup",
-                    Path.GetFileName(sourcePath),
+                    Path.GetFileName(worldPath),
                     context).ConfigureAwait(false);
                 if (!compatible)
                 {
@@ -186,7 +187,7 @@ public sealed partial class MinecraftSavesPlugin :
                 }
                 else
                 {
-                    var saved = await RequestWorldSaveForBackupAsync(request, sourcePath, context)
+                    var saved = await RequestWorldSaveForBackupAsync(request, worldPath, context)
                         .ConfigureAwait(false);
                     if (!saved)
                     {
@@ -232,7 +233,7 @@ public sealed partial class MinecraftSavesPlugin :
             var temporaryRoot = await context.HostServices.TemporaryStorage.CreateDirectoryAsync(
                 context.OperationCancellation).ConfigureAwait(false);
             snapshotPath = Path.Combine(temporaryRoot, "minerewind-snapshot-" + Guid.NewGuid().ToString("N"));
-            CopyWorldSnapshot(sourcePath, snapshotPath, context.OperationCancellation);
+            CopyWorldSnapshot(sourceRoot, snapshotPath, context.OperationCancellation);
             return new MinecraftConsistencyLease(snapshotPath, diagnostics, snapshotPath);
         }
         catch (Exception ex) when (request.Intent == ConsistencyIntent.Prefer)
@@ -246,7 +247,7 @@ public sealed partial class MinecraftSavesPlugin :
                 DiagnosticSeverity.Warning,
                 "BackupConsistency",
                 ("message", ex.Message)));
-            return new MinecraftConsistencyLease(sourcePath, diagnostics, temporaryPath: null);
+            return new MinecraftConsistencyLease(sourceRoot, diagnostics, temporaryPath: null);
         }
         catch
         {

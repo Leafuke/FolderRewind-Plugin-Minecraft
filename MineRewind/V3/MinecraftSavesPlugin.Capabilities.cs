@@ -240,11 +240,14 @@ public sealed partial class MinecraftSavesPlugin
     {
         EnsureActivated();
         ValidateKind(request.Config.Kind);
-        if (ResolveWorldPath(request.Folder.Path) is null) return new([], []);
+        var worldPath = ResolveWorldPath(request.Folder.Path);
+        if (worldPath is null) return new([], []);
         try
         {
+            var levelPath = Path.GetRelativePath(Path.GetFullPath(request.Folder.Path),
+                Path.Combine(worldPath, "level.dat")).Replace('\\', '/');
             await using var stream = await request.Source.OpenReadAsync(
-                "level.dat",
+                levelPath,
                 context.OperationCancellation).ConfigureAwait(false);
             var file = new NbtFile();
             file.LoadFromStream(stream, NbtCompression.AutoDetect);

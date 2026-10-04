@@ -6,7 +6,7 @@ using V3Plugin = MineRewind.MinecraftSavesPlugin;
 namespace MineRewind.Tests;
 
 [TestClass]
-public sealed class V3VerticalSliceTests
+public sealed partial class V3VerticalSliceTests
 {
     private static readonly PluginId PluginId = new(V3Plugin.PluginIdentity);
     private static readonly ConfigKindRef Kind = new(new OwnerId(V3Plugin.PluginIdentity), V3Plugin.MinecraftKindIdentity);
@@ -697,7 +697,7 @@ public sealed class V3VerticalSliceTests
         public IPluginNotificationService Notifications { get; } = new FakeNotifications();
         IKnotLinkHostService IPluginHostServices.KnotLink => KnotLink;
         public IPluginDataStore DataStore { get; } = new FakeDataStore();
-        public IPluginTemporaryStorage TemporaryStorage { get; } = new FakeTemporaryStorage();
+        public IPluginTemporaryStorage TemporaryStorage { get; init; } = new FakeTemporaryStorage();
         public IPluginLogger Logger { get; } = new FakeLogger();
     }
 
