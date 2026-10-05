@@ -5,6 +5,7 @@
   <Project Path="MineRewind.Tests/MineRewind.Tests.csproj">
     <Platform Solution="*|x64" Project="x64" />
   </Project>
+  <Project Path="MineRewind.World/MineRewind.World.csproj" />
   <Project Path="MineRewind/MineRewind.csproj">
     <Platform Solution="*|x64" Project="x64" />
   </Project>

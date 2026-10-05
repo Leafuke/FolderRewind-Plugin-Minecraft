@@ -10,6 +10,7 @@
     <Version>1.9.5</Version>
   </PropertyGroup>
   <ItemGroup>
+    <ProjectReference Include="..\MineRewind.World\MineRewind.World.csproj" />
     <PackageReference Include="FolderRewind.Plugin.Abstractions" Version="3.6.0">
       <Private>false</Private>
     </PackageReference>
