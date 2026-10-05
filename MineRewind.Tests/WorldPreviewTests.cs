@@ -48,7 +48,7 @@ public sealed partial class V3VerticalSliceTests
         Assert.AreEqual(BlockColors.For("minecraft:water"), BinaryPrimitives.ReadUInt32LittleEndian(tile.BgraPremultiplied.Span));
         // Far view works even when record bytes are corrupt: it only needs the location table.
         var damaged = File.ReadAllBytes(path); damaged[8196] = 4; File.WriteAllBytes(path, damaged);
-        var far = await fixture.Plugin.RenderAsync(new(refreshed, "minecraft:overworld", 0, 0, 2, 7), fixture.Invocation);
+        var far = await fixture.Plugin.RenderAsync(new(refreshed, "minecraft:overworld", 0, 0, 16, 7), fixture.Invocation);
         Assert.AreEqual(0xFF567B68u, BinaryPrimitives.ReadUInt32LittleEndian(far.BgraPremultiplied.Span));
         Assert.HasCount(0, far.Diagnostics);
     }

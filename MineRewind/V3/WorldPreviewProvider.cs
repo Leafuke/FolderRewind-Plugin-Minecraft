@@ -46,21 +46,33 @@ internal sealed class WorldPreviewSession
         var height = Math.Clamp(request.MaximumHeight ?? 2047, -2048, 2047);
         var pixels = new byte[256 * 256 * 4];
         var states = new HashSet<ChunkReadState>();
-        if (request.UnitsPerPixel == 1)
+        if (request.UnitsPerPixel < 16)
         {
             var local = new Dictionary<ChunkKey, ChunkSurface>();
+            var step = (int)request.UnitsPerPixel;
+            SurfaceColumn? Column(int bx, int bz)
+            {
+                var key = Coordinates.ChunkAt(bx, bz);
+                if (!local.TryGetValue(key, out var surface))
+                    local[key] = surface = Surface(world, dimension, request.Source.Generation, key, height, token);
+                return surface.Columns.Count == 256 ? surface.Columns[Coordinates.FloorMod(bz, 16) * 16 + Coordinates.FloorMod(bx, 16)] : null;
+            }
             for (var y = 0; y < 256; y++)
             {
                 token.ThrowIfCancellationRequested();
+                var bz = checked((int)Math.Floor(request.OriginY + y * step));
+                // Bound temporary references as well as the shared cache while rendering coarse tiles.
+                var row = Coordinates.FloorDiv(bz, 16);
+                foreach (var old in local.Keys.Where(k => Math.Abs(k.Z - row) > 1).ToArray()) local.Remove(old);
                 for (var x = 0; x < 256; x++)
                 {
-                    var bx = checked((int)Math.Floor(request.OriginX + x));
-                    var bz = checked((int)Math.Floor(request.OriginY + y));
-                    var key = Coordinates.ChunkAt(bx, bz);
-                    if (!local.TryGetValue(key, out var surface)) local[key] = surface = Surface(world, dimension, request.Source.Generation, key, height, token);
+                    var bx = checked((int)Math.Floor(request.OriginX + x * step));
+                    var column = Column(bx, bz);
+                    var surface = local[Coordinates.ChunkAt(bx, bz)];
                     states.Add(surface.State);
-                    var column = surface.Columns.Count == 256 ? surface.Columns[Coordinates.FloorMod(bz, 16) * 16 + Coordinates.FloorMod(bx, 16)] : null;
-                    var color = column?.Argb ?? StateColor(surface.State, x, y);
+                    var color = column is null ? StateColor(surface.State, x, y)
+                        : SurfaceShading.Color(column, Column(bx - 1, bz), Column(bx + 1, bz), Column(bx, bz - 1), Column(bx, bz + 1));
+                    if (column?.MissingColor == true && ((bx + bz) & 3) == 0) color = 0xFF686868;
                     Put(pixels, x, y, color);
                 }
             }
@@ -75,17 +87,14 @@ internal sealed class WorldPreviewSession
             {
                 token.ThrowIfCancellationRequested();
                 if (pair.Key.X < minRx || pair.Key.X > maxRx || pair.Key.Z < minRz || pair.Key.Z > maxRz) continue;
-                if (request.UnitsPerPixel >= 16)
-                {
-                    Fill(pair.Key.X * 512d, pair.Key.Z * 512d, 512, 0xFF567B68);
-                    continue; // Region inventory is enough at this scale, no header reads.
-                }
                 try
                 {
                     var header = AnvilReader.ReadIndex(world.SourceRoot, pair.Value);
                     for (var slot = 0; slot < 1024; slot++)
                     {
                         if (BinaryPrimitives.ReadUInt32BigEndian(header.AsSpan(slot * 4, 4)) == 0) continue;
+                        if (request.UnitsPerPixel >= 512)
+                        { Fill(pair.Key.X * 512d, pair.Key.Z * 512d, 512, 0xFF567B68); break; }
                         Fill(pair.Key.X * 512d + slot % 32 * 16, pair.Key.Z * 512d + slot / 32 * 16, 16, 0xFF567B68);
                     }
                 }
@@ -124,6 +133,8 @@ internal sealed class WorldPreviewSession
         if (surface.Columns.Count == 256 && surface.Columns[Coordinates.FloorMod(z, 16) * 16 + Coordinates.FloorMod(x, 16)] is { } column)
         {
             fields.Add(Field("surface", "Surface block", "表面方块", column.BlockName));
+            fields.Add(Field("biome", "Biome", "生物群系", column.Biome));
+            if (column.MissingColor) fields.Add(Field("color", "Map color", "地图配色", "Unknown / 缺少配色"));
             fields.Add(Field("height", "Surface Y", "表面高度", column.Height.ToString(CultureInfo.InvariantCulture)));
         }
         return new(fields.AsReadOnly(), []);
@@ -152,7 +163,7 @@ internal sealed class WorldPreviewSession
         var value = SurfaceReader.Read(key, AnvilReader.Read(world.SourceRoot, path, key, token), height, token);
         // Do not poison a browsing generation with transient failures.
         if (value.State is ChunkReadState.Changing or ChunkReadState.Unavailable) return value;
-        var size = 256L + value.Columns.Sum(c => c is null ? 8L : 64L + c.BlockName.Length * 2L);
+        var size = 256L + value.Columns.Sum(c => c is null ? 8L : 112L + c.BlockName.Length * 2L + c.Biome.Length * 2L);
         lock (_sync)
         {
             ObjectDisposedException.ThrowIf(_closed, this);

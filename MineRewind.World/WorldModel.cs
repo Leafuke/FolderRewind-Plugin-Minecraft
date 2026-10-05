@@ -24,7 +24,8 @@ public enum ChunkComponentKind { Terrain, Entities, Poi }
 public enum ChunkReadState { Present, Absent, Corrupt, UnsupportedVersion, UnsupportedCompression, Changing, Unavailable }
 public sealed record WorldDescriptor(string SourceRoot, string WorldRoot, IReadOnlyList<DimensionDescriptor> Dimensions);
 public sealed record DimensionDescriptor(string Id, string Root, IReadOnlyDictionary<RegionKey, string> Regions);
-public sealed record SurfaceColumn(string BlockName, int Height, uint Argb);
+public sealed record SurfaceColumn(string BlockName, int Height, uint Argb,
+    string Biome = "minecraft:plains", bool MissingColor = false, int? WaterBottomHeight = null, uint? WaterBottomColor = null);
 public sealed record ChunkSurface(ChunkKey Key, ChunkReadState State, int? DataVersion, IReadOnlyList<SurfaceColumn?> Columns)
 {
     public static ChunkSurface Empty(ChunkKey key, ChunkReadState state, int? version = null) => new(key, state, version, Array.Empty<SurfaceColumn?>());

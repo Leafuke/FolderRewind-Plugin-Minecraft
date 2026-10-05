@@ -35,6 +35,7 @@ public static class SurfaceReader
             var sections = root.Get<NbtList>("sections") ?? throw new InvalidDataException("Missing sections.");
             var columns = new SurfaceColumn?[256];
             var seen = new HashSet<int>();
+            var complete = new bool[256];
             foreach (var section in sections.Cast<NbtCompound>().OrderByDescending(s => unchecked((sbyte)(s.Get<NbtByte>("Y")?.Value ?? 0))))
             {
                 token.ThrowIfCancellationRequested();
@@ -46,27 +47,58 @@ public static class SurfaceReader
                 if (states is null) continue; // Lighting-only section.
                 var palette = states.Get<NbtList>("palette") ?? throw new InvalidDataException("Missing palette.");
                 if (palette.Count is < 1 or > 4096) throw new InvalidDataException("Invalid palette length.");
-                var names = palette.Cast<NbtCompound>().Select(p => p.Get<NbtString>("Name")?.Value
-                    ?? throw new InvalidDataException("Missing block name.")).ToArray();
-                var bits = Math.Max(4, (int)Math.Ceiling(Math.Log2(names.Length)));
+                var materials = palette.Cast<NbtCompound>().Select(p => BlockColors.Material(version.Value,
+                    p.Get<NbtString>("Name")?.Value ?? throw new InvalidDataException("Missing block name."), p.Get<NbtCompound>("Properties"))).ToArray();
+                var biomes = section.Get<NbtCompound>("biomes");
+                var biomePalette = biomes?.Get<NbtList>("palette")?.Cast<NbtString>().Select(b => b.Value).ToArray() ?? ["minecraft:plains"];
+                if (biomePalette.Length is < 1 or > 64) throw new InvalidDataException("Invalid biome palette.");
+                var biomeData = biomes?.Get<NbtLongArray>("data")?.Value;
+                var biomeBits = Math.Max(1, (int)Math.Ceiling(Math.Log2(biomePalette.Length)));
+                var biomePerLong = 64 / biomeBits;
+                if (biomePalette.Length > 1 && (biomeData is null || biomeData.Length != (64 + biomePerLong - 1) / biomePerLong))
+                    throw new InvalidDataException("Invalid biome array.");
+                string Biome(int x, int y, int z)
+                {
+                    var i = (y / 4) * 16 + (z / 4) * 4 + x / 4;
+                    var n = biomePalette.Length == 1 ? 0 : (int)((unchecked((ulong)biomeData![i / biomePerLong]) >> (i % biomePerLong * biomeBits)) & ((1UL << biomeBits) - 1));
+                    return n < biomePalette.Length ? biomePalette[n] : throw new InvalidDataException("Invalid biome index.");
+                }
+                var bits = Math.Max(4, (int)Math.Ceiling(Math.Log2(materials.Length)));
                 var perLong = 64 / bits;
                 var data = states.Get<NbtLongArray>("data")?.Value;
-                if (names.Length > 1 && (data is null || data.Length != (4096 + perLong - 1) / perLong))
+                if (materials.Length > 1 && (data is null || data.Length != (4096 + perLong - 1) / perLong))
                     throw new InvalidDataException("Invalid block-state array.");
                 for (var z = 0; z < 16; z++)
                 for (var x = 0; x < 16; x++)
                 {
                     var column = z * 16 + x;
-                    if (columns[column] is not null) continue;
+                    if (complete[column]) continue;
                     for (var y = Math.Min(15, maximumY - sectionY * 16); y >= 0; y--)
                     {
                         var index = y * 256 + column;
-                        var paletteIndex = names.Length == 1 ? 0 : (int)((unchecked((ulong)data![index / perLong]) >> ((index % perLong) * bits)) & ((1UL << bits) - 1));
-                        if (paletteIndex >= names.Length) throw new InvalidDataException("Invalid palette index.");
-                        var name = names[paletteIndex];
-                        if (name is "minecraft:air" or "minecraft:cave_air" or "minecraft:void_air") continue;
-                        columns[column] = new(name, sectionY * 16 + y, BlockColors.For(name));
-                        break;
+                        var paletteIndex = materials.Length == 1 ? 0 : (int)((unchecked((ulong)data![index / perLong]) >> ((index % perLong) * bits)) & ((1UL << bits) - 1));
+                        if (paletteIndex >= materials.Length) throw new InvalidDataException("Invalid palette index.");
+                        var material = materials[paletteIndex];
+                        if ((material.Flags & 1) != 0 || material.Name is "minecraft:air" or "minecraft:cave_air" or "minecraft:void_air") continue;
+                        var biome = Biome(x, y, z); var absoluteY = sectionY * 16 + y;
+                        var color = BlockColors.Tint(version.Value, material, biome);
+                        var water = (material.Flags & 8) != 0;
+                        if (columns[column] is null)
+                        {
+                            columns[column] = new(material.Name, absoluteY, color, biome, material.Missing);
+                            if (material.Waterlogged && !water)
+                            {
+                                var waterColor = BlockColors.Tint(version.Value, BlockColors.Material(version.Value, "minecraft:water", null), biome);
+                                columns[column] = columns[column]! with { Argb = waterColor, WaterBottomHeight = absoluteY - 1, WaterBottomColor = color };
+                                complete[column] = true; break;
+                            }
+                            if (!water) { complete[column] = true; break; }
+                        }
+                        else if (!water)
+                        {
+                            columns[column] = columns[column]! with { WaterBottomHeight = absoluteY, WaterBottomColor = color };
+                            complete[column] = true; break;
+                        }
                     }
                 }
             }
