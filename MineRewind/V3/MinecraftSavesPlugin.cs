@@ -8,6 +8,7 @@ namespace MineRewind;
 
 public sealed partial class MinecraftSavesPlugin :
     IFolderRewindPlugin,
+    ISpatialPreviewCapability,
     IDiscoveryCapability,
     IDiscoveryDefinitionCatalog,
     IBackupConsistencyCapability,
@@ -124,6 +125,7 @@ public sealed partial class MinecraftSavesPlugin :
 
     public ValueTask DeactivateAsync(CancellationToken cancellationToken)
     {
+        _preview.Clear();
         _activated = false;
         return ValueTask.CompletedTask;
     }
