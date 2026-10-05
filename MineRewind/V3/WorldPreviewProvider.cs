@@ -6,7 +6,7 @@ using MineRewind.World;
 namespace MineRewind;
 
 /// <summary>UI-free adapter. Cached surfaces are expendable preview data, never backup or merge authority.</summary>
-internal sealed class WorldPreviewProvider
+internal sealed class WorldPreviewSession
 {
     private const long CacheLimit = 128L * 1024 * 1024;
     private readonly object _sync = new();
@@ -14,10 +14,11 @@ internal sealed class WorldPreviewProvider
     private readonly LinkedList<CacheItem> _lru = new();
     private readonly Dictionary<Guid, (string Source, WorldDescriptor World)> _worlds = [];
     private long _bytes;
+    private bool _closed;
     private sealed record CacheKey(Guid Generation, string Dimension, ChunkKey Chunk, int Height);
     private sealed record CacheItem(CacheKey Key, ChunkSurface Value, long Bytes);
 
-    public void Clear() { lock (_sync) { _cache.Clear(); _lru.Clear(); _worlds.Clear(); _bytes = 0; } }
+    public void Clear() { lock (_sync) { _cache.Clear(); _lru.Clear(); _worlds.Clear(); _bytes = 0; _closed = true; } }
 
     public SpatialPreviewDescription Describe(SpatialPreviewSource source, CancellationToken token)
     {
@@ -131,13 +132,12 @@ internal sealed class WorldPreviewProvider
     private WorldDescriptor GetWorld(SpatialPreviewSource source, CancellationToken token)
     {
         var path = Path.GetFullPath(source.Folder.Path);
-        lock (_sync) if (_worlds.TryGetValue(source.Generation, out var cached) && cached.Source == path) return cached.World;
+        lock (_sync) { ObjectDisposedException.ThrowIf(_closed, this); if (_worlds.TryGetValue(source.Generation, out var cached) && cached.Source == path) return cached.World; }
         var root = WorldLocator.TryResolveWorldPath(path) ?? throw new IOException("Not a uniquely resolved Java world.");
         var world = WorldScanner.Scan(path, root, token);
         lock (_sync)
         {
-            // Only one page is active; retain a few generations for calls already in flight.
-            if (_worlds.Count >= 4) { _worlds.Clear(); _cache.Clear(); _lru.Clear(); _bytes = 0; }
+            ObjectDisposedException.ThrowIf(_closed, this);
             _worlds[source.Generation] = (path, world);
         }
         return world;
@@ -155,6 +155,7 @@ internal sealed class WorldPreviewProvider
         var size = 256L + value.Columns.Sum(c => c is null ? 8L : 64L + c.BlockName.Length * 2L);
         lock (_sync)
         {
+            ObjectDisposedException.ThrowIf(_closed, this);
             if (_cache.TryGetValue(cacheKey, out var existing)) return existing.Value.Value;
             var node = _lru.AddFirst(new CacheItem(cacheKey, value, size)); _cache.Add(cacheKey, node); _bytes += size;
             while (_bytes > CacheLimit && _lru.Last is { } last) { _bytes -= last.Value.Bytes; _cache.Remove(last.Value.Key); _lru.RemoveLast(); }
@@ -182,4 +183,37 @@ internal sealed class WorldPreviewProvider
         MinecraftSavesPlugin.PluginIdentity, new Dictionary<string, string> { ["en-US"] = StateText(state).Default, ["zh-CN"] = StateText(state).Translations["zh-CN"] });
     private static FolderMetadataField Field(string key, string en, string zh, string value) => new(key, Text(en, zh), Text(value, value));
     private static LocalizedText Text(string en, string zh) => new(en, new Dictionary<string, string> { ["zh-CN"] = zh });
+}
+
+/// <summary>Only Describe opens a generation; late render calls cannot recreate closed caches.</summary>
+internal sealed class WorldPreviewProvider
+{
+    private readonly object _gate = new();
+    private readonly Dictionary<Guid, WorldPreviewSession> _sessions = [];
+    public SpatialPreviewDescription Describe(SpatialPreviewSource source, CancellationToken token)
+    {
+        WorldPreviewSession session;
+        lock (_gate)
+        {
+            token.ThrowIfCancellationRequested();
+            if (!_sessions.TryGetValue(source.Generation, out session!))
+                _sessions.Add(source.Generation, session = new());
+        }
+        return session.Describe(source, token);
+    }
+    private WorldPreviewSession Get(SpatialPreviewSource source)
+    {
+        lock (_gate) return _sessions.TryGetValue(source.Generation, out var session)
+            ? session : throw new ObjectDisposedException(nameof(WorldPreviewSession));
+    }
+    public SpatialPreviewTile Render(SpatialPreviewTileRequest request, CancellationToken token) => Get(request.Source).Render(request, token);
+    public SpatialPreviewPoint Inspect(SpatialPreviewPointRequest request, CancellationToken token) => Get(request.Source).Inspect(request, token);
+    public void Close(Guid generation)
+    {
+        lock (_gate) if (_sessions.Remove(generation, out var session)) session.Clear();
+    }
+    public void Clear()
+    {
+        lock (_gate) { foreach (var session in _sessions.Values) session.Clear(); _sessions.Clear(); }
+    }
 }

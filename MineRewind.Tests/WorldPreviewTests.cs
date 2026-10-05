@@ -43,6 +43,7 @@ public sealed partial class V3VerticalSliceTests
 
         Write("minecraft:water");
         var refreshed = source with { Generation = Guid.NewGuid() };
+        await fixture.Plugin.DescribeAsync(refreshed, fixture.Invocation);
         tile = await fixture.Plugin.RenderAsync(new(refreshed, "minecraft:overworld", 0, 0, 1, 7), fixture.Invocation);
         Assert.AreEqual(BlockColors.For("minecraft:water"), BinaryPrimitives.ReadUInt32LittleEndian(tile.BgraPremultiplied.Span));
         // Far view works even when record bytes are corrupt: it only needs the location table.

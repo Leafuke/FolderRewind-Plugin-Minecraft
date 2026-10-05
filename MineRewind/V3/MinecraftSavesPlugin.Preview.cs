@@ -4,6 +4,11 @@ namespace MineRewind;
 
 public sealed partial class MinecraftSavesPlugin
 {
+    public ValueTask CloseAsync(SpatialPreviewSource source, PluginInvocationContext context)
+    {
+        _preview.Close(source.Generation);
+        return ValueTask.CompletedTask;
+    }
     private readonly WorldPreviewProvider _preview = new();
     public ValueTask<SpatialPreviewDescription> DescribeAsync(SpatialPreviewSource source, PluginInvocationContext context)
     {
