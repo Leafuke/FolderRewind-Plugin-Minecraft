@@ -32,7 +32,21 @@ internal sealed class WorldPreviewSession
             return new SpatialPreviewLayer(d.Id, name, bounds, 16, 512, new(-2048, 2047,
                 d.Id == "minecraft:the_nether" ? 120 : 2047, Text("Maximum scan Y", "最大扫描 Y")));
         }).ToArray();
-        return new(layers, Text("X", "X"), Text("Z", "Z"), []);
+        return new(layers, Text("X", "X"), Text("Z", "Z"), [])
+        { LayerLabel = Text("Dimension", "维度"), NavigationLabel = Text("Locate player", "定位玩家"), CellLabel = Text("Chunk", "区块") };
+    }
+
+    public SpatialPreviewNavigation Navigation(SpatialPreviewSource source, CancellationToken token)
+    {
+        var world = GetWorld(source, token);
+        var targets = WorldNavigation.Read(world, token);
+        var values = targets.Select(t => new SpatialPreviewTarget(t.Id,
+            t.Spawn ? Text("World", "世界") : Text("Saved players", "玩家上次保存位置"),
+            t.Spawn ? Text("World spawn", "世界出生点") : t.SinglePlayer ? Text("Singleplayer — last saved", "当前玩家 · 上次保存位置") : Text(t.Name ?? t.Id, t.Name ?? t.Id),
+            t.Dimension, t.X, t.Z)).ToArray();
+        var single = targets.FirstOrDefault(t => t.SinglePlayer && world.Dimensions.Any(d => d.Id == t.Dimension));
+        return new(values, single?.Id ?? targets.FirstOrDefault(t => t.Spawn && world.Dimensions.Any(d => d.Id == t.Dimension))?.Id)
+        { QuickTargetId = single?.Id };
     }
 
     public SpatialPreviewTile Render(SpatialPreviewTileRequest request, CancellationToken token)
@@ -217,6 +231,7 @@ internal sealed class WorldPreviewProvider
         lock (_gate) return _sessions.TryGetValue(source.Generation, out var session)
             ? session : throw new ObjectDisposedException(nameof(WorldPreviewSession));
     }
+    public SpatialPreviewNavigation Navigation(SpatialPreviewSource source, CancellationToken token) => Get(source).Navigation(source, token);
     public SpatialPreviewTile Render(SpatialPreviewTileRequest request, CancellationToken token) => Get(request.Source).Render(request, token);
     public SpatialPreviewPoint Inspect(SpatialPreviewPointRequest request, CancellationToken token) => Get(request.Source).Inspect(request, token);
     public void Close(Guid generation)

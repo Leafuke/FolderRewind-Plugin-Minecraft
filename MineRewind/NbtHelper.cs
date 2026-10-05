@@ -528,32 +528,7 @@ namespace MineRewind
         /// Minecraft 将 128 位 UUID 存储为 [I; a, b, c, d] 四个大端序 32 位整数。
         /// </summary>
         private static string? ConvertNbtUuidToString(NbtIntArray? uuidTag)
-        {
-            if (uuidTag == null || uuidTag.Value.Length != 4)
-                return null;
-
-            var ints = uuidTag.Value;
-            var bytes = new byte[16];
-            for (int i = 0; i < 4; i++)
-            {
-                bytes[i * 4] = (byte)(ints[i] >> 24);
-                bytes[i * 4 + 1] = (byte)(ints[i] >> 16);
-                bytes[i * 4 + 2] = (byte)(ints[i] >> 8);
-                bytes[i * 4 + 3] = (byte)(ints[i]);
-            }
-
-            // Guid(byte[]) 使用的是混合字节序：前 4/2/2 字节段按小端解释，后 8 字节保持原样。
-            // Minecraft NBT 中的 UUID 是标准大端序 128 位值，因此这里要先调整顺序。
-            var guidBytes = new byte[16]
-            {
-                bytes[3], bytes[2], bytes[1], bytes[0],
-                bytes[5], bytes[4],
-                bytes[7], bytes[6],
-                bytes[8], bytes[9], bytes[10], bytes[11], bytes[12], bytes[13], bytes[14], bytes[15]
-            };
-
-            return new Guid(guidBytes).ToString();
-        }
+            => MineRewind.World.WorldNavigation.DecodeUuid(uuidTag);
 
         /// <summary>
         /// 从 level.dat/Data 中读取 singleplayer_uuid（NbtIntArray，4 个整数），
