@@ -5,18 +5,47 @@ namespace MineRewind.World;
 
 public sealed record ChunkRecord(ChunkReadState State, byte[]? Nbt);
 
+/// <summary>Validated header extents, reusable only while the file stamp still agrees.</summary>
+public sealed class AnvilRegionIndex(byte[] header, long length, DateTime writeTime)
+{
+    public byte[] Header { get; } = header;
+    public long Length { get; } = length;
+    public DateTime WriteTime { get; } = writeTime;
+    public bool[] Valid { get; } = Validate(header, length);
+    private static bool[] Validate(byte[] header, long length)
+    {
+        var valid = new bool[1024];
+        var extents = new List<(long Start, long End, int Slot)>();
+        for (var slot = 0; slot < 1024; slot++)
+        {
+            var entry = BinaryPrimitives.ReadUInt32BigEndian(header.AsSpan(slot * 4, 4));
+            if (entry == 0) { valid[slot] = true; continue; }
+            var start = (long)(entry >> 8) * 4096; var end = start + (entry & 255) * 4096L;
+            valid[slot] = start >= 8192 && end > start && end <= length;
+            extents.Add((start, end, slot));
+        }
+        var ordered = extents.OrderBy(e => e.Start).ToArray();
+        for (var i = 0; i < ordered.Length; i++)
+            for (var j = i + 1; j < ordered.Length && ordered[j].Start < ordered[i].End; j++)
+                valid[ordered[i].Slot] = valid[ordered[j].Slot] = false;
+        return valid;
+    }
+}
+
 /// <summary>Read-only Anvil envelope reader. Does not normalize or write region data.</summary>
 public static class AnvilReader
 {
     public const int MaximumChunkBytes = 16 * 1024 * 1024;
     public static byte[] ReadIndex(string sourceRoot, string path)
+        => ReadRegionIndex(sourceRoot, path).Header;
+    public static AnvilRegionIndex ReadRegionIndex(string sourceRoot, string path)
     {
         using var stream = Open(sourceRoot, path);
         var header = new byte[8192]; stream.ReadExactly(header);
-        return header;
+        return new(header, stream.Length, File.GetLastWriteTimeUtc(path));
     }
 
-    public static ChunkRecord Read(string sourceRoot, string path, ChunkKey key, CancellationToken token = default)
+    public static ChunkRecord Read(string sourceRoot, string path, ChunkKey key, CancellationToken token = default, AnvilRegionIndex? cachedIndex = null)
     {
         for (var attempt = 0; attempt < 2; attempt++)
         {
@@ -25,22 +54,19 @@ public static class AnvilReader
             {
                 using var file = Open(sourceRoot, path);
                 var before = (file.Length, File.GetLastWriteTimeUtc(path));
-                var header = new byte[8192]; file.ReadExactly(header);
+                var index = cachedIndex;
+                if (index is null || index.Length != before.Length || index.WriteTime != before.Item2)
+                {
+                    var fresh = new byte[8192]; file.ReadExactly(fresh);
+                    index = new(fresh, before.Length, before.Item2);
+                }
+                var header = index.Header;
                 var location = BinaryPrimitives.ReadUInt32BigEndian(header.AsSpan(key.Slot * 4, 4));
                 if (location == 0) return new(ChunkReadState.Absent, null);
                 var offset = (long)(location >> 8) * 4096;
                 var sectors = (int)(location & 255);
-                if (offset < 8192 || sectors == 0 || offset + sectors * 4096L > file.Length)
+                if (!index.Valid[key.Slot])
                     return new(ChunkReadState.Corrupt, null);
-                for (var slot = 0; slot < 1024; slot++)
-                {
-                    if (slot == key.Slot) continue;
-                    var other = BinaryPrimitives.ReadUInt32BigEndian(header.AsSpan(slot * 4, 4));
-                    if (other == 0) continue;
-                    var start = (long)(other >> 8) * 4096;
-                    if (start < offset + sectors * 4096L && start + (other & 255) * 4096L > offset)
-                        return new(ChunkReadState.Corrupt, null);
-                }
                 file.Position = offset;
                 Span<byte> envelope = stackalloc byte[5]; file.ReadExactly(envelope);
                 var length = BinaryPrimitives.ReadInt32BigEndian(envelope);
@@ -74,13 +100,15 @@ public static class AnvilReader
                 var afterHeader = new byte[8192]; file.ReadExactly(afterHeader);
                 if (before != (file.Length, File.GetLastWriteTimeUtc(path)) || !header.AsSpan().SequenceEqual(afterHeader)
                     || (externalStamp is { } stamp && stamp != (new FileInfo(externalPath!).Length, File.GetLastWriteTimeUtc(externalPath!))))
-                    continue;
+                { cachedIndex = null; continue; }
                 return new(ChunkReadState.Present, nbt);
             }
             catch (OperationCanceledException) { throw; }
+            catch (InvalidDataException) { return new(ChunkReadState.Corrupt, null); }
+            catch (EndOfStreamException) { return new(ChunkReadState.Corrupt, null); }
             catch (FileNotFoundException) { return new(ChunkReadState.Unavailable, null); }
             catch (UnauthorizedAccessException) { return new(ChunkReadState.Unavailable, null); }
-            catch (IOException) { if (attempt == 1) return new(ChunkReadState.Corrupt, null); }
+            catch (IOException) { return new(ChunkReadState.Unavailable, null); }
         }
         return new(ChunkReadState.Changing, null);
     }

@@ -105,6 +105,18 @@ public sealed class WorldReadTests
         Assert.ThrowsExactly<IOException>(() => WorldPaths.RequireContained(_root, Path.GetDirectoryName(_root)!));
     }
 
+    [TestMethod]
+    public void InvalidCompressedPayloadAndOversizedNbtStayChunkLocal()
+    {
+        var path = WriteRegion([10, 0, 0, 0], 3, false);
+        var bytes = File.ReadAllBytes(path); bytes[8196] = 2; File.WriteAllBytes(path, bytes);
+        Assert.AreEqual(ChunkReadState.Corrupt, AnvilReader.Read(_root, path, new(-1, -1)).State);
+        var root = new NbtCompound("") { new NbtInt("DataVersion", 4786), new NbtInt("xPos", -1), new NbtInt("zPos", -1),
+            new NbtByteArray("oversized", new byte[1_048_577]) };
+        var surface = SurfaceReader.Read(new(-1, -1), new(ChunkReadState.Present, new NbtFile(root).SaveToBuffer(NbtCompression.None)), 7);
+        Assert.AreEqual(ChunkReadState.Corrupt, surface.State);
+    }
+
     private string WriteRegion(byte[] nbt, int compression, bool external)
     {
         using var content = new MemoryStream();

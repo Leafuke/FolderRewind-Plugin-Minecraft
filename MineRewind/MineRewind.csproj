@@ -7,11 +7,11 @@
     <GenerateDependencyFile>false</GenerateDependencyFile>
     <CopyLocalLockFileAssemblies>true</CopyLocalLockFileAssemblies>
     <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
-    <Version>1.9.7</Version>
+    <Version>1.9.8</Version>
   </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="..\MineRewind.World\MineRewind.World.csproj" />
-    <PackageReference Include="FolderRewind.Plugin.Abstractions" Version="3.8.0">
+    <PackageReference Include="FolderRewind.Plugin.Abstractions" Version="3.9.0">
       <Private>false</Private>
     </PackageReference>
     <PackageReference Include="fNbt" Version="1.0.0" />

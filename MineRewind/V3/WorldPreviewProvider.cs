@@ -6,19 +6,19 @@ using MineRewind.World;
 namespace MineRewind;
 
 /// <summary>UI-free adapter. Cached surfaces are expendable preview data, never backup or merge authority.</summary>
-internal sealed class WorldPreviewSession
+internal sealed partial class WorldPreviewSession
 {
-    private const long CacheLimit = 128L * 1024 * 1024;
     private readonly object _sync = new();
-    private readonly Dictionary<CacheKey, LinkedListNode<CacheItem>> _cache = [];
-    private readonly LinkedList<CacheItem> _lru = new();
+    private readonly PreviewBudgetCache _cache;
+    public WorldPreviewSession(long cacheLimit = 128L * 1024 * 1024) => _cache = new(cacheLimit);
     private readonly Dictionary<Guid, (string Source, WorldDescriptor World)> _worlds = [];
-    private long _bytes;
+    private readonly Dictionary<CacheKey, TaskCompletionSource<ChunkSurface>> _inflight = [];
     private bool _closed;
     private sealed record CacheKey(Guid Generation, string Dimension, ChunkKey Chunk, int Height);
-    private sealed record CacheItem(CacheKey Key, ChunkSurface Value, long Bytes);
-
-    public void Clear() { lock (_sync) { _cache.Clear(); _lru.Clear(); _worlds.Clear(); _bytes = 0; _closed = true; } }
+    private sealed record RawKey(CacheKey Key);
+    internal long CacheBytes { get { lock (_sync) return _cache.Bytes; } }
+    internal long DecodedChunks;
+    public void Clear() { lock (_sync) { _cache.Clear(); _worlds.Clear(); _closed = true; } }
 
     public SpatialPreviewDescription Describe(SpatialPreviewSource source, CancellationToken token)
     {
@@ -30,7 +30,8 @@ internal sealed class WorldPreviewSession
                 : new(keys.Min(k => k.X) * 512d, keys.Min(k => k.Z) * 512d, (keys.Max(k => k.X) + 1d) * 512, (keys.Max(k => k.Z) + 1d) * 512);
             var name = d.Id switch { "minecraft:overworld" => Text("Overworld", "主世界"), "minecraft:the_nether" => Text("The Nether", "下界"), "minecraft:the_end" => Text("The End", "末地"), _ => Text(d.Id, d.Id) };
             return new SpatialPreviewLayer(d.Id, name, bounds, 16, 512, new(-2048, 2047,
-                d.Id == "minecraft:the_nether" ? 120 : 2047, Text("Maximum scan Y", "最大扫描 Y")));
+                d.Id == "minecraft:the_nether" ? 120 : 2047, Text("Maximum scan Y", "扫描高度上限")))
+                { CoordinateBounds = new(-30_000_512, -30_000_512, 30_000_512, 30_000_512) };
         }).ToArray();
         return new(layers, Text("X", "X"), Text("Z", "Z"), [])
         { LayerLabel = Text("Dimension", "维度"), NavigationLabel = Text("Locate player", "定位玩家"), CellLabel = Text("Chunk", "区块") };
@@ -50,82 +51,7 @@ internal sealed class WorldPreviewSession
     }
 
     public SpatialPreviewTile Render(SpatialPreviewTileRequest request, CancellationToken token)
-    {
-        if (!double.IsFinite(request.OriginX) || !double.IsFinite(request.OriginY)
-            || Math.Abs(request.OriginX) > 31_100_000 || Math.Abs(request.OriginY) > 31_100_000
-            || request.UnitsPerPixel is < 1 or > 4096 || request.UnitsPerPixel != Math.Truncate(request.UnitsPerPixel))
-            throw new ArgumentException("Invalid world preview coordinates.");
-        var world = GetWorld(request.Source, token);
-        var dimension = world.Dimensions.Single(d => d.Id == request.LayerId);
-        var height = Math.Clamp(request.MaximumHeight ?? 2047, -2048, 2047);
-        var pixels = new byte[256 * 256 * 4];
-        var states = new HashSet<ChunkReadState>();
-        if (request.UnitsPerPixel < 16)
-        {
-            var local = new Dictionary<ChunkKey, ChunkSurface>();
-            var step = (int)request.UnitsPerPixel;
-            SurfaceColumn? Column(int bx, int bz)
-            {
-                var key = Coordinates.ChunkAt(bx, bz);
-                if (!local.TryGetValue(key, out var surface))
-                    local[key] = surface = Surface(world, dimension, request.Source.Generation, key, height, token);
-                return surface.Columns.Count == 256 ? surface.Columns[Coordinates.FloorMod(bz, 16) * 16 + Coordinates.FloorMod(bx, 16)] : null;
-            }
-            for (var y = 0; y < 256; y++)
-            {
-                token.ThrowIfCancellationRequested();
-                var bz = checked((int)Math.Floor(request.OriginY + y * step));
-                // Bound temporary references as well as the shared cache while rendering coarse tiles.
-                var row = Coordinates.FloorDiv(bz, 16);
-                foreach (var old in local.Keys.Where(k => Math.Abs(k.Z - row) > 1).ToArray()) local.Remove(old);
-                for (var x = 0; x < 256; x++)
-                {
-                    var bx = checked((int)Math.Floor(request.OriginX + x * step));
-                    var column = Column(bx, bz);
-                    var surface = local[Coordinates.ChunkAt(bx, bz)];
-                    states.Add(surface.State);
-                    var color = column is null ? StateColor(surface.State, x, y)
-                        : SurfaceShading.Color(column, Column(bx - 1, bz), Column(bx + 1, bz), Column(bx, bz - 1), Column(bx, bz + 1));
-                    if (column?.MissingColor == true && ((bx + bz) & 3) == 0) color = 0xFF686868;
-                    Put(pixels, x, y, color);
-                }
-            }
-        }
-        else
-        {
-            // Far view is an occupancy overview. Never decode every chunk to make a cold thumbnail.
-            var span = 256 * request.UnitsPerPixel;
-            var minRx = (int)Math.Floor(request.OriginX / 512); var maxRx = (int)Math.Floor((request.OriginX + span - 1) / 512);
-            var minRz = (int)Math.Floor(request.OriginY / 512); var maxRz = (int)Math.Floor((request.OriginY + span - 1) / 512);
-            foreach (var pair in dimension.Regions)
-            {
-                token.ThrowIfCancellationRequested();
-                if (pair.Key.X < minRx || pair.Key.X > maxRx || pair.Key.Z < minRz || pair.Key.Z > maxRz) continue;
-                try
-                {
-                    var header = AnvilReader.ReadIndex(world.SourceRoot, pair.Value);
-                    for (var slot = 0; slot < 1024; slot++)
-                    {
-                        if (BinaryPrimitives.ReadUInt32BigEndian(header.AsSpan(slot * 4, 4)) == 0) continue;
-                        if (request.UnitsPerPixel >= 512)
-                        { Fill(pair.Key.X * 512d, pair.Key.Z * 512d, 512, 0xFF567B68); break; }
-                        Fill(pair.Key.X * 512d + slot % 32 * 16, pair.Key.Z * 512d + slot / 32 * 16, 16, 0xFF567B68);
-                    }
-                }
-                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
-                { states.Add(ChunkReadState.Unavailable); Fill(pair.Key.X * 512d, pair.Key.Z * 512d, 512, 0xFFAA5656); }
-            }
-            void Fill(double x, double y, int size, uint color)
-            {
-                var left = Math.Clamp((int)Math.Floor((x - request.OriginX) / request.UnitsPerPixel), 0, 256);
-                var top = Math.Clamp((int)Math.Floor((y - request.OriginY) / request.UnitsPerPixel), 0, 256);
-                var right = Math.Clamp((int)Math.Ceiling((x + size - request.OriginX) / request.UnitsPerPixel), 0, 256);
-                var bottom = Math.Clamp((int)Math.Ceiling((y + size - request.OriginY) / request.UnitsPerPixel), 0, 256);
-                for (var row = top; row < bottom; row++) for (var col = left; col < right; col++) Put(pixels, col, row, color);
-            }
-        }
-        return new(256, 256, pixels, states.Where(s => s is not (ChunkReadState.Present or ChunkReadState.Absent)).Select(Diagnostic).ToArray());
-    }
+        => RenderProgressive(request, token);
 
     public SpatialPreviewPoint Inspect(SpatialPreviewPointRequest request, CancellationToken token)
     {
@@ -138,6 +64,7 @@ internal sealed class WorldPreviewSession
         var surface = Surface(world, dimension, request.Source.Generation, key, Math.Clamp(request.MaximumHeight ?? 2047, -2048, 2047), token);
         var fields = new List<FolderMetadataField>
         {
+            Field("dimension", "Dimension ID", "维度标识", dimension.Id),
             Field("block", "Block X, Z", "方块 X, Z", $"{x}, {z}"),
             Field("chunk", "Chunk", "区块", $"{key.X}, {key.Z}"),
             Field("region", "Region", "区域", $"{key.Region.X}, {key.Region.Z}"),
@@ -148,7 +75,7 @@ internal sealed class WorldPreviewSession
         {
             fields.Add(Field("surface", "Surface block", "表面方块", column.BlockName));
             fields.Add(Field("biome", "Biome", "生物群系", column.Biome));
-            if (column.MissingColor) fields.Add(Field("color", "Map color", "地图配色", "Unknown / 缺少配色"));
+            if (column.MissingColor) fields.Add(new("color", Text("Map color", "地图配色"), Text("Missing color", "缺少配色")));
             fields.Add(Field("height", "Surface Y", "表面高度", column.Height.ToString(CultureInfo.InvariantCulture)));
         }
         return new(fields.AsReadOnly(), []);
@@ -172,20 +99,47 @@ internal sealed class WorldPreviewSession
     {
         if (!dimension.Regions.TryGetValue(key.Region, out var path)) return ChunkSurface.Empty(key, ChunkReadState.Absent);
         var cacheKey = new CacheKey(generation, dimension.Id, key, height);
-        lock (_sync)
-            if (_cache.TryGetValue(cacheKey, out var hit)) { _lru.Remove(hit); _lru.AddFirst(hit); return hit.Value.Value; }
-        var value = SurfaceReader.Read(key, AnvilReader.Read(world.SourceRoot, path, key, token), height, token);
-        // Do not poison a browsing generation with transient failures.
-        if (value.State is ChunkReadState.Changing or ChunkReadState.Unavailable) return value;
-        var size = 256L + value.Columns.Sum(c => c is null ? 8L : 112L + c.BlockName.Length * 2L + c.Biome.Length * 2L);
+        TaskCompletionSource<ChunkSurface> flight;
+        bool owner;
         lock (_sync)
         {
             ObjectDisposedException.ThrowIf(_closed, this);
-            if (_cache.TryGetValue(cacheKey, out var existing)) return existing.Value.Value;
-            var node = _lru.AddFirst(new CacheItem(cacheKey, value, size)); _cache.Add(cacheKey, node); _bytes += size;
-            while (_bytes > CacheLimit && _lru.Last is { } last) { _bytes -= last.Value.Bytes; _cache.Remove(last.Value.Key); _lru.RemoveLast(); }
+            if (_cache.Get<ChunkSurface>(new RawKey(cacheKey)) is { } hit) return hit;
+            owner = !_inflight.TryGetValue(cacheKey, out flight!);
+            if (owner) _inflight[cacheKey] = flight = new(TaskCreationOptions.RunContinuationsAsynchronously);
         }
-        return value;
+        if (!owner)
+        {
+            try { return flight.Task.WaitAsync(token).GetAwaiter().GetResult(); }
+            catch (OperationCanceledException) when (!token.IsCancellationRequested)
+            { return Surface(world, dimension, generation, key, height, token); }
+        }
+        try
+        {
+            token.ThrowIfCancellationRequested();
+            Interlocked.Increment(ref DecodedChunks);
+            AnvilRegionIndex? index;
+            lock (_sync) index = _cache.Get<AnvilRegionIndex>(new HeaderKey(path));
+            var value = SurfaceReader.Read(key, AnvilReader.Read(world.SourceRoot, path, key, token, index), height, token);
+            lock (_sync)
+            {
+                ObjectDisposedException.ThrowIf(_closed, this);
+                if (value.State is not (ChunkReadState.Changing or ChunkReadState.Unavailable))
+                {
+                    var size = 256L + value.Columns.Sum(c => c is null ? 8L : 112L + c.BlockName.Length * 2L + c.Biome.Length * 2L);
+                    _cache.Put(new RawKey(cacheKey), value, size, 0);
+                }
+                _inflight.Remove(cacheKey);
+                flight.SetResult(value);
+            }
+            return value;
+        }
+        catch (Exception ex)
+        {
+            lock (_sync) _inflight.Remove(cacheKey);
+            if (ex is OperationCanceledException) flight.TrySetCanceled(); else { flight.TrySetException(ex); _ = flight.Task.Exception; }
+            throw;
+        }
     }
 
     private static void Put(byte[] pixels, int x, int y, uint color) => BinaryPrimitives.WriteUInt32LittleEndian(pixels.AsSpan((y * 256 + x) * 4, 4), color);
@@ -204,10 +158,10 @@ internal sealed class WorldPreviewSession
         ChunkReadState.Unavailable => Text("Unavailable; refresh", "暂时无法读取，请刷新"),
         _ => Text("Invalid or damaged chunk", "区块格式无效或损坏")
     };
-    private static PluginDiagnostic Diagnostic(ChunkReadState state) => new("preview." + state, DiagnosticSeverity.Warning, "SpatialPreview",
+    private static PluginDiagnostic Diagnostic(ChunkReadState state) => new("preview." + state, state == ChunkReadState.Corrupt ? DiagnosticSeverity.Error : DiagnosticSeverity.Warning, "SpatialPreview",
         MinecraftSavesPlugin.PluginIdentity, new Dictionary<string, string> { ["en-US"] = StateText(state).Default, ["zh-CN"] = StateText(state).Translations["zh-CN"] });
     private static FolderMetadataField Field(string key, string en, string zh, string value) => new(key, Text(en, zh), Text(value, value));
-    private static LocalizedText Text(string en, string zh) => new(en, new Dictionary<string, string> { ["zh-CN"] = zh });
+    private static LocalizedText Text(string en, string zh) => new(en, new Dictionary<string, string> { ["en-US"] = en, ["zh-CN"] = zh });
 }
 
 /// <summary>Only Describe opens a generation; late render calls cannot recreate closed caches.</summary>

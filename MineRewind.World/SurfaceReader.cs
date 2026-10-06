@@ -105,7 +105,7 @@ public static class SurfaceReader
             return new(key, ChunkReadState.Present, version, Array.AsReadOnly(columns));
         }
         catch (OperationCanceledException) { throw; }
-        catch (Exception ex) when (ex is IOException or NbtFormatException or InvalidCastException or ArgumentException or InvalidOperationException or IndexOutOfRangeException)
+        catch (Exception ex) when (ex is InvalidDataException or IOException or NbtFormatException or InvalidCastException or ArgumentException or InvalidOperationException or IndexOutOfRangeException)
         {
             return ChunkSurface.Empty(key, ChunkReadState.Corrupt);
         }

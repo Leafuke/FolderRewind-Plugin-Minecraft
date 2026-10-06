@@ -33,6 +33,8 @@ public sealed partial class V3VerticalSliceTests
         var description = await fixture.Plugin.DescribeAsync(source, fixture.Invocation);
         Assert.AreEqual("minecraft:overworld", description.Layers.Single().Id);
         var tile = await fixture.Plugin.RenderAsync(new(source, "minecraft:overworld", 0, 0, 1, 7), fixture.Invocation);
+        for (var attempt = 0; !tile.IsFinal && attempt < 1024; attempt++) tile = await fixture.Plugin.RenderAsync(new(source, "minecraft:overworld", 0, 0, 1, 7), fixture.Invocation);
+        Assert.IsTrue(tile.IsFinal);
         Assert.AreEqual(BlockColors.For("minecraft:stone"), BinaryPrimitives.ReadUInt32LittleEndian(tile.BgraPremultiplied.Span));
         var details = await fixture.Plugin.InspectAsync(new(source, "minecraft:overworld", 0, 0, 7), fixture.Invocation);
         Assert.AreEqual("7", details.Fields.Single(f => f.Key == "height").Value.Default);
@@ -45,11 +47,13 @@ public sealed partial class V3VerticalSliceTests
         var refreshed = source with { Generation = Guid.NewGuid() };
         await fixture.Plugin.DescribeAsync(refreshed, fixture.Invocation);
         tile = await fixture.Plugin.RenderAsync(new(refreshed, "minecraft:overworld", 0, 0, 1, 7), fixture.Invocation);
+        for (var attempt = 0; !tile.IsFinal && attempt < 1024; attempt++) tile = await fixture.Plugin.RenderAsync(new(refreshed, "minecraft:overworld", 0, 0, 1, 7), fixture.Invocation);
+        Assert.IsTrue(tile.IsFinal);
         Assert.AreEqual(BlockColors.For("minecraft:water"), BinaryPrimitives.ReadUInt32LittleEndian(tile.BgraPremultiplied.Span));
         // Far view works even when record bytes are corrupt: it only needs the location table.
         var damaged = File.ReadAllBytes(path); damaged[8196] = 4; File.WriteAllBytes(path, damaged);
         var far = await fixture.Plugin.RenderAsync(new(refreshed, "minecraft:overworld", 0, 0, 16, 7), fixture.Invocation);
-        Assert.AreEqual(0xFF567B68u, BinaryPrimitives.ReadUInt32LittleEndian(far.BgraPremultiplied.Span));
+        Assert.AreEqual(BlockColors.For("minecraft:water"), BinaryPrimitives.ReadUInt32LittleEndian(far.BgraPremultiplied.Span));
         Assert.HasCount(0, far.Diagnostics);
     }
 }
