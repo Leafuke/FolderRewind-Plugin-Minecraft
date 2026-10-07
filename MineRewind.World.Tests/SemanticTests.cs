@@ -388,6 +388,39 @@ public sealed class SemanticTests
         CheckRoundTrip(source, scratch);
     }
 
+    [TestMethod]
+    public void OversizedInventoryIsRejectedBeforeOpeningFiles()
+    {
+        var scratch = new DirectorySemanticScratch(Path.Combine(_root, "scratch"), true);
+        Assert.ThrowsExactly<IOException>(() => WorldCapture.Capture(new OversizedSource(), scratch, "source-1"));
+        Assert.IsFalse(scratch.Exists("complete.json"));
+    }
+
+    [TestMethod]
+    public void MissingExternalFanOutIsCountedAndNeverComparedAsAbsent()
+    {
+        var source = Dir("world"); Directory.CreateDirectory(Path.Combine(source, "region"));
+        var bytes = new byte[1026 * 4096];
+        for (var slot = 0; slot < 1024; slot++)
+        {
+            var offset = (slot + 2) * 4096;
+            BinaryPrimitives.WriteUInt32BigEndian(bytes.AsSpan(slot * 4), (uint)((slot + 2) << 8 | 1));
+            BinaryPrimitives.WriteInt32BigEndian(bytes.AsSpan(offset), 1); bytes[offset + 4] = 131;
+        }
+        File.WriteAllBytes(Path.Combine(source, "region", "r.0.0.mca"), bytes);
+        var scratch = Capture(source);
+        Assert.AreEqual(1024, ScratchArchive.Validate(scratch).Summary.MissingExternalFiles);
+        Assert.AreEqual(1024, WorldComparison.Compare(scratch, scratch, scratch, _ => { }).Blocked);
+        CheckRoundTrip(source, scratch);
+    }
+
+    private sealed class OversizedSource : IReadOnlyWorldSource
+    {
+        public IReadOnlyList<SourceFile> GetInventory(CancellationToken token)
+            => Enumerable.Repeat(new SourceFile("file", 0, default), SemanticPaths.MaximumInventoryEntries + 1).ToArray();
+        public Stream OpenRead(string path) => throw new AssertFailedException("Oversized inventory must fail before reads.");
+    }
+
     private sealed class CancelScratch(ISemanticScratch inner, CancellationTokenSource cancellation) : ISemanticScratch
     {
         public Stream Create(string path) { if (path.StartsWith("objects/")) cancellation.Cancel(); return inner.Create(path); }
