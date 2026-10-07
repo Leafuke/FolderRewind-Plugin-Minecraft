@@ -5,7 +5,11 @@ namespace MineRewind.World.Semantic;
 
 public enum SemanticState { Present, Absent, Corrupt, Unsupported, Changing, Unavailable }
 public enum FileEncoding { SegmentedRegion, OpaqueRegion, Raw }
-public sealed record SourceFile(string RelativePath, long Length, DateTime LastWriteUtc);
+public sealed record SourceFile(string RelativePath, long Length, DateTime LastWriteUtc)
+{
+    // Optional evidence from the owner of a stable input lease, never inferred from timestamps.
+    public string? Sha256 { get; init; }
+}
 public sealed record RegionAddress(string WorldId, string DimensionId, int X, int Z, ChunkComponentKind Component)
 {
     [JsonIgnore] public string GroupKey => JsonSerializer.Serialize(new object[] { WorldId, DimensionId, X, Z });

@@ -7,6 +7,7 @@ internal static class MinecraftSnapshotCopier
 
     internal static CopyResult Copy(string source, string target, CancellationToken cancellationToken)
     {
+        using var stage = MineRewind.World.Semantic.SemanticDiagnostics.Source.StartActivity("consistency.snapshot");
         source = Path.TrimEndingDirectorySeparator(Path.GetFullPath(source));
         target = Path.TrimEndingDirectorySeparator(Path.GetFullPath(target));
         if (IsWithin(source, target))

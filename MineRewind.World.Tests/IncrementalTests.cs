@@ -1,4 +1,5 @@
 using System.Buffers.Binary;
+using System.IO.Compression;
 using System.Security.Cryptography;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
 using MineRewind.World.Semantic;
@@ -46,6 +47,18 @@ public sealed class IncrementalTests
         Assert.AreEqual(first.Files.Single(f => f.Path == "other").Recipe, second.Files.Single(f => f.Path == "other").Recipe);
         Assert.IsLessThan(original.Length / 2, second.NewDataBytes);
         CollectionAssert.AreEqual(new[] { "region/r.0.0.mca" }, input.ReadPaths.Distinct().ToArray());
+    }
+
+    [TestMethod]
+    public void AccountingDoesNotOpenUnchangedRecipesOrPayloads()
+    {
+        var objects = new Objects();
+        var first = Capture(new(new() { ["region/r.0.0.mca"] = Region(), ["unchanged"] = [4, 5] }), objects);
+        var inherited = objects.Bytes.Keys.ToHashSet(); objects.Reads.Clear();
+        var second = Capture(new(new() { ["new"] = [7] }), objects, first);
+        Assert.IsFalse(objects.Reads.Any(inherited.Contains));
+        Assert.AreEqual(first.Files[0].Recipe, second.Files.Single(f => f.Path == first.Files[0].Path).Recipe);
+        Assert.IsGreaterThan(0L, second.ReferencedObjectBytes);
     }
 
     [TestMethod]
@@ -137,19 +150,19 @@ public sealed class IncrementalTests
     }
 
     [TestMethod]
-    public void ActualNewBytesTriggerSelfContainedCheckpointWithoutRecapture()
+    public void LargeChangeKeepsUnchangedReferencesWithoutAutomaticRepack()
     {
         var objects = new Objects();
         var first = Capture(new(new() { ["large"] = new byte[1000], ["small"] = [1] }), objects);
-        var oldIds = objects.Bytes.Keys.ToArray(); var changed = new byte[1000]; changed[0] = 7;
+        var unchanged = first.Files.Single(f => f.Path == "small"); var changed = new byte[1000]; changed[0] = 7;
         var input = new Source(new() { ["large"] = changed });
         var second = Capture(input, objects, first);
-        Assert.IsTrue(second.Checkpoint);
-        foreach (var id in oldIds) objects.Bytes.Remove(id);
+        Assert.IsFalse(second.Checkpoint);
+        Assert.AreEqual(unchanged.Recipe, second.Files.Single(f => f.Path == "small").Recipe);
         CollectionAssert.AreEqual(changed, Restore(second, "large", objects));
         CollectionAssert.AreEqual(new byte[] { 1 }, Restore(second, "small", objects));
         CollectionAssert.AreEqual(new[] { "large" }, input.ReadPaths.ToArray());
-        Assert.AreEqual(1001L, second.NewDataBytes);
+        Assert.AreEqual(1000L, second.NewDataBytes);
     }
 
     [TestMethod]
@@ -162,6 +175,28 @@ public sealed class IncrementalTests
             new Source(new() { ["unannounced"] = [1] }), null, objects, objects, "source", "boundary", [], [], [], false, default));
     }
 
+    [TestMethod]
+    public void RecompressionKeepsSemanticHashButPreservesNewCompressedBytes()
+    {
+        var objects = new Objects();
+        byte[] Compressed(CompressionLevel level)
+        {
+            var bytes = Region(); using var payload = new MemoryStream();
+            using (var zlib = new ZLibStream(payload, level, true)) zlib.Write(Nbt(7));
+            var encoded = payload.ToArray();
+            BinaryPrimitives.WriteInt32BigEndian(bytes.AsSpan(8192), encoded.Length + 1);
+            bytes[8196] = 2; encoded.CopyTo(bytes, 8197); return bytes;
+        }
+        var before = Compressed(CompressionLevel.Fastest); var after = Compressed(CompressionLevel.SmallestSize);
+        var first = Capture(new(new() { ["region/r.0.0.mca"] = before }), objects);
+        var second = Capture(new(new() { ["region/r.0.0.mca"] = after }), objects, first);
+        var one = WorldIncrementalFormat.Read<RegionEntry>(objects, first.Files[0].Index!, default).Chunks[0];
+        var two = WorldIncrementalFormat.Read<RegionEntry>(objects, second.Files[0].Index!, default).Chunks[0];
+        Assert.AreEqual(one.PayloadHash, two.PayloadHash);
+        Assert.AreNotEqual(one.PayloadStorageHash, two.PayloadStorageHash);
+        CollectionAssert.AreEqual(after, Restore(second, "region/r.0.0.mca", objects));
+    }
+
     private sealed class Source(Dictionary<string, byte[]> bytes) : IReadOnlyWorldSource
     {
         public Dictionary<string, byte[]> Bytes => bytes;
@@ -172,6 +207,7 @@ public sealed class IncrementalTests
     private sealed class Objects : IWorldObjectReader, IWorldObjectWriter
     {
         public Dictionary<Guid, byte[]> Bytes { get; } = [];
+        public List<Guid> Reads { get; } = [];
         private readonly Dictionary<Guid, HashSet<Guid>> _dependencies = [];
         private HashSet<Guid> _previous = [];
         public bool Owns(Guid id) => !_previous.Contains(id) && Bytes.ContainsKey(id);
@@ -183,7 +219,7 @@ public sealed class IncrementalTests
             => Assert.Contains(dependency, _dependencies[owner], "Missing declared object dependency.");
         public Stream Open(WorldObjectReference reference, CancellationToken token)
         {
-            token.ThrowIfCancellationRequested(); var bytes = Bytes[reference.ArtifactId];
+            token.ThrowIfCancellationRequested(); Reads.Add(reference.ArtifactId); var bytes = Bytes[reference.ArtifactId];
             Assert.AreEqual(reference.Sha256, Convert.ToHexString(SHA256.HashData(bytes)));
             return new MemoryStream(bytes, false);
         }

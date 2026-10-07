@@ -1,4 +1,5 @@
 using System.Security.Cryptography;
+using System.Buffers;
 using System.Text.Json;
 using FolderRewind.Plugin.Abstractions;
 using MineRewind.World.Semantic;
@@ -16,18 +17,18 @@ public sealed partial class MinecraftSavesPlugin
             throw new InvalidDataException("Unsupported incremental capture context.");
         var parent = await context.HostServices.TemporaryStorage.CreateDirectoryAsync(token);
         var work = Path.Combine(parent, "incremental-" + Guid.NewGuid().ToString("N"));
-        var source = new DirectorySemanticScratch(work, true);
         try
         {
-            await CopyInputAsync(request.ArtifactRead, request.Primary.Content, source, token);
-            var reader = new ArtifactObjects(request.ReadableArtifacts, request.ArtifactRead, request.Config.ConfigId, request.Folder.FolderId);
+            var inventory = await request.ArtifactRead.ListFilesAsync(request.Primary.Content, token);
+            var source = new ArtifactWorldSource(request.ArtifactRead, request.Primary.Content, inventory, token);
+            using var reader = new ArtifactObjects(request.ReadableArtifacts, request.ArtifactRead, request.Config.ConfigId, request.Folder.FolderId);
             WorldIncrementalState? baseline = null;
             if (capture.BaseRootArtifactId is { } baseRoot)
                 baseline = await LoadStateAsync(baseRoot, request.ReadableArtifacts, request.ArtifactRead, request.Folder.FolderId, token);
             if (capture.Kind == ArtifactCaptureInputKind.ChangesOnly && baseline is null)
                 throw new InvalidDataException("Incremental capture has no fixed semantic baseline.");
             using var writer = new ArtifactPacks(request.Staging, RestoreStrategyId, request.Primary.CoreCaptureMode, work + "-packs");
-            var state = WorldIncrementalFormat.Capture(new DirectoryWorldSource(source.Root), baseline, reader, writer,
+            var state = WorldIncrementalFormat.Capture(source, baseline, reader, writer,
                 request.Folder.FolderId.ToString("D"), capture.BoundaryFingerprint, capture.AddedFiles,
                 capture.ModifiedFiles, capture.DeletedFiles, capture.Checkpoint, token);
             writer.Seal();
@@ -46,6 +47,24 @@ public sealed partial class MinecraftSavesPlugin
     }
 
     private static ArtifactFormatRef IncrementalFormat => new(MineRewindOwnerId, WorldIncrementalFormat.Format);
+
+    // The Host owns this stable, bounded view for the invocation. No live-world access
+    // and no second scratch copy; the domain codec only receives declared input files.
+    private sealed class ArtifactWorldSource(IArtifactReadService read, ArtifactContentHandle content,
+        IReadOnlyList<ArtifactFileEntry> entries, CancellationToken operationToken) : IReadOnlyWorldSource
+    {
+        private readonly IReadOnlyList<SourceFile> _files = entries.Select(f =>
+            new SourceFile(SemanticPaths.Normalize(f.RelativePath), f.Length, DateTime.UnixEpoch) { Sha256 = f.Sha256 }).ToArray();
+        private readonly HashSet<string> _paths = entries.Select(f => f.RelativePath).ToHashSet(StringComparer.Ordinal);
+        public IReadOnlyList<SourceFile> GetInventory(CancellationToken token)
+        { token.ThrowIfCancellationRequested(); return _files; }
+        public Stream OpenRead(string path)
+        {
+            operationToken.ThrowIfCancellationRequested();
+            if (!_paths.Contains(path)) throw new FileNotFoundException("File is outside the Host change view.", path);
+            return read.OpenReadAsync(content, path, operationToken).AsTask().GetAwaiter().GetResult();
+        }
+    }
 
     public async ValueTask<IArtifactFileView> OpenFileViewAsync(ArtifactFileViewRequest request, PluginInvocationContext context)
     {
@@ -91,13 +110,17 @@ public sealed partial class MinecraftSavesPlugin
             var file = state.Files.Single(f => f.Path == path);
             return ValueTask.FromResult(WorldIncrementalFormat.OpenFile(file, objects, token));
         }
-        public ValueTask DisposeAsync() { _disposed = true; return ValueTask.CompletedTask; }
+        public ValueTask DisposeAsync() { _disposed = true; objects.Dispose(); return ValueTask.CompletedTask; }
     }
 
-    private sealed class ArtifactObjects : IWorldObjectReader
+    private sealed class ArtifactObjects : IWorldObjectReader, IDisposable
     {
         private readonly Dictionary<Guid, BackupArtifactSnapshot> _artifacts;
         private readonly IArtifactReadService _read;
+        private readonly object _poolLock = new();
+        private readonly Dictionary<Guid, LinkedListNode<(Guid Id, Stream Stream)>> _idle = [];
+        private readonly LinkedList<(Guid Id, Stream Stream)> _lru = new();
+        private bool _disposed;
         public ArtifactObjects(IReadOnlyList<BackupArtifactSnapshot> artifacts, IArtifactReadService read, string config, Guid source)
         {
             if (artifacts.Any(a => a.ConfigId != config || a.FolderId != source || a.Format != IncrementalFormat || a.FormatVersion != 1))
@@ -105,25 +128,64 @@ public sealed partial class MinecraftSavesPlugin
             _artifacts = artifacts.ToDictionary(a => a.ArtifactId.Value); _read = read;
         }
         public Stream Open(WorldObjectReference reference, CancellationToken token)
+            => OpenObject(reference, token, sequential: false);
+        public Stream OpenSequential(WorldObjectReference reference, CancellationToken token)
+            => OpenObject(reference, token, sequential: true);
+        private Stream OpenObject(WorldObjectReference reference, CancellationToken token, bool sequential)
         {
+            using var stage = SemanticDiagnostics.Source.StartActivity(sequential ? "object.stream.open" : "object.preverify");
+            stage?.SetTag("object.bytes", reference.Length);
             if (!_artifacts.TryGetValue(reference.ArtifactId, out var artifact) || reference.Path != "pack.bin"
                 || reference.Offset < 0 || reference.Length < 0 || reference.Length > WorldIncrementalFormat.DataPackBytes)
                 throw new InvalidDataException("Invalid object reference.");
-            var input = _read.OpenReadAsync(artifact.Content, reference.Path, token).AsTask().GetAwaiter().GetResult();
+            Stream? input = null;
+            lock (_poolLock)
+            {
+                ObjectDisposedException.ThrowIf(_disposed, this);
+                if (_idle.Remove(reference.ArtifactId, out var idle)) { input = idle.Value.Stream; _lru.Remove(idle); }
+            }
+            input ??= _read.OpenReadAsync(artifact.Content, reference.Path, token).AsTask().GetAwaiter().GetResult();
+            var buffer = ArrayPool<byte>.Shared.Rent((int)Math.Min(65536, Math.Max(1, reference.Length)));
             try
             {
                 if (!input.CanSeek || reference.Offset > input.Length || reference.Length > input.Length - reference.Offset)
                     throw new InvalidDataException("Object reference is outside its pack.");
                 input.Position = reference.Offset;
-                using var hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256); var buffer = new byte[65536];
+                if (sequential)
+                    return new VerifiedObjectStream(new ObjectSlice(input, reference.Offset, reference.Length,
+                        stream => Return(reference.ArtifactId, stream)), reference.Length, reference.Sha256, token);
+                using var hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
                 var left = reference.Length;
                 while (left > 0) { token.ThrowIfCancellationRequested(); var n = input.Read(buffer, 0, (int)Math.Min(left, buffer.Length)); if (n == 0) throw new EndOfStreamException(); hash.AppendData(buffer, 0, n); left -= n; }
                 if (!StringComparer.OrdinalIgnoreCase.Equals(Convert.ToHexString(hash.GetHashAndReset()), reference.Sha256))
                     throw new InvalidDataException("Object reference digest mismatch.");
                 input.Position = reference.Offset;
-                return new ObjectSlice(input, reference.Offset, reference.Length);
+                return new ObjectSlice(input, reference.Offset, reference.Length, stream => Return(reference.ArtifactId, stream));
             }
             catch { input.Dispose(); throw; }
+            finally { ArrayPool<byte>.Shared.Return(buffer); }
+        }
+        private void Return(Guid id, Stream stream)
+        {
+            lock (_poolLock)
+            {
+                if (_disposed || _idle.ContainsKey(id)) { stream.Dispose(); return; }
+                if (_idle.Count >= 32)
+                {
+                    var oldest = _lru.First!;
+                    _idle.Remove(oldest.Value.Id); _lru.RemoveFirst(); oldest.Value.Stream.Dispose();
+                }
+                _idle.Add(id, _lru.AddLast((id, stream)));
+            }
+        }
+        public void Dispose()
+        {
+            lock (_poolLock)
+            {
+                _disposed = true;
+                foreach (var node in _idle.Values) node.Value.Stream.Dispose();
+                _idle.Clear(); _lru.Clear();
+            }
         }
         public void ValidateDependency(Guid owner, Guid dependency)
         {
@@ -137,6 +199,9 @@ public sealed partial class MinecraftSavesPlugin
 
     private sealed class ArtifactPacks(IArtifactTransformStaging staging, RestoreStrategyId strategy, CoreCaptureMode mode, string spool) : IWorldObjectWriter, IDisposable
     {
+        // The v1 object bound stays 64 MiB; new region packs target 16 MiB to limit
+        // whole-envelope decoding for sparse reads. Keep a fitting file together.
+        private const long DataTargetBytes = 16L * 1024 * 1024;
         private sealed class Pack(ArtifactStagingAllocation allocation, Stream stream)
         { public ArtifactStagingAllocation Allocation = allocation; public Stream Stream = stream; public long Length; public HashSet<ArtifactId> Dependencies = []; }
         private Pack? _data, _metadata;
@@ -153,6 +218,11 @@ public sealed partial class MinecraftSavesPlugin
                 : Nodes.Single(n => n.ArtifactId.Value == id).Dependencies).Select(d => d.Value).ToArray();
         }
         public void BeginRepack() => Finish(ref _metadata);
+        public void BeginFile(long length)
+        {
+            if (_data is { Length: > 0 } && _data.Length + Math.Min(length, DataTargetBytes) > DataTargetBytes)
+                Finish(ref _data);
+        }
         public Stream Open(WorldObjectReference reference, CancellationToken token)
         {
             token.ThrowIfCancellationRequested();
@@ -180,7 +250,8 @@ public sealed partial class MinecraftSavesPlugin
             var limit = metadata ? WorldIncrementalFormat.RecipePackBytes : WorldIncrementalFormat.DataPackBytes;
             if (length < 0 || length > limit) throw new IOException("Object exceeds its pack budget.");
             ref var pack = ref (metadata ? ref _metadata : ref _data);
-            if (pack is null || pack.Length + length > limit)
+            var target = metadata ? limit : Math.Max(DataTargetBytes, length);
+            if (pack is null || pack.Length + length > target)
             {
                 Finish(ref pack);
                 var allocation = staging.CreateArtifactAsync(token).AsTask().GetAwaiter().GetResult();
@@ -192,14 +263,18 @@ public sealed partial class MinecraftSavesPlugin
             if (metadata) { Directory.CreateDirectory(spool); metadataPath = Path.Combine(spool, Guid.NewGuid().ToString("N")); }
             using var mirror = metadataPath is null ? null : File.Create(metadataPath);
             using var hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
-            var buffer = new byte[65536]; var left = length;
-            while (left > 0)
+            var buffer = ArrayPool<byte>.Shared.Rent((int)Math.Min(65536, Math.Max(1, length))); var left = length;
+            try
             {
-                token.ThrowIfCancellationRequested();
-                var count = input.Read(buffer, 0, (int)Math.Min(left, buffer.Length));
-                if (count == 0) throw new EndOfStreamException();
-                pack.Stream.Write(buffer, 0, count); mirror?.Write(buffer, 0, count); hash.AppendData(buffer, 0, count); left -= count;
+                while (left > 0)
+                {
+                    token.ThrowIfCancellationRequested();
+                    var count = input.Read(buffer, 0, (int)Math.Min(left, buffer.Length));
+                    if (count == 0) throw new EndOfStreamException();
+                    pack.Stream.Write(buffer, 0, count); mirror?.Write(buffer, 0, count); hash.AppendData(buffer, 0, count); left -= count;
+                }
             }
+            finally { ArrayPool<byte>.Shared.Return(buffer); }
             var sha = Convert.ToHexString(hash.GetHashAndReset());
             pack.Length += length;
             _lengths[pack.Allocation.ArtifactId.Value] = pack.Length;
@@ -224,15 +299,22 @@ public sealed partial class MinecraftSavesPlugin
         }
     }
 
-    private sealed class ObjectSlice(Stream input, long start, long length) : Stream
+    private sealed class ObjectSlice(Stream input, long start, long length, Action<Stream>? release = null) : Stream
     {
-        public override int Read(byte[] buffer, int offset, int count) => input.Read(buffer, offset, (int)Math.Min(count, length - Position));
-        public override int Read(Span<byte> buffer) => input.Read(buffer[..(int)Math.Min(buffer.Length, length - Position)]);
-        public override bool CanRead => true; public override bool CanSeek => true; public override bool CanWrite => false;
+        private bool _disposed;
+        public override int Read(byte[] buffer, int offset, int count)
+        { ObjectDisposedException.ThrowIf(_disposed, this); return input.Read(buffer, offset, (int)Math.Min(count, length - Position)); }
+        public override int Read(Span<byte> buffer)
+        { ObjectDisposedException.ThrowIf(_disposed, this); return input.Read(buffer[..(int)Math.Min(buffer.Length, length - Position)]); }
+        public override bool CanRead => !_disposed; public override bool CanSeek => !_disposed; public override bool CanWrite => false;
         public override long Length => length;
-        public override long Position { get => input.Position - start; set { if (value < 0 || value > length) throw new ArgumentOutOfRangeException(nameof(value)); input.Position = start + value; } }
+        public override long Position { get { ObjectDisposedException.ThrowIf(_disposed, this); return input.Position - start; } set { ObjectDisposedException.ThrowIf(_disposed, this); if (value < 0 || value > length) throw new ArgumentOutOfRangeException(nameof(value)); input.Position = start + value; } }
         public override long Seek(long offset, SeekOrigin origin) { Position = checked(offset + (origin == SeekOrigin.Begin ? 0 : origin == SeekOrigin.Current ? Position : Length)); return Position; }
-        protected override void Dispose(bool disposing) { if (disposing) input.Dispose(); base.Dispose(disposing); }
+        protected override void Dispose(bool disposing)
+        {
+            if (disposing && !_disposed) { _disposed = true; if (release is null) input.Dispose(); else release(input); }
+            base.Dispose(disposing);
+        }
         public override void Flush() { } public override void SetLength(long value) => throw new NotSupportedException();
         public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
     }

@@ -7,7 +7,7 @@ using fNbt;
 
 namespace MineRewind.World.Semantic;
 
-internal sealed record PayloadSlice(long Offset, long Length);
+internal sealed record PayloadSlice(long Offset, long Length, string Sha256);
 internal sealed record RegionAnalysis(RegionEntry Entry, IReadOnlyList<PayloadSlice> Payloads);
 
 internal static class RegionCodec
@@ -68,7 +68,7 @@ internal static class RegionCodec
                         hash = previous is { State: SemanticState.Present, External: false }
                             && previous.Compression == compression && previous.PayloadStorageHash == storageHash
                             ? previous.PayloadHash : HashDecoded(input, compression, token);
-                        payloads.Add(new(offset + 5, length - 1));
+                        payloads.Add(new(offset + 5, length - 1, storageHash!));
                     }
                 }
                 catch (OperationCanceledException) { throw; }

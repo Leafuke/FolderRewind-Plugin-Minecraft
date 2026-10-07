@@ -1,4 +1,5 @@
 using System.Security.Cryptography;
+using System.Buffers;
 using System.Text.Json;
 
 namespace MineRewind.World.Semantic;
@@ -17,9 +18,12 @@ public static class WorldIncrementalFormat
         IReadOnlyList<string> added, IReadOnlyList<string> modified, IReadOnlyList<string> deleted,
         bool checkpoint, CancellationToken token)
     {
+        using var captureStage = SemanticDiagnostics.Source.StartActivity("semantic.capture");
+        long payloadBytes = 0, residualBytes = 0;
         if (baseline is not null && (baseline.Version != 1 || baseline.SourceId != sourceId || baseline.BoundaryFingerprint != boundary))
             throw new InvalidDataException("Incompatible incremental baseline.");
-        checkpoint |= baseline?.CompactionRecommended == true;
+        // Complete roots do not replay a version chain. Only the Host requests a
+        // self-contained repack; per-root amplification cannot prove reclaimability.
         var prior = baseline?.Files.ToDictionary(f => f.Path, StringComparer.Ordinal) ?? [];
         var current = new Dictionary<string, WorldStateFile>(prior, StringComparer.Ordinal);
         var inventory = changedSource.GetInventory(token).ToDictionary(f => f.RelativePath, StringComparer.Ordinal);
@@ -41,12 +45,15 @@ public static class WorldIncrementalFormat
 
         foreach (var path in updates.Order(StringComparer.Ordinal))
         {
+            using var fileStage = SemanticDiagnostics.Source.StartActivity("file.analyze");
             token.ThrowIfCancellationRequested();
             SemanticPaths.Normalize(path);
             var info = inventory[path];
+            fileStage?.SetTag("input.bytes", info.Length);
             if (info.Length < 0 || info.Length > 16L * 1024 * 1024 * 1024) throw new IOException("File quota exceeded.");
+            writer.BeginFile(info.Length);
             using var input = source.OpenRead(path);
-            var hash = SemanticStreams.Hash(input, token); input.Position = 0;
+            var hash = info.Sha256 ?? SemanticStreams.Hash(input, token); input.Position = 0;
             prior.TryGetValue(path, out var old);
             WorldFileRecipe? oldRecipe = old is null ? null : Read<WorldFileRecipe>(reader, old.Recipe, token);
             RegionEntry? oldIndex = old?.Index is null ? null : Read<RegionEntry>(reader, old.Index, token);
@@ -72,7 +79,8 @@ public static class WorldIncrementalFormat
             foreach (var payload in payloads.OrderBy(p => p.Offset))
             {
                 Residual(offset, payload.Offset);
-                Store(payload.Offset, payload.Length);
+                Store(payload.Offset, payload.Length, payload.Sha256);
+                payloadBytes += payload.Length;
                 offset = payload.Offset + payload.Length;
             }
             Residual(offset, info.Length);
@@ -88,13 +96,14 @@ public static class WorldIncrementalFormat
                 {
                     var block = encoding == "Raw" ? DataPackBytes : ResidualBlockBytes - start % ResidualBlockBytes;
                     var length = Math.Min(block, end - start); Store(start, length); start += length;
+                    if (encoding == "SegmentedRegion") residualBytes += length;
                 }
             }
-            void Store(long start, long length)
+            void Store(long start, long length, string? knownDigest = null)
             {
                 if (length <= 0) return;
                 input.Position = start;
-                var digest = HashRange(input, length, token);
+                var digest = knownDigest ?? HashRange(input, length, token);
                 if (!checkpoint && reusable.TryGetValue(length + ":" + digest, out var existing))
                     segments.Add(new(start, existing));
                 else
@@ -115,65 +124,53 @@ public static class WorldIncrementalFormat
             var issues = chunks.Where(c => c.Diagnostic is not null).Select(c => "slot:" + c.Slot + ":" + c.Diagnostic).ToArray();
             var state = chunks.FirstOrDefault(c => c.State is not (SemanticState.Present or SemanticState.Absent))?.State ?? SemanticState.Present;
             var refreshed = oldIndex with { Chunks = chunks, State = state, Diagnostics = issues };
-            current[owner!] = file with { Index = Write(writer, refreshed, [], token) };
+            current[owner!] = file with { Index = Write(writer, refreshed, [], token), ReferencedBytesByPack = null };
         }
 
-        // Decide from actual new bytes, not the size of the changed region files.
-        var logicalBytes = current.Values.Sum(f => f.Length);
-        checkpoint |= logicalBytes > 0 && newBytes >= logicalBytes * 0.70;
         // Keep this transaction's payloads; copy only inherited objects, never recapture them.
         if (checkpoint)
         {
+            using var repackStage = SemanticDiagnostics.Source.StartActivity("checkpoint.repack");
             writer.BeginRepack();
             var combined = new CombinedObjects(reader, writer);
             foreach (var path in current.Keys.Order(StringComparer.Ordinal).ToArray())
             {
                 token.ThrowIfCancellationRequested();
                 var file = current[path]; var recipe = Read<WorldFileRecipe>(combined, file.Recipe, token);
+                if (writer.Owns(file.Recipe.ArtifactId) && (file.Index is null || writer.Owns(file.Index.ArtifactId))
+                    && recipe.Segments.All(s => writer.Owns(s.Content.ArtifactId))) continue;
+                writer.BeginFile(file.Length);
                 var segments = new List<WorldRecipeSegment>();
                 foreach (var segment in recipe.Segments)
                 {
                     if (writer.Owns(segment.Content.ArtifactId)) { segments.Add(segment); continue; }
-                    using var bytes = reader.Open(segment.Content, token);
+                    using var bytes = reader.OpenSequential(segment.Content, token);
                     segments.Add(new(segment.FileOffset, writer.Store(bytes, segment.Content.Length, false, [], token)));
                     newBytes += segment.Content.Length;
                 }
                 var recipeRef = Write(writer, recipe with { Segments = segments }, segments.Select(s => s.Content.ArtifactId).Distinct().ToArray(), token);
                 var indexRef = file.Index is not null ? Write(writer, Read<RegionEntry>(combined, file.Index, token), [], token) : null;
-                current[path] = file with { Recipe = recipeRef, Index = indexRef };
+                current[path] = file with { Recipe = recipeRef, Index = indexRef, ReferencedBytesByPack = null };
             }
         }
         if (current.Values.Sum(f => f.Length) > 16L * 1024 * 1024 * 1024) throw new IOException("World byte quota exceeded.");
         var accountingReader = new CombinedObjects(reader, writer);
-        var ranges = new Dictionary<Guid, HashSet<(long Start, long End)>>();
-        var rangeCount = 0;
-        foreach (var file in current.Values)
-        {
-            AddRange(file.Recipe);
-            if (file.Index is not null) AddRange(file.Index);
-            var recipe = Read<WorldFileRecipe>(accountingReader, file.Recipe, token);
-            foreach (var segment in recipe.Segments)
-            {
-                var reference = segment.Content;
-                accountingReader.ValidateDependency(file.Recipe.ArtifactId, reference.ArtifactId);
-                AddRange(reference);
-            }
-        }
+        var referencedPacks = new HashSet<Guid>();
         long pinnedBytes = 0, referencedBytes = 0;
-        foreach (var (id, packRanges) in ranges)
+        foreach (var path in current.Keys.ToArray())
         {
-            var packLength = accountingReader.GetPackLength(id);
-            long end = 0;
-            foreach (var range in packRanges.OrderBy(r => r.Start))
+            var file = current[path];
+            var usage = file.ReferencedBytesByPack ?? SummarizeReferences(file, accountingReader, token);
+            current[path] = file with { ReferencedBytesByPack = usage };
+            foreach (var (id, used) in usage)
             {
-                if (range.Start < 0 || range.End > packLength) throw new InvalidDataException("Reference exceeds its data pack.");
-                referencedBytes = checked(referencedBytes + Math.Max(0, range.End - Math.Max(end, range.Start)));
-                end = Math.Max(end, range.End);
+                if (used < 0 || used > accountingReader.GetPackLength(id)) throw new InvalidDataException("Invalid immutable pack usage summary.");
+                referencedBytes = checked(referencedBytes + used); referencedPacks.Add(id);
             }
         }
         // A shared metadata pack can retain data that no current file references.
         // Count its entire declared transitive closure, not only the used ranges.
-        var pendingPacks = new Stack<Guid>(ranges.Keys); var reachablePacks = new HashSet<Guid>();
+        var pendingPacks = new Stack<Guid>(referencedPacks); var reachablePacks = new HashSet<Guid>();
         while (pendingPacks.TryPop(out var id))
         {
             token.ThrowIfCancellationRequested();
@@ -182,16 +179,12 @@ public static class WorldIncrementalFormat
             pinnedBytes = checked(pinnedBytes + accountingReader.GetPackLength(id));
             foreach (var dependency in accountingReader.GetDependencies(id)) pendingPacks.Push(dependency);
         }
+        captureStage?.SetTag("region.payload.bytes", payloadBytes);
+        captureStage?.SetTag("region.residual.bytes", residualBytes);
+        captureStage?.SetTag("new.data.bytes", newBytes);
         return new(1, sourceId, boundary, current.Values.OrderBy(f => f.Path, StringComparer.Ordinal).ToArray(),
             deleted.Order(StringComparer.Ordinal).ToArray(), deletedChunks, checkpoint, newBytes, updates.Count)
         { ReferencedObjectBytes = referencedBytes, PinnedPackBytes = pinnedBytes };
-
-        void AddRange(WorldObjectReference reference)
-        {
-            if (!ranges.TryGetValue(reference.ArtifactId, out var packRanges)) ranges.Add(reference.ArtifactId, packRanges = []);
-            if (packRanges.Add((reference.Offset, checked(reference.Offset + reference.Length))) && ++rangeCount > 1_000_000)
-                throw new IOException("Reference accounting budget exceeded.");
-        }
 
         ChunkEntry RefreshExternal(ChunkEntry chunk)
         {
@@ -204,6 +197,28 @@ public static class WorldIncrementalFormat
             catch (InvalidDataException) { return chunk with { State = SemanticState.Corrupt, ExternalStorageHash = rawHash, PayloadHash = null, Diagnostic = "invalid_compression_or_nbt" }; }
             catch (EndOfStreamException) { return chunk with { State = SemanticState.Corrupt, ExternalStorageHash = rawHash, PayloadHash = null, Diagnostic = "truncated_payload" }; }
         }
+    }
+
+    private static IReadOnlyDictionary<Guid, long> SummarizeReferences(WorldStateFile file, IWorldObjectReader reader, CancellationToken token)
+    {
+        var recipe = Read<WorldFileRecipe>(reader, file.Recipe, token);
+        if (recipe.Segments.Count > 1_000_000) throw new IOException("Reference accounting budget exceeded.");
+        var references = recipe.Segments.Select(s => s.Content).Append(file.Recipe);
+        if (file.Index is not null) references = references.Append(file.Index);
+        var usage = new Dictionary<Guid, long>();
+        foreach (var segment in recipe.Segments) reader.ValidateDependency(file.Recipe.ArtifactId, segment.Content.ArtifactId);
+        foreach (var group in references.GroupBy(r => r.ArtifactId))
+        {
+            var packLength = reader.GetPackLength(group.Key); long end = 0, bytes = 0;
+            foreach (var reference in group.OrderBy(r => r.Offset))
+            {
+                var next = checked(reference.Offset + reference.Length);
+                if (reference.Offset < 0 || reference.Length < 0 || next > packLength) throw new InvalidDataException("Reference exceeds pack.");
+                bytes = checked(bytes + Math.Max(0, next - Math.Max(end, reference.Offset))); end = Math.Max(end, next);
+            }
+            usage.Add(group.Key, bytes);
+        }
+        return usage;
     }
 
     public static T Read<T>(IWorldObjectReader reader, WorldObjectReference reference, CancellationToken token)
@@ -236,9 +251,14 @@ public static class WorldIncrementalFormat
     }
     internal static string HashRange(Stream input, long length, CancellationToken token)
     {
-        using var hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256); var buffer = new byte[65536];
-        while (length > 0) { token.ThrowIfCancellationRequested(); var n = input.Read(buffer, 0, (int)Math.Min(buffer.Length, length)); if (n == 0) throw new EndOfStreamException(); hash.AppendData(buffer, 0, n); length -= n; }
-        return Convert.ToHexString(hash.GetHashAndReset());
+        using var hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
+        var buffer = ArrayPool<byte>.Shared.Rent((int)Math.Min(65536, Math.Max(1, length)));
+        try
+        {
+            while (length > 0) { token.ThrowIfCancellationRequested(); var n = input.Read(buffer, 0, (int)Math.Min(buffer.Length, length)); if (n == 0) throw new EndOfStreamException(); hash.AppendData(buffer, 0, n); length -= n; }
+            return Convert.ToHexString(hash.GetHashAndReset());
+        }
+        finally { ArrayPool<byte>.Shared.Return(buffer); }
     }
     private static string? ExternalOwner(string path)
     {
@@ -273,17 +293,21 @@ public static class WorldIncrementalFormat
         {
             token.ThrowIfCancellationRequested();
             if (buffer.IsEmpty) return 0;
-            while (_index < recipe.Segments.Count)
+            var total = 0;
+            while (_index < recipe.Segments.Count && total < buffer.Length)
             {
                 if (_current is null)
                 {
-                    _current = reader.Open(recipe.Segments[_index].Content, token);
-                    _current.Position = _position - recipe.Segments[_index].FileOffset;
+                    var offset = _position - recipe.Segments[_index].FileOffset;
+                    _current = offset == 0 ? reader.OpenSequential(recipe.Segments[_index].Content, token)
+                        : reader.Open(recipe.Segments[_index].Content, token);
+                    if (offset != 0) _current.Position = offset;
                 }
-                var n = _current.Read(buffer); if (n > 0) { _position += n; return n; }
+                var n = _current.Read(buffer[total..]);
+                if (n > 0) { _position += n; total += n; continue; }
                 _current.Dispose(); _current = null; _index++;
             }
-            return 0;
+            return total;
         }
         protected override void Dispose(bool disposing) { if (disposing) _current?.Dispose(); base.Dispose(disposing); }
         public override bool CanRead => true; public override bool CanSeek => true; public override bool CanWrite => false;
