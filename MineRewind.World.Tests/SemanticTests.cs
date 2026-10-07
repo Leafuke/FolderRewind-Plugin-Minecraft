@@ -56,6 +56,59 @@ public sealed class SemanticTests
         WorldCapture.Capture(new DirectoryWorldSource(source), scratch, "source-1");
         return (DirectorySemanticScratch)(target is FaultScratch fault ? fault.Inner : scratch);
     }
+
+    [TestMethod]
+    [DataRow(1, false)]
+    [DataRow(2, true)]
+    [DataRow(3, true)]
+    [DataRow(99, false)]
+    public void PersistentFullFormatIsIndependentOfProbeScratch(int compression, bool external)
+    {
+        var source = Dir("input"); Region(source, compression: compression, external: external);
+        File.WriteAllBytes(Path.Combine(source, "region", "r.0.0.mca"), []);
+        File.WriteAllText(Path.Combine(source, "level.dat"), "literal passthrough");
+        var expected = Oracle(source);
+        var scratch = Capture(source);
+        var exported = new DirectorySemanticScratch(Path.Combine(_root, "export"), true);
+        foreach (var path in WorldFullFormat.PrepareExport(scratch, default))
+        {
+            using var input = scratch.OpenRead(path); using var output = exported.Create(path); input.CopyTo(output);
+        }
+        Assert.IsFalse(exported.Exists("complete.json"));
+        Assert.IsFalse(Directory.Exists(Path.Combine(exported.Root, "regions")));
+        Assert.IsGreaterThanOrEqualTo(1, WorldFullFormat.ReadManifest(exported).OpaqueRegions);
+        Directory.Delete(source, true); Directory.Delete(scratch.Root, true);
+        var restored = new DirectorySemanticScratch(Path.Combine(_root, "output"), true);
+        WorldFullFormat.Materialize(exported, restored, "source-1", default);
+        var actual = Oracle(restored.Root);
+        CollectionAssert.AreEquivalent(expected.Keys.ToArray(), actual.Keys.ToArray());
+        foreach (var pair in expected) CollectionAssert.AreEqual(pair.Value, actual[pair.Key]);
+        Assert.ThrowsExactly<InvalidDataException>(() => WorldFullFormat.Materialize(exported, restored, "other-source", default));
+    }
+
+    [TestMethod]
+    public void FullV1ReadsAnIndependentlyAuthoredManifestWithoutProbeCompletion()
+    {
+        var storage = new DirectorySemanticScratch(Path.Combine(_root, "v1"), true);
+        var bytes = new byte[] { 42 }; var hash = Convert.ToHexString(SHA256.HashData(bytes));
+        var emptyHash = Convert.ToHexString(SHA256.HashData([]));
+        using (var output = storage.Create("objects/raw.bin")) output.Write(bytes);
+        var fileLine = System.Text.Encoding.UTF8.GetBytes("{\"RelativePath\":\"level.dat\",\"Length\":1,\"Sha256\":\"" + hash
+            + "\",\"Encoding\":\"Raw\",\"Segments\":[{\"FileOffset\":0,\"Length\":1,\"ObjectPath\":\"objects/raw.bin\",\"ObjectOffset\":0,\"Sha256\":\"" + hash + "\"}]}\n");
+        using (var output = storage.Create("files.jsonl")) output.Write(fileLine);
+        using (storage.Create("regions.jsonl")) { }
+        using (storage.Create("diagnostics.jsonl")) { }
+        var manifest = "{\"Format\":\"com.folderrewind.minerewind/minecraft-world-full\",\"Version\":1,\"SourceId\":\"golden-source\",\"FilesHash\":\""
+            + Convert.ToHexString(SHA256.HashData(fileLine)) + "\",\"RegionsHash\":\"" + emptyHash + "\",\"DiagnosticsHash\":\"" + emptyHash
+            + "\",\"Files\":1,\"Bytes\":1,\"Regions\":0,\"OpaqueRegions\":0,\"MissingExternalFiles\":0,\"UnclassifiedRegions\":0}";
+        using (var output = storage.Create("world-full.json")) output.Write(System.Text.Encoding.UTF8.GetBytes(manifest));
+        var restored = new DirectorySemanticScratch(Path.Combine(_root, "restored"), true);
+        WorldFullFormat.Materialize(storage, restored, "golden-source", default);
+        CollectionAssert.AreEqual(bytes, File.ReadAllBytes(Path.Combine(restored.Root, "level.dat")));
+        File.WriteAllBytes(Path.Combine(storage.Root, "objects", "raw.bin"), [43]);
+        Assert.ThrowsExactly<InvalidDataException>(() => WorldFullFormat.Materialize(storage,
+            new DirectorySemanticScratch(Path.Combine(_root, "tampered-output"), true), "golden-source", default));
+    }
     private static Dictionary<string, byte[]> Oracle(string source) => Directory.GetFiles(source, "*", SearchOption.AllDirectories)
         .ToDictionary(p => Path.GetRelativePath(source, p).Replace('\\', '/'), File.ReadAllBytes);
     private void CheckRoundTrip(string source, DirectorySemanticScratch scratch)

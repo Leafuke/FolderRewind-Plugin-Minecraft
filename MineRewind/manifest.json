@@ -64,10 +64,15 @@
     "knotLink",
     "temporaryStorage",
     "logging"
+    ,"artifactRead"
+    ,"artifactTransformStaging"
+    ,"restoreMaterializationWorkspace"
   ],
   "architectures": ["any"],
   "capabilities": [
     "spatialPreview",
+    "backupArtifactTransformer",
+    "restoreMaterializer",
     "discovery",
     "configReconciliation",
     "filePolicy",
@@ -81,10 +86,11 @@
     "knotLinkIntegration",
     "providerStateMigration"
   ],
-  "artifactFormats": [],
-  "artifactTransformers": [],
-  "restoreStrategies": [],
+  "artifactFormats": [{ "ownerId": "com.folderrewind.minerewind", "formatId": "minecraft-world-full", "minimumVersion": 1, "maximumVersion": 1, "displayName": "Minecraft lossless Full" }],
+  "artifactTransformers": [{ "transformerId": "minecraft-world-full", "compatibleConfigKinds": [{ "ownerId": "com.folderrewind.minerewind", "kindId": "minecraft-saves" }], "compatibleCoreModes": ["full"], "compatibleCompleteness": ["complete"], "parameterSchema": { "type": "object", "properties": {}, "additionalProperties": false }, "supportedFailureBehaviors": ["keepPrimaryWithWarnings", "requireTransform"] }],
+  "restoreStrategies": [{ "strategyId": "minecraft-world-materializer", "supportedFormats": [{ "ownerId": "com.folderrewind.minerewind", "formatId": "minecraft-world-full", "minimumVersion": 1, "maximumVersion": 1 }], "supportedCompleteness": ["complete"], "supportedRestoreModes": ["clean", "overwrite"] }],
   "hasBackupCompletionObserver": false,
   "homepage": "https://github.com/Leafuke/FolderRewind-Plugin-Minecraft",
   "repository": "Leafuke/FolderRewind-Plugin-Minecraft"
 }
+
