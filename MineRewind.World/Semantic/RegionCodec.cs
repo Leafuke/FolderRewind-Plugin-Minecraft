@@ -18,7 +18,7 @@ internal static class RegionCodec
     private static readonly byte[] HashPrefix = Encoding.UTF8.GetBytes("minerewind/opaque-nbt-bytes/1\0");
 
     public static RegionAnalysis Analyze(IReadOnlyWorldSource source, SourceFile info, Stream file,
-        RegionAddress address, IReadOnlySet<string> paths, CancellationToken token)
+        RegionAddress address, IReadOnlySet<string> paths, CancellationToken token, RegionEntry? baseline = null)
     {
         var chunks = new List<ChunkEntry>(); var payloads = new List<PayloadSlice>(); var diagnostics = new List<string>();
         var state = SemanticState.Present;
@@ -40,7 +40,8 @@ internal static class RegionCodec
             var length = BinaryPrimitives.ReadInt32BigEndian(envelope);
             var compression = (byte)(envelope[4] & 127); var external = (envelope[4] & 128) != 0;
             var externalPath = external ? JoinParent(info.RelativePath, $"c.{x}.{z}.mcc") : null;
-            string? hash = null, diagnostic = null, externalHash = null; var chunkState = SemanticState.Present;
+            string? hash = null, diagnostic = null, externalHash = null, storageHash = null; var chunkState = SemanticState.Present;
+            var previous = baseline?.Chunks.FirstOrDefault(c => c.Slot == slot);
             if (length < 1 || length > sectors * 4096L - 4 || (external && length != 1))
                 (chunkState, diagnostic) = (SemanticState.Corrupt, "invalid_record_length");
             else if (compression is not (1 or 2 or 3))
@@ -55,12 +56,18 @@ internal static class RegionCodec
                     {
                         using var input = source.OpenRead(externalPath!);
                         externalHash = SemanticStreams.Hash(input, token); input.Position = 0;
-                        hash = HashDecoded(input, compression, token);
+                        hash = previous is { State: SemanticState.Present, External: true }
+                            && previous.Compression == compression && previous.ExternalStorageHash == externalHash
+                            ? previous.PayloadHash : HashDecoded(input, compression, token);
                     }
                     else
                     {
+                        using (var raw = new BoundedReadStream(file, length - 1)) storageHash = SemanticStreams.Hash(raw, token);
+                        file.Position = offset + 5;
                         using var input = new BoundedReadStream(file, length - 1);
-                        hash = HashDecoded(input, compression, token);
+                        hash = previous is { State: SemanticState.Present, External: false }
+                            && previous.Compression == compression && previous.PayloadStorageHash == storageHash
+                            ? previous.PayloadHash : HashDecoded(input, compression, token);
                         payloads.Add(new(offset + 5, length - 1));
                     }
                 }
@@ -72,7 +79,7 @@ internal static class RegionCodec
                 catch (UnauthorizedAccessException) { (chunkState, diagnostic) = (SemanticState.Unavailable, "payload_unavailable"); }
             }
             chunks.Add(new(slot, x, z, chunkState, timestamp, compression, external, externalPath, hash, diagnostic)
-            { ExternalStorageHash = externalHash });
+            { ExternalStorageHash = externalHash, PayloadStorageHash = storageHash });
             if (chunkState != SemanticState.Present)
             {
                 state = chunkState;
@@ -85,7 +92,7 @@ internal static class RegionCodec
             new(info.RelativePath, address, "", failure, [], [code]), []);
     }
 
-    private static string HashDecoded(Stream input, byte compression, CancellationToken token)
+    internal static string HashDecoded(Stream input, byte compression, CancellationToken token)
     {
         using Stream decoded = compression switch
         {

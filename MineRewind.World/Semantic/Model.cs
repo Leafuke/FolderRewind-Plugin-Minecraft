@@ -16,6 +16,7 @@ public sealed record ChunkEntry(int Slot, int X, int Z, SemanticState State, uin
     byte Compression, bool External, string? ExternalPath, string? PayloadHash, string? Diagnostic)
 {
     public string? ExternalStorageHash { get; init; }
+    public string? PayloadStorageHash { get; init; }
 }
 public sealed record RegionEntry(string RelativePath, RegionAddress Address, string FileHash,
     SemanticState State, IReadOnlyList<ChunkEntry> Chunks, IReadOnlyList<string> Diagnostics);

@@ -146,7 +146,7 @@ public static class WorldCapture
     internal static string HashFile(ISemanticScratch scratch, string path, CancellationToken token)
     { using var stream = scratch.OpenRead(path); return SemanticStreams.Hash(stream, token); }
 
-    private static bool TryAddress(string path, string[] worlds, out RegionAddress? address)
+    internal static bool TryAddress(string path, string[] worlds, out RegionAddress? address)
     {
         address = null;
         if (!path.EndsWith(".mca", StringComparison.Ordinal) || !WorldPaths.TryRegionName(path, out var region)) return false;
