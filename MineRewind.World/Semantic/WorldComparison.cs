@@ -18,7 +18,7 @@ public static class WorldComparison
         foreach (var store in stores) ScratchArchive.VerifyIntegrity(store, token);
         if (completions.Any(c => c.SourceId != completions[0].SourceId)) throw new InvalidDataException("Source identities differ.");
         var unknownInventory = completions.Any(c => c.Summary.UnclassifiedRegions != 0);
-        var entityChanges = new Dictionary<string, (bool Ours, bool Theirs)>(StringComparer.Ordinal);
+        var entityChanges = new Dictionary<string, (bool Ours, bool Theirs, bool Unknown)>(StringComparer.Ordinal);
         var ownedContainerPaths = new HashSet<string>(StringComparer.Ordinal);
         foreach (var group in Groups(stores, token))
         {
@@ -31,14 +31,16 @@ public static class WorldComparison
             var entity = group.Select(g => g.FirstOrDefault(r => r.Address.Component == ChunkComponentKind.Entities)).ToArray();
             var key = group.SelectMany(g => g).First().Address.DimensionKey;
             entityChanges.TryGetValue(key, out var changed);
+            var unknown = entity.Any(r => r is not null && r.State != SemanticState.Present);
             entityChanges[key] = (changed.Ours || !RegionContentEqual(entity[0], entity[1]),
-                changed.Theirs || !RegionContentEqual(entity[0], entity[2]));
+                changed.Theirs || !RegionContentEqual(entity[0], entity[2]), changed.Unknown || unknown);
         }
         int subjects = 0, conflicts = 0, blocked = 0, reviews = 0;
         foreach (var group in Groups(stores, token))
         {
             var address = group.SelectMany(g => g).First().Address;
-            var invalid = unknownInventory || group.SelectMany(g => g).Any(r => r.State != SemanticState.Present);
+            var entities = entityChanges[address.DimensionKey];
+            var invalid = unknownInventory || entities.Unknown || group.SelectMany(g => g).Any(r => r.State != SemanticState.Present);
             var slots = group.SelectMany(g => g).SelectMany(r => r.Chunks).Where(c => c.State != SemanticState.Absent)
                 .Select(c => c.Slot).Distinct().Order().ToArray();
             // A malformed header has no trustworthy slots. Emit a blocked region sentinel, never absence.
@@ -50,8 +52,9 @@ public static class WorldComparison
                 var values = maps.Select(m => Bundle(m, slot)).ToArray();
                 var choice = invalid || values.Any(v => v.Unknown) ? ComparisonChoice.Blocked
                     : Pick(values[0].Value, values[1].Value, values[2].Value);
-                string? diagnostic = choice == ComparisonChoice.Blocked ? "unknown_input_not_absence" : null;
-                if (choice != ComparisonChoice.Blocked && entityChanges[address.DimensionKey] is (true, true))
+                string? diagnostic = choice == ComparisonChoice.Blocked
+                    ? entities.Unknown ? "unknown_entities_in_dimension" : "unknown_input_not_absence" : null;
+                if (choice != ComparisonChoice.Blocked && entities is (true, true, false))
                 { choice = ComparisonChoice.DimensionReview; diagnostic = "both_sides_changed_entities_in_dimension"; }
                 bool timestamp = false, encoding = false;
                 foreach (var component in Enum.GetValues<ChunkComponentKind>())

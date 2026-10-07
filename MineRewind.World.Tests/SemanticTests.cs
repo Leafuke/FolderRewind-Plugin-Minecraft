@@ -247,6 +247,19 @@ public sealed class SemanticTests
     }
 
     [TestMethod]
+    public void UnknownEntitiesBlockDimensionWithoutClaimingBothBranchesChanged()
+    {
+        var source = Dir("world"); Region(source, relative: "region/r.1.0.mca");
+        Directory.CreateDirectory(Path.Combine(source, "entities"));
+        File.WriteAllBytes(Path.Combine(source, "entities", "r.0.0.mca"), []);
+        var scratch = Capture(source); var decisions = new List<BundleDecision>();
+        var result = WorldComparison.Compare(scratch, scratch, scratch, decisions.Add);
+        Assert.AreEqual(0, result.DimensionReviews);
+        Assert.IsTrue(decisions.All(d => d.Choice == ComparisonChoice.Blocked));
+        Assert.IsTrue(decisions.Any(d => d.Diagnostic == "unknown_entities_in_dimension"));
+    }
+
+    [TestMethod]
     public void IndependentChangesInsideSameRegionUseBothSides()
     {
         var snapshots = new List<DirectorySemanticScratch>();
