@@ -12,6 +12,8 @@ public static class ScratchArchive
         if (input.Length > 65536) throw new InvalidDataException("Oversized completion record.");
         var completed = JsonSerializer.Deserialize<ScratchCompletion>(input, SemanticJson.Options) ?? throw new InvalidDataException();
         if (completed.SchemaVersion != 1 || string.IsNullOrWhiteSpace(completed.SourceId)) throw new InvalidDataException("Unsupported scratch.");
+        if (completed.Summary.Files < 0 || completed.Summary.Files > SemanticPaths.MaximumInventoryEntries)
+            throw new InvalidDataException("Scratch exceeds the P1 metadata budget.");
         foreach (var (path, hash) in new[] { ("files.jsonl", completed.FilesHash), ("regions.jsonl", completed.RegionsHash), ("diagnostics.jsonl", completed.DiagnosticsHash) })
             if (WorldCapture.HashFile(scratch, path, token) != hash) throw new InvalidDataException("Scratch manifest hash mismatch: " + path);
         return completed;
@@ -60,6 +62,7 @@ public static class ScratchArchive
                 || previousPath is not null && StringComparer.Ordinal.Compare(previousPath, file.RelativePath) >= 0)
                 throw new InvalidDataException("Invalid file manifest.");
             previousPath = file.RelativePath; totalBytes = checked(totalBytes + file.Length);
+            if (file.Segments.Count > 4096) throw new InvalidDataException("Too many region segments.");
             var objectLengths = new Dictionary<string, long>(StringComparer.Ordinal);
             foreach (var segment in file.Segments)
             {
@@ -71,31 +74,42 @@ public static class ScratchArchive
             using var output = destination?.Create(file.RelativePath) ?? Stream.Null;
             using var fileHash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
             var buffer = new byte[65536];
-            foreach (var segment in file.Segments)
+            var objects = new Dictionary<string, Stream>(StringComparer.Ordinal);
+            try
             {
-                if (segment.FileOffset != cursor || segment.Length < 0 || segment.Length > file.Length - cursor
-                    || segment.ObjectOffset < 0 || !segment.ObjectPath.StartsWith("objects/", StringComparison.Ordinal))
-                    throw new InvalidDataException("Invalid segment coverage.");
-                using var input = scratch.OpenRead(segment.ObjectPath);
-                if (input.Length != objectLengths[segment.ObjectPath]) throw new InvalidDataException("Scratch object size mismatch.");
-                if (segment.ObjectOffset > input.Length || segment.Length > input.Length - segment.ObjectOffset)
-                    throw new InvalidDataException("Truncated scratch object.");
-                input.Position = segment.ObjectOffset;
-                using var hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
-                var remaining = segment.Length;
-                while (remaining > 0)
+                if (objectLengths.Count > 2) throw new InvalidDataException("Too many packs for a file.");
+                foreach (var name in objectLengths.Keys)
                 {
-                    token.ThrowIfCancellationRequested();
-                    var read = input.Read(buffer, 0, (int)Math.Min(buffer.Length, remaining));
-                    if (read == 0) throw new EndOfStreamException();
-                    hash.AppendData(buffer, 0, read); fileHash.AppendData(buffer, 0, read);
-                    output.Write(buffer, 0, read); remaining -= read;
+                    if (!name.StartsWith("objects/", StringComparison.Ordinal)) throw new InvalidDataException("Invalid pack location.");
+                    objects.Add(name, scratch.OpenRead(name));
                 }
-                if (Convert.ToHexString(hash.GetHashAndReset()) != segment.Sha256) throw new InvalidDataException("Scratch segment hash mismatch.");
-                cursor += segment.Length;
+                foreach (var segment in file.Segments)
+                {
+                    if (segment.FileOffset != cursor || segment.Length < 0 || segment.Length > file.Length - cursor
+                        || segment.ObjectOffset < 0 || !segment.ObjectPath.StartsWith("objects/", StringComparison.Ordinal))
+                        throw new InvalidDataException("Invalid segment coverage.");
+                    var input = objects[segment.ObjectPath];
+                    if (input.Length != objectLengths[segment.ObjectPath]) throw new InvalidDataException("Scratch object size mismatch.");
+                    if (segment.ObjectOffset > input.Length || segment.Length > input.Length - segment.ObjectOffset)
+                        throw new InvalidDataException("Truncated scratch object.");
+                    input.Position = segment.ObjectOffset;
+                    using var hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
+                    var remaining = segment.Length;
+                    while (remaining > 0)
+                    {
+                        token.ThrowIfCancellationRequested();
+                        var read = input.Read(buffer, 0, (int)Math.Min(buffer.Length, remaining));
+                        if (read == 0) throw new EndOfStreamException();
+                        hash.AppendData(buffer, 0, read); fileHash.AppendData(buffer, 0, read);
+                        output.Write(buffer, 0, read); remaining -= read;
+                    }
+                    if (Convert.ToHexString(hash.GetHashAndReset()) != segment.Sha256) throw new InvalidDataException("Scratch segment hash mismatch.");
+                    cursor += segment.Length;
+                }
+                if (cursor != file.Length || Convert.ToHexString(fileHash.GetHashAndReset()) != file.Sha256)
+                    throw new InvalidDataException("Reconstructed file hash/length mismatch: " + file.RelativePath);
             }
-            if (cursor != file.Length || Convert.ToHexString(fileHash.GetHashAndReset()) != file.Sha256)
-                throw new InvalidDataException("Reconstructed file hash/length mismatch: " + file.RelativePath);
+            finally { foreach (var stream in objects.Values) stream.Dispose(); }
         }
         if (paths.Count != completion.Summary.Files || totalBytes != completion.Summary.Bytes)
             throw new InvalidDataException("Completion inventory does not match files.");

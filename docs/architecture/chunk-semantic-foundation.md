@@ -36,3 +36,16 @@ Output is analysis only, not a guarantee of game-level or mod-level consistency.
 
 Public Plugin API remains unchanged. Future text providers need not implement
 Minecraft types, spatial preview, or a custom artifact representation.
+
+P1 operational limits: 65,536 inventory entries, 4 Mi path characters, one decoded
+payload up to 16 MiB, two packs/file, 4,096 segments/file, and 8 Mi characters per
+manifest record. Working buffers/cache target is 256 MiB; reports distinguish
+derived buffer bounds, cumulative allocation and actual process working set.
+Payload bytes stream per region; small file/dimension inventory metadata is bounded
+rather than claimed to be constant-memory. Comparison retains only the current
+three-sided region group.
+
+Zero-byte mca files have no authoritative location table. They roundtrip exactly
+with an explicit `empty_region_without_header` diagnostic and block semantic
+absence inference. This intentionally conservative policy applies even when a
+game may have created the file as a placeholder.

@@ -1,9 +1,12 @@
 using System.Security.Cryptography;
+using System.Buffers;
 
 namespace MineRewind.World.Semantic;
 
 public static class SemanticPaths
 {
+    public const int MaximumInventoryEntries = 65_536;
+    public const int MaximumInventoryPathCharacters = 4 * 1024 * 1024;
     public static string Normalize(string relative)
     {
         if (string.IsNullOrEmpty(relative) || relative.Contains('\\') || relative.Contains(':') || Path.IsPathRooted(relative)
@@ -66,6 +69,7 @@ public sealed class DirectoryWorldSource : IReadOnlyWorldSource
     public IReadOnlyList<SourceFile> GetInventory(CancellationToken token)
     {
         var result = new List<SourceFile>();
+        long pathCharacters = 0; var entries = 0;
         var pending = new Stack<string>(); pending.Push(Root);
         while (pending.TryPop(out var directory))
         {
@@ -73,6 +77,9 @@ public sealed class DirectoryWorldSource : IReadOnlyWorldSource
             foreach (var path in Directory.EnumerateFileSystemEntries(directory))
             {
                 token.ThrowIfCancellationRequested();
+                pathCharacters += Path.GetRelativePath(Root, path).Length;
+                if (++entries > SemanticPaths.MaximumInventoryEntries || pathCharacters > SemanticPaths.MaximumInventoryPathCharacters)
+                    throw new IOException("Offline inventory exceeds the P1 metadata budget.");
                 var attributes = File.GetAttributes(path);
                 if ((attributes & FileAttributes.ReparsePoint) != 0) throw new IOException("Links are not a complete offline view: " + path);
                 if ((attributes & FileAttributes.Directory) != 0) { pending.Push(path); continue; }
@@ -121,21 +128,30 @@ internal static class SemanticStreams
     public static string Hash(Stream stream, CancellationToken token)
     {
         using var hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
-        var buffer = new byte[BufferSize]; int read;
-        while ((read = stream.Read(buffer)) != 0) { token.ThrowIfCancellationRequested(); hash.AppendData(buffer, 0, read); }
-        return Convert.ToHexString(hash.GetHashAndReset());
+        var buffer = ArrayPool<byte>.Shared.Rent(BufferSize);
+        try
+        {
+            int read;
+            while ((read = stream.Read(buffer, 0, BufferSize)) != 0) { token.ThrowIfCancellationRequested(); hash.AppendData(buffer, 0, read); }
+            return Convert.ToHexString(hash.GetHashAndReset());
+        }
+        finally { ArrayPool<byte>.Shared.Return(buffer, clearArray: true); }
     }
     public static string Copy(Stream source, Stream target, long length, CancellationToken token)
     {
         using var hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
-        var buffer = new byte[BufferSize];
-        while (length > 0)
+        var buffer = ArrayPool<byte>.Shared.Rent(BufferSize);
+        try
         {
-            token.ThrowIfCancellationRequested();
-            var read = source.Read(buffer, 0, (int)Math.Min(buffer.Length, length));
-            if (read == 0) throw new EndOfStreamException();
-            target.Write(buffer, 0, read); hash.AppendData(buffer, 0, read); length -= read;
+            while (length > 0)
+            {
+                token.ThrowIfCancellationRequested();
+                var read = source.Read(buffer, 0, (int)Math.Min(BufferSize, length));
+                if (read == 0) throw new EndOfStreamException();
+                target.Write(buffer, 0, read); hash.AppendData(buffer, 0, read); length -= read;
+            }
+            return Convert.ToHexString(hash.GetHashAndReset());
         }
-        return Convert.ToHexString(hash.GetHashAndReset());
+        finally { ArrayPool<byte>.Shared.Return(buffer, clearArray: true); }
     }
 }

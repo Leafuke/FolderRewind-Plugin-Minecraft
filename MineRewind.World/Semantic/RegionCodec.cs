@@ -22,7 +22,7 @@ internal static class RegionCodec
     {
         var chunks = new List<ChunkEntry>(); var payloads = new List<PayloadSlice>(); var diagnostics = new List<string>();
         var state = SemanticState.Present;
-        if (file.Length < 8192) return Failed("truncated_header", SemanticState.Corrupt);
+        if (file.Length < 8192) return Failed(file.Length == 0 ? "empty_region_without_header" : "truncated_header", SemanticState.Corrupt);
         file.Position = 0;
         var header = new byte[8192]; file.ReadExactly(header);
         var index = new AnvilRegionIndex(header, file.Length, info.LastWriteUtc);
@@ -98,35 +98,35 @@ internal static class RegionCodec
         var count = 0;
         try
         {
-        while (count < MaximumDecodedBytes)
-        {
-            token.ThrowIfCancellationRequested();
-            var read = decoded.Read(bytes, count, Math.Min(65536, MaximumDecodedBytes - count));
-            if (read == 0) break;
-            count += read;
-        }
-        if (count == MaximumDecodedBytes && decoded.ReadByte() != -1) throw new DecodeLimitException();
-        using var nbt = new MemoryStream(bytes, 0, count, writable: false);
-        try
-        {
-            var reader = new NbtReader(nbt);
-            var seenRoot = false;
-            while (reader.ReadToFollowing())
+            while (count < MaximumDecodedBytes)
             {
                 token.ThrowIfCancellationRequested();
-                if (!seenRoot && (reader.TagType != NbtTagType.Compound || reader.Depth != 1))
-                    throw new InvalidDataException("Expected compound root.");
-                seenRoot = true;
-                if (reader.Depth > 64 || reader.TagsRead > 100_000
-                    || (reader.HasLength && (reader.TagLength < 0 || reader.TagLength > 1_048_576)))
-                    throw new DecodeLimitException();
+                var read = decoded.Read(bytes, count, Math.Min(65536, MaximumDecodedBytes - count));
+                if (read == 0) break;
+                count += read;
             }
-            if (!seenRoot || nbt.Position != count) throw new InvalidDataException("Invalid NBT framing.");
-        }
-        catch (NbtFormatException ex) { throw new InvalidDataException("Malformed NBT.", ex); }
-        using var hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
-        hash.AppendData(HashPrefix); hash.AppendData(bytes, 0, count);
-        return Convert.ToHexString(hash.GetHashAndReset());
+            if (count == MaximumDecodedBytes && decoded.ReadByte() != -1) throw new DecodeLimitException();
+            using var nbt = new MemoryStream(bytes, 0, count, writable: false);
+            try
+            {
+                var reader = new NbtReader(nbt);
+                var seenRoot = false;
+                while (reader.ReadToFollowing())
+                {
+                    token.ThrowIfCancellationRequested();
+                    if (!seenRoot && (reader.TagType != NbtTagType.Compound || reader.Depth != 1))
+                        throw new InvalidDataException("Expected compound root.");
+                    seenRoot = true;
+                    if (reader.Depth > 64 || reader.TagsRead > 100_000
+                        || (reader.HasLength && (reader.TagLength < 0 || reader.TagLength > 1_048_576)))
+                        throw new DecodeLimitException();
+                }
+                if (!seenRoot || nbt.Position != count) throw new InvalidDataException("Invalid NBT framing.");
+            }
+            catch (NbtFormatException ex) { throw new InvalidDataException("Malformed NBT.", ex); }
+            using var hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
+            hash.AppendData(HashPrefix); hash.AppendData(bytes, 0, count);
+            return Convert.ToHexString(hash.GetHashAndReset());
         }
         finally { Array.Clear(bytes, 0, count); ArrayPool<byte>.Shared.Return(bytes); }
     }

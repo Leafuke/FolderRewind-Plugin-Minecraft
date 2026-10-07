@@ -12,7 +12,11 @@ public static class WorldCapture
         ArgumentException.ThrowIfNullOrWhiteSpace(sourceId);
         if (scratch.Exists("complete.json")) throw new IOException("Scratch already completed.");
         var timer = Stopwatch.StartNew();
-        var inventory = source.GetInventory(token).OrderBy(f => f.RelativePath, StringComparer.Ordinal).ToArray();
+        var sourceInventory = source.GetInventory(token);
+        if (sourceInventory.Count > SemanticPaths.MaximumInventoryEntries
+            || sourceInventory.Sum(f => (long)f.RelativePath.Length) > SemanticPaths.MaximumInventoryPathCharacters)
+            throw new IOException("Offline inventory exceeds the P1 metadata budget.");
+        var inventory = sourceInventory.OrderBy(f => f.RelativePath, StringComparer.Ordinal).ToArray();
         var paths = inventory.Select(f => SemanticPaths.Normalize(f.RelativePath)).ToHashSet(StringComparer.Ordinal);
         if (paths.Count != inventory.Length || paths.Distinct(StringComparer.OrdinalIgnoreCase).Count() != paths.Count)
             throw new InvalidDataException("Duplicate source paths.");
@@ -148,8 +152,13 @@ public static class WorldCapture
         var relative = world.Length == 0 ? path : path[(world.Length + 1)..];
         var parts = relative.Split('/');
         if (parts.Length < 2) return false;
-        var component = parts[^2] switch { "region" => ChunkComponentKind.Terrain, "entities" => ChunkComponentKind.Entities,
-            "poi" => ChunkComponentKind.Poi, _ => (ChunkComponentKind)(-1) };
+        var component = parts[^2] switch
+        {
+            "region" => ChunkComponentKind.Terrain,
+            "entities" => ChunkComponentKind.Entities,
+            "poi" => ChunkComponentKind.Poi,
+            _ => (ChunkComponentKind)(-1)
+        };
         if ((int)component < 0) return false;
         var dimensionPath = string.Join('/', parts[..^2]);
         string dimension;
