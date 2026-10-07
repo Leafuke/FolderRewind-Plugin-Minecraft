@@ -26,7 +26,7 @@ public static class WorldComparison
             {
                 ownedContainerPaths.Add(region.RelativePath);
                 foreach (var chunk in region.Chunks)
-                    if (chunk.ExternalPath is { } path) ownedContainerPaths.Add(path);
+                    if (chunk.State == SemanticState.Present && chunk.ExternalPath is { } path) ownedContainerPaths.Add(path);
             }
             var entity = group.Select(g => g.FirstOrDefault(r => r.Address.Component == ChunkComponentKind.Entities)).ToArray();
             var key = group.SelectMany(g => g).First().Address.DimensionKey;

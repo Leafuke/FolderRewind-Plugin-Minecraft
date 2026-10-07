@@ -87,8 +87,10 @@ public static class WorldCapture
                         if (chunk.State == SemanticState.Present && good) comparable++;
                         if (chunk.ExternalPath is { } external)
                         {
-                            referencedExternal.Add(external);
-                            if (!paths.Contains(external)) missing++;
+                            // Missing references are counted, not cached: malformed worlds can name
+                            // 1024 absent mcc files per region, far beyond the bounded file inventory.
+                            if (paths.Contains(external)) referencedExternal.Add(external);
+                            else missing++;
                             if (chunk.ExternalStorageHash is { } hash
                                 && externalHashes.TryGetValue(external, out var previous) && previous != hash)
                                 throw new IOException("External chunk changed between readers: " + external);
