@@ -45,7 +45,7 @@ gameplay correctness. In particular, a zero-byte mca is preserved as
 
 Bundle decisions distinguish container changes, timestamp changes and compression/
 external encoding changes. Raw file changes are also reported; a segmented mca's
-raw byte conflict is informational, while its chunk decisions determine analysis
+raw byte conflict (including its referenced mcc) is marked `ContainerOnly` and informational, while its chunk decisions determine analysis
 conflicts. Both branches modifying entities in a dimension requires larger-domain
 review. All reports explicitly set executable/applicable merge to false.
 

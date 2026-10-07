@@ -104,6 +104,20 @@ public sealed class SemanticTests
     }
 
     [TestMethod]
+    public void ExternalCompressionChangesAreContainerInformationNotPayloadConflicts()
+    {
+        var snapshots = new List<DirectorySemanticScratch>();
+        for (var i = 1; i <= 3; i++)
+        { var source = Dir("world" + i); Region(source, compression: i, external: true); snapshots.Add(Capture(source, "scratch" + i)); }
+        var bundles = new List<BundleDecision>(); var files = new List<FileDecision>();
+        var result = WorldComparison.Compare(snapshots[0], snapshots[1], snapshots[2], bundles.Add, files.Add);
+        Assert.AreEqual(ComparisonChoice.Equal, bundles.Single().Choice);
+        Assert.IsTrue(bundles.Single().EncodingChanged);
+        Assert.AreEqual(0, result.Conflicts);
+        Assert.IsTrue(files.Single(f => f.RelativePath.EndsWith(".mcc")).ContainerOnly);
+    }
+
+    [TestMethod]
     [DataRow("truncated")] [DataRow("overlap")] [DataRow("extent")] [DataRow("length")]
     [DataRow("compression")] [DataRow("nbt")] [DataRow("missing")]
     [DataRow("decode_limit")] [DataRow("broken_zlib")]

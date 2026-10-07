@@ -3,7 +3,7 @@ namespace MineRewind.World.Semantic;
 public enum ComparisonChoice { Equal, Ours, Theirs, Delete, Conflict, Blocked, DimensionReview }
 public sealed record BundleDecision(string SourceId, string WorldId, string DimensionId, int X, int Z,
     ComparisonChoice Choice, bool ContainerChanged, bool TimestampChanged, bool EncodingChanged, string? Diagnostic);
-public sealed record FileDecision(string RelativePath, ComparisonChoice Choice);
+public sealed record FileDecision(string RelativePath, ComparisonChoice Choice, bool ContainerOnly);
 public sealed record ComparisonSummary(int Subjects, int Conflicts, int Blocked, int DimensionReviews, int FileChanges,
     bool Experimental = true, bool Applicable = false);
 
@@ -19,8 +19,15 @@ public static class WorldComparison
         if (completions.Any(c => c.SourceId != completions[0].SourceId)) throw new InvalidDataException("Source identities differ.");
         var unknownInventory = completions.Any(c => c.Summary.UnclassifiedRegions != 0);
         var entityChanges = new Dictionary<string, (bool Ours, bool Theirs)>(StringComparer.Ordinal);
+        var ownedContainerPaths = new HashSet<string>(StringComparer.Ordinal);
         foreach (var group in Groups(stores, token))
         {
+            foreach (var region in group.SelectMany(g => g))
+            {
+                ownedContainerPaths.Add(region.RelativePath);
+                foreach (var chunk in region.Chunks)
+                    if (chunk.ExternalPath is { } path) ownedContainerPaths.Add(path);
+            }
             var entity = group.Select(g => g.FirstOrDefault(r => r.Address.Component == ChunkComponentKind.Entities)).ToArray();
             var key = group.SelectMany(g => g).First().Address.DimensionKey;
             entityChanges.TryGetValue(key, out var changed);
@@ -64,7 +71,7 @@ public static class WorldComparison
                 if (choice == ComparisonChoice.DimensionReview) reviews++;
             }
         }
-        var fileResult = CompareFiles(stores, emitFile, token);
+        var fileResult = CompareFiles(stores, ownedContainerPaths, emitFile, token);
         // Unclassified region paths are also emitted as blocked file decisions by CompareFiles.
         blocked += completions.Any(c => c.Summary.UnclassifiedRegions != 0) ? 1 : 0;
         return new(subjects, conflicts + fileResult.Conflicts, blocked + fileResult.Blocked, reviews, fileResult.Changes);
@@ -127,7 +134,8 @@ public static class WorldComparison
         finally { foreach (var cursor in cursors) cursor.Dispose(); }
     }
 
-    private static (int Changes, int Conflicts, int Blocked) CompareFiles(ISemanticScratch[] stores, Action<FileDecision>? emit, CancellationToken token)
+    private static (int Changes, int Conflicts, int Blocked) CompareFiles(ISemanticScratch[] stores,
+        IReadOnlySet<string> ownedContainerPaths, Action<FileDecision>? emit, CancellationToken token)
     {
         var cursors = stores.Select(s => ScratchArchive.ReadLines<StoredFile>(s, "files.jsonl", token).GetEnumerator()).ToArray();
         try
@@ -144,9 +152,10 @@ public static class WorldComparison
                 var choice = Pick(files[0]?.Sha256, files[1]?.Sha256, files[2]?.Sha256);
                 if (path.EndsWith(".mca", StringComparison.OrdinalIgnoreCase)
                     && files.Any(f => f is { Encoding: FileEncoding.Raw or FileEncoding.OpaqueRegion })) choice = ComparisonChoice.Blocked;
-                emit?.Invoke(new(path, choice)); changes++;
-                // A segmented region's byte conflict is container information; its chunk decisions own content analysis.
-                if (!files.Any(f => f?.Encoding == FileEncoding.SegmentedRegion))
+                var containerOnly = ownedContainerPaths.Contains(path);
+                emit?.Invoke(new(path, choice, containerOnly)); changes++;
+                // Region and referenced mcc byte differences do not override their bundle's semantic decision.
+                if (!containerOnly)
                 {
                     if (choice == ComparisonChoice.Conflict) conflicts++;
                     if (choice == ComparisonChoice.Blocked) blocked++;
