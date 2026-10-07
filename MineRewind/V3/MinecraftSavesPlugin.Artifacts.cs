@@ -3,7 +3,7 @@ using MineRewind.World.Semantic;
 
 namespace MineRewind;
 
-public sealed partial class MinecraftSavesPlugin : IBackupArtifactTransformerCapability, IRestoreMaterializerCapability
+public sealed partial class MinecraftSavesPlugin : IBackupArtifactTransformerCapability, IRestoreMaterializerCapability, IArtifactFileViewProvider
 {
     public ArtifactTransformerId TransformerId { get; } = new(MineRewindPluginId, "minecraft-world-full");
     public RestoreStrategyId RestoreStrategyId { get; } = new(MineRewindPluginId, "minecraft-world-materializer");
@@ -11,6 +11,8 @@ public sealed partial class MinecraftSavesPlugin : IBackupArtifactTransformerCap
 
     public async ValueTask<ArtifactTransformResult> TransformAsync(ArtifactTransformRequest request, PluginInvocationContext context)
     {
+        if (request.IncrementalInput is not null)
+            return await TransformIncrementalAsync(request, context);
         if (request.Config.Kind != MinecraftKind || request.Primary.CoreCaptureMode != CoreCaptureMode.Full
             || request.Primary.Completeness != ArtifactCompleteness.Complete)
             throw new InvalidOperationException("Minecraft Full representation requires Java Full/Complete capture.");
@@ -60,6 +62,18 @@ public sealed partial class MinecraftSavesPlugin : IBackupArtifactTransformerCap
     {
         var token = context.OperationCancellation;
         var artifact = request.ArtifactsTopologicallySorted.Single(a => a.ArtifactId == request.RootArtifactId);
+        if (artifact.Format.FormatId == WorldIncrementalFormat.Format)
+        {
+            await using var view = await OpenFileViewAsync(new(request.Config, request.Folder, request.VersionId,
+                request.RootArtifactId, request.ArtifactsTopologicallySorted, request.ArtifactRead), context);
+            foreach (var file in view.Files)
+            {
+                await using var source = await view.OpenReadAsync(file.RelativePath, token);
+                await using var output = await request.Workspace.OpenWriteAsync(file.RelativePath, token);
+                await source.CopyToAsync(output, token);
+            }
+            return new(OperationOutcome.Success, []);
+        }
         if (artifact.Format != new ArtifactFormatRef(MineRewindOwnerId, "minecraft-world-full") || artifact.FormatVersion != 1
             || artifact.Dependencies.Count != 0) throw new InvalidDataException("Unsupported Minecraft Full artifact.");
         var parent = await context.HostServices.TemporaryStorage.CreateDirectoryAsync(token);

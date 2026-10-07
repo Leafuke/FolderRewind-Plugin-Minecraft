@@ -59,7 +59,18 @@ internal static class MinecraftSnapshotCopier
                     Skip(entry);
                     continue;
                 }
-                File.Copy(entry, destination, overwrite: true);
+                var stamp = File.GetLastWriteTimeUtc(entry);
+                using (var input = new FileStream(entry, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete, 65536))
+                using (var output = new FileStream(destination, FileMode.Create, FileAccess.Write, FileShare.None, 65536))
+                {
+                    var buffer = new byte[65536]; int count;
+                    while ((count = input.Read(buffer, 0, buffer.Length)) != 0)
+                    {
+                        cancellationToken.ThrowIfCancellationRequested();
+                        output.Write(buffer, 0, count);
+                    }
+                }
+                File.SetLastWriteTimeUtc(destination, stamp);
             }
         }
         return new(skippedCount, skippedPaths.ToArray());
