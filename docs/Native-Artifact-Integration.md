@@ -7,3 +7,5 @@ Only formally released formats have a compatibility promise. Keep the domain Ful
 M0 baseline: .NET 10.0.402, 93 adapter tests passed with zero failed/skipped. The current default 3.9.0 package could not restore from public nuget.org; the frozen target Host contract was packaged into an isolated baseline feed/cache, with no product build dependency added. Raw baseline-adapter.trx is in ignored artifacts/integration/baseline.
 
 No push, tag, Release or NuGet publication is authorized. Final local merge to 1.9.x follows complete package/end-to-end/safety acceptance; plugin is merged before Host.
+
+M1: source history integrated without text conflicts; adapter 93 and World 74 tests passed, zero skipped/failed. Temporary API 3.10 candidate feed is build evidence only; final hash-versioned committed contract snapshot and package integration remain pending.

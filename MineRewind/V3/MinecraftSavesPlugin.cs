@@ -208,7 +208,7 @@ public sealed partial class MinecraftSavesPlugin :
             {
                 throw;
             }
-            catch (Exception ex) when (request.Intent == ConsistencyIntent.Prefer)
+            catch (Exception ex) when (ex is not OperationCanceledException && request.Intent == ConsistencyIntent.Prefer)
             {
                 diagnostics.Add(Diagnostic(
                     "minerewind.consistency_coordination_failed",
@@ -245,7 +245,7 @@ public sealed partial class MinecraftSavesPlugin :
             }
             return new MinecraftConsistencyLease(snapshotPath, diagnostics, snapshotPath);
         }
-        catch (Exception ex) when (request.Intent == ConsistencyIntent.Prefer)
+        catch (Exception ex) when (ex is not OperationCanceledException && request.Intent == ConsistencyIntent.Prefer)
         {
             if (snapshotPath is not null)
             {

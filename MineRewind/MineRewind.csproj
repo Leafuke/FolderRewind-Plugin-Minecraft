@@ -8,10 +8,11 @@
     <CopyLocalLockFileAssemblies>true</CopyLocalLockFileAssemblies>
     <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
     <Version>1.9.8</Version>
+    <PluginApiPackageVersion Condition="'$(PluginApiPackageVersion)'==''">3.10.0-p3.1</PluginApiPackageVersion>
   </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="..\MineRewind.World\MineRewind.World.csproj" />
-    <PackageReference Include="FolderRewind.Plugin.Abstractions" Version="3.9.0">
+    <PackageReference Include="FolderRewind.Plugin.Abstractions" Version="$(PluginApiPackageVersion)">
       <Private>false</Private>
     </PackageReference>
     <PackageReference Include="fNbt" Version="1.0.0" />
