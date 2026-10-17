@@ -66,6 +66,7 @@ public sealed partial class MinecraftSavesPlugin
     [
         CurrentSaveCommand("BACKUP", "Back up the currently active Minecraft world"),
         CurrentSaveCommand("LIST_BACKUPS", "List backups for the currently active Minecraft world"),
+        CurrentSaveCommand("LIST_VERSIONS", "List stable version IDs for the currently active Minecraft world"),
         CurrentSaveCommand("RESTORE", "Restore the currently active Minecraft world; default clean"),
         CurrentSaveCommand("AUTO_BACKUP", "Start periodic backup bound to the currently active world"),
         CurrentSaveCommand("STOP_AUTO_BACKUP", "Stop periodic backup for the currently active world"),

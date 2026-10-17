@@ -235,7 +235,11 @@ public sealed partial class MinecraftSavesPlugin :
             var temporaryRoot = await context.HostServices.TemporaryStorage.CreateDirectoryAsync(
                 context.OperationCancellation).ConfigureAwait(false);
             snapshotPath = Path.Combine(temporaryRoot, "minerewind-snapshot-" + Guid.NewGuid().ToString("N"));
-            var copy = MinecraftSnapshotCopier.Copy(sourceRoot, snapshotPath, context.OperationCancellation);
+            var expectedSpace = request.SourceViewLimits is { } limits
+                ? MinecraftSnapshotCopier.InspectSpace(sourceRoot, limits, context.OperationCancellation) : (long?)null;
+            using var reservation = expectedSpace is { } bytes
+                ? await context.HostServices.TemporaryStorage.ReserveAsync(temporaryRoot, bytes, context.OperationCancellation) : null;
+            var copy = MinecraftSnapshotCopier.Copy(sourceRoot, snapshotPath, context.OperationCancellation, request.SourceViewLimits, expectedSpace);
             if (copy.SkippedLinkCount > 0)
             {
                 diagnostics.Add(Diagnostic("minerewind.snapshot_links_skipped", DiagnosticSeverity.Warning,
