@@ -8,7 +8,7 @@
     <CopyLocalLockFileAssemblies>true</CopyLocalLockFileAssemblies>
     <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
     <Version>1.9.9</Version>
-    <PluginApiPackageVersion Condition="'$(PluginApiPackageVersion)'==''">3.10.0-native.b11074b8b378896d</PluginApiPackageVersion>
+    <PluginApiPackageVersion Condition="'$(PluginApiPackageVersion)'==''">3.10.0-native.d4c4f9579b00f388</PluginApiPackageVersion>
   </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="..\MineRewind.World\MineRewind.World.csproj" />

@@ -1,10 +1,10 @@
 {
   "packageId": "FolderRewind.Plugin.Abstractions",
-  "version": "3.10.0-native.b11074b8b378896d",
+  "version": "3.10.0-native.d4c4f9579b00f388",
   "apiVersion": "3.10",
   "assemblyVersion": "3.0.0.0",
-  "sourceCommit": "574d24e10503f7501f4380ed7b4f69f043073151",
-  "sourceDigestSha256": "b11074b8b378896d8b39ae02231592bffd62b98ac7cc1db5ef3557d5203365f8",
+  "sourceCommit": "f5faba5863a51b15a6f5a1607853169f7d69e7eb",
+  "sourceDigestSha256": "d4c4f9579b00f3888e0f8d23f6181912bb851ddb4817cf2e2cea317b21324d99",
   "sourceDigestEncoding": "SHA256 of UTF-8 compact JSON entries, ordered by Git path, hashes over committed Git blob bytes",
   "sources": [
     {
@@ -17,7 +17,7 @@
     },
     {
       "path": "FolderRewind.Plugin.Abstractions/Capabilities.cs",
-      "sha256": "fe231bd61304e28813350e83563c7b9d09b4c3a8b88da1bf149afb8b41751dbf"
+      "sha256": "bf5561506e8647c4b2d1a00b240f4054394fe9e39ba48c7d008c78cdf552507e"
     },
     {
       "path": "FolderRewind.Plugin.Abstractions/FolderRewind.Plugin.Abstractions.csproj",
@@ -45,7 +45,7 @@
     },
     {
       "path": "FolderRewind.Plugin.Abstractions/README.md",
-      "sha256": "985cb67609028507d4d5c99a94b86938f6cd9acdec657ae89cd30845306c4a1c"
+      "sha256": "448f54b98dcf43cdb4f85cfdf77213828750eff7949225ac64b9bd2f8bd4c5f9"
     },
     {
       "path": "FolderRewind.Plugin.Abstractions/Snapshots.cs",
@@ -56,6 +56,6 @@
       "sha256": "060e75e65b2d36070d288a568e1661d56bb8c1a5d2fc8010b83c55ffc91f2ade"
     }
   ],
-  "packageSha256": "53ddf268c8796b72cc882c151e03ffa2dfa1c370f5b1e650241565e12bc91dc8",
-  "assemblySha256": "4cc7d077e33b399032578acfad6ee86c14557c650cd2f08354378f85c5de7e6d"
+  "packageSha256": "e0e7b5a510f8e130cd3bc10cbfa53c051b1371385a5a814f2a343570334f9674",
+  "assemblySha256": "ce86d6eb92ecdae560ba8ba96062de79a39090225b4d9338d43c6988b339f76a"
 }

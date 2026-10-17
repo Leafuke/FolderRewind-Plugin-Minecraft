@@ -83,6 +83,7 @@ public sealed partial class MinecraftSavesPlugin :
     public DiscoveryProviderId ProviderId { get; } = new(DiscoveryIdentity);
     public IReadOnlyList<DiscoveryDefinitionDescriptor> Definitions => DiscoveryDefinitions;
     public ConfigKindRef Kind => MinecraftKind;
+    public bool SupportsBoundedSourceView => true;
     public StateOwnerId StateOwnerId => MineRewindStateOwnerId;
     public int CurrentSchemaVersion => 1;
     public bool SupportsPlayerDataOverride => true;
