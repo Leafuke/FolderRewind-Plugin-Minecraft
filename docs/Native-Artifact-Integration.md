@@ -1,4 +1,11 @@
-# Native Artifact integration (2026-10-16)
+# Native Artifact integration (updated 2026-10-18)
+
+Final local acceptance is complete. This paragraph supersedes the historical candidate and pending notes below. Application code is frozen at Host `225b4bf5a05c989fcb615da3515df5a66d828592`; plugin code is frozen at `a50104b921c51469e3b8362b865f0370c73d8840`. The final 1.9.9 package SHA256 is `c70aa5127092a82ac6089b56ce55dc7b4b5f7bee163eb1105cedc568f33e658b`, reproduced from clean staging. Contract: `3.10.0-native.d4c4f9579b00f388`, exact PackageReference, assembly identity `3.0.0.0`, committed source mapping/provenance, six payload entries, no Abstractions DLL. Documentation and local merge commits do not regenerate that frozen artifact; use the recorded source commit to reproduce it.
+
+Sequential final regression: Host 1245, Runtime 176, Abstractions 15, adapter 94, World 74 passed, zero failed/skipped. The final package passed 32 continuous Versions, checkpoints, Retention, cancellation, cache loss, directory evidence and exact restore. Thirty process-kill boundaries each recovered twice. Real rclone local-backend plain/encrypted jobs, independent read-only recovery, mixed migration with restart and invalidated authorization, and normal MSI-build UI activation/capture/restore passed. Native fallback was forbidden during final normal-build capture. Host Debug x64 build and Release MSI publish passed; the normal assembly has no acceptance entry type.
+
+Combined acceptance and performance evidence is in the Host repository at `docs/plans/Native_Artifact_Integration_1.9_Acceptance.md` and `.json`. The measured sample shows higher Native capture/upload cost and faster incremental restore, so experimental capture remains disabled by default. Real cloud accounts, multi-device and formal distribution-channel acceptance remain pre-release checks. Local integration merges plugin 1.9.x first, then Host 1.9.x; no push, tag, Release or NuGet publication.
+
 
 Approved branch: codex/integrate-native-artifact-1.9, starting at 8ffb5cb85d143f35c1d3f7a6eb0d42cc473a4398 and integrating source 19e11a7. The Host integration plan is docs/plans/Native_Artifact_Integration_1.9_Plan.md in the independent FolderRewind repository.
 
