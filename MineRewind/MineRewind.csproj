@@ -7,11 +7,12 @@
     <GenerateDependencyFile>false</GenerateDependencyFile>
     <CopyLocalLockFileAssemblies>true</CopyLocalLockFileAssemblies>
     <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
-    <Version>1.9.8</Version>
+    <Version>1.9.9</Version>
+    <PluginApiPackageVersion Condition="'$(PluginApiPackageVersion)'==''">3.10.0-native.d4c4f9579b00f388</PluginApiPackageVersion>
   </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="..\MineRewind.World\MineRewind.World.csproj" />
-    <PackageReference Include="FolderRewind.Plugin.Abstractions" Version="3.9.0">
+    <PackageReference Include="FolderRewind.Plugin.Abstractions" Version="[$(PluginApiPackageVersion)]">
       <Private>false</Private>
     </PackageReference>
     <PackageReference Include="fNbt" Version="1.0.0" />
@@ -19,11 +20,18 @@
   <Target Name="PackFrPlugin" DependsOnTargets="Build">
     <PropertyGroup>
       <FrPluginOutput Condition="'$(FrPluginOutput)'==''">$(MSBuildProjectDirectory)\..\artifacts\MineRewind-$(Version).frplugin</FrPluginOutput>
+      <PluginPackStaging>$(MSBuildProjectDirectory)\..\artifacts\pack-staging\$([System.Guid]::NewGuid().ToString('N'))</PluginPackStaging>
       <PluginPackAppData>$(MSBuildProjectDirectory)\..\artifacts\.pack-appdata</PluginPackAppData>
     </PropertyGroup>
-    <MakeDir Directories="$(PluginPackAppData)" />
+    <ItemGroup>
+      <PluginPayload Include="$(TargetDir)MineRewind.dll;$(TargetDir)MineRewind.World.dll;$(TargetDir)fNbt.dll;$(TargetDir)manifest.json;$(TargetDir)settings.schema.json" />
+    </ItemGroup>
+    <MakeDir Directories="$(PluginPackAppData);$(PluginPackStaging)" />
+    <Copy SourceFiles="@(PluginPayload)" DestinationFolder="$(PluginPackStaging)" />
+    <Copy SourceFiles="$(MSBuildProjectDirectory)\..\contracts\source-manifest.json" DestinationFiles="$(PluginPackStaging)\contract-source.json" />
     <Exec EnvironmentVariables="APPDATA=$(PluginPackAppData)" Command="dotnet restore &quot;$(MSBuildProjectDirectory)\..\tools\MineRewind.Pack\MineRewind.Pack.csproj&quot; --configfile &quot;$(MSBuildProjectDirectory)\..\NuGet.Config&quot;" />
-    <Exec EnvironmentVariables="APPDATA=$(PluginPackAppData)" Command="dotnet run --no-restore --project &quot;$(MSBuildProjectDirectory)\..\tools\MineRewind.Pack\MineRewind.Pack.csproj&quot; -- &quot;$(TargetDir).&quot; &quot;$(FrPluginOutput)&quot;" />
+    <Exec EnvironmentVariables="APPDATA=$(PluginPackAppData)" Command="dotnet run --no-restore --project &quot;$(MSBuildProjectDirectory)\..\tools\MineRewind.Pack\MineRewind.Pack.csproj&quot; -- &quot;$(PluginPackStaging)&quot; &quot;$(FrPluginOutput)&quot;" />
+    <RemoveDir Directories="$(PluginPackStaging)" />
   </Target>
   <ItemGroup>
     <Compile Include="V3\**\*.cs" />

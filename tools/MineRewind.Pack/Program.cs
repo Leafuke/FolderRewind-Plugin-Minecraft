@@ -26,21 +26,20 @@ foreach (var required in new[] { entryAssembly, settingsSchema })
         throw new InvalidDataException($"Required payload '{required}' is missing.");
 }
 
+var allowed = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+{ "MineRewind.dll", "MineRewind.World.dll", "fNbt.dll", "manifest.json", "settings.schema.json", "contract-source.json" };
+var files = Directory.EnumerateFiles(source, "*", SearchOption.AllDirectories).OrderBy(value => value, StringComparer.Ordinal).ToArray();
+if (files.Length != allowed.Count || !files.All(file => allowed.Contains(Path.GetRelativePath(source, file))))
+    throw new InvalidDataException("Package staging inventory differs from the approved payload; use a clean staging directory.");
 Directory.CreateDirectory(Path.GetDirectoryName(output)!);
 var temporary = output + "." + Guid.NewGuid().ToString("N") + ".tmp";
 try
 {
     using (var archive = ZipFile.Open(temporary, ZipArchiveMode.Create))
     {
-        foreach (var file in Directory.EnumerateFiles(source, "*", SearchOption.AllDirectories)
-                     .OrderBy(value => value, StringComparer.OrdinalIgnoreCase))
+        foreach (var file in files)
         {
             var relative = Path.GetRelativePath(source, file).Replace('\\', '/');
-            if (relative.EndsWith("FolderRewind.Plugin.Abstractions.dll", StringComparison.OrdinalIgnoreCase)
-                || relative.EndsWith(".pdb", StringComparison.OrdinalIgnoreCase)
-                || relative.EndsWith(".deps.json", StringComparison.OrdinalIgnoreCase)
-                || relative.EndsWith(".runtimeconfig.json", StringComparison.OrdinalIgnoreCase))
-                continue;
             archive.CreateEntryFromFile(file, relative, CompressionLevel.Optimal);
         }
     }

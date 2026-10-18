@@ -83,6 +83,7 @@ public sealed partial class MinecraftSavesPlugin :
     public DiscoveryProviderId ProviderId { get; } = new(DiscoveryIdentity);
     public IReadOnlyList<DiscoveryDefinitionDescriptor> Definitions => DiscoveryDefinitions;
     public ConfigKindRef Kind => MinecraftKind;
+    public bool SupportsBoundedSourceView => true;
     public StateOwnerId StateOwnerId => MineRewindStateOwnerId;
     public int CurrentSchemaVersion => 1;
     public bool SupportsPlayerDataOverride => true;
@@ -208,7 +209,7 @@ public sealed partial class MinecraftSavesPlugin :
             {
                 throw;
             }
-            catch (Exception ex) when (request.Intent == ConsistencyIntent.Prefer)
+            catch (Exception ex) when (ex is not OperationCanceledException && request.Intent == ConsistencyIntent.Prefer)
             {
                 diagnostics.Add(Diagnostic(
                     "minerewind.consistency_coordination_failed",
@@ -235,7 +236,11 @@ public sealed partial class MinecraftSavesPlugin :
             var temporaryRoot = await context.HostServices.TemporaryStorage.CreateDirectoryAsync(
                 context.OperationCancellation).ConfigureAwait(false);
             snapshotPath = Path.Combine(temporaryRoot, "minerewind-snapshot-" + Guid.NewGuid().ToString("N"));
-            var copy = MinecraftSnapshotCopier.Copy(sourceRoot, snapshotPath, context.OperationCancellation);
+            var expectedSpace = request.SourceViewLimits is { } limits
+                ? MinecraftSnapshotCopier.InspectSpace(sourceRoot, limits, context.OperationCancellation) : (long?)null;
+            using var reservation = expectedSpace is { } bytes
+                ? await context.HostServices.TemporaryStorage.ReserveAsync(temporaryRoot, bytes, context.OperationCancellation) : null;
+            var copy = MinecraftSnapshotCopier.Copy(sourceRoot, snapshotPath, context.OperationCancellation, request.SourceViewLimits, expectedSpace);
             if (copy.SkippedLinkCount > 0)
             {
                 diagnostics.Add(Diagnostic("minerewind.snapshot_links_skipped", DiagnosticSeverity.Warning,
@@ -245,7 +250,7 @@ public sealed partial class MinecraftSavesPlugin :
             }
             return new MinecraftConsistencyLease(snapshotPath, diagnostics, snapshotPath);
         }
-        catch (Exception ex) when (request.Intent == ConsistencyIntent.Prefer)
+        catch (Exception ex) when (ex is not OperationCanceledException && request.Intent == ConsistencyIntent.Prefer)
         {
             if (snapshotPath is not null)
             {

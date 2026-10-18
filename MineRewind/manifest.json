@@ -6,7 +6,7 @@
     "en-US": "MineRewind",
     "zh-CN": "MineRewind"
   },
-  "version": "1.9.8",
+  "version": "1.9.9",
   "author": "Leafuke",
   "description": "Enhanced Minecraft saves backup with discovery, reconciliation, region scope, consistency, metadata, hot restore, and commands.",
   "localizedDescription": {
@@ -15,7 +15,7 @@
   },
   "pluginApi": {
     "major": 3,
-    "minor": 9
+    "minor": 10
   },
   "entryAssembly": "MineRewind.dll",
   "entryType": "MineRewind.MinecraftSavesPlugin",
@@ -63,11 +63,18 @@
     "historyQuery",
     "knotLink",
     "temporaryStorage",
-    "logging"
+    "logging",
+    "artifactRead",
+    "artifactTransformStaging",
+    "restoreMaterializationWorkspace"
   ],
-  "architectures": ["any"],
+  "architectures": [
+    "any"
+  ],
   "capabilities": [
     "spatialPreview",
+    "backupArtifactTransformer",
+    "restoreMaterializer",
     "discovery",
     "configReconciliation",
     "filePolicy",
@@ -81,9 +88,85 @@
     "knotLinkIntegration",
     "providerStateMigration"
   ],
-  "artifactFormats": [],
-  "artifactTransformers": [],
-  "restoreStrategies": [],
+  "artifactFormats": [
+    {
+      "ownerId": "com.folderrewind.minerewind",
+      "formatId": "minecraft-world-full",
+      "minimumVersion": 1,
+      "maximumVersion": 1,
+      "displayName": "Minecraft lossless Full"
+    },
+    {
+      "ownerId": "com.folderrewind.minerewind",
+      "formatId": "minecraft-world-incremental",
+      "minimumVersion": 1,
+      "maximumVersion": 1,
+      "displayName": "Minecraft lossless incremental"
+    }
+  ],
+  "artifactTransformers": [
+    {
+      "transformerId": "minecraft-world-full",
+      "compatibleConfigKinds": [
+        {
+          "ownerId": "com.folderrewind.minerewind",
+          "kindId": "minecraft-saves"
+        }
+      ],
+      "compatibleCoreModes": [
+        "full",
+        "smart"
+      ],
+      "compatibleCompleteness": [
+        "complete",
+        "partial"
+      ],
+      "parameterSchema": {
+        "type": "object",
+        "properties": {
+          "representation": {
+            "type": "string",
+            "enum": [
+              "incremental-v1"
+            ]
+          }
+        },
+        "additionalProperties": false
+      },
+      "supportedFailureBehaviors": [
+        "keepPrimaryWithWarnings",
+        "requireTransform"
+      ],
+      "supportsIncrementalInput": true
+    }
+  ],
+  "restoreStrategies": [
+    {
+      "strategyId": "minecraft-world-materializer",
+      "supportedFormats": [
+        {
+          "ownerId": "com.folderrewind.minerewind",
+          "formatId": "minecraft-world-full",
+          "minimumVersion": 1,
+          "maximumVersion": 1
+        },
+        {
+          "ownerId": "com.folderrewind.minerewind",
+          "formatId": "minecraft-world-incremental",
+          "minimumVersion": 1,
+          "maximumVersion": 1
+        }
+      ],
+      "supportedCompleteness": [
+        "complete",
+        "partial"
+      ],
+      "supportedRestoreModes": [
+        "clean",
+        "overwrite"
+      ]
+    }
+  ],
   "hasBackupCompletionObserver": false,
   "homepage": "https://github.com/Leafuke/FolderRewind-Plugin-Minecraft",
   "repository": "Leafuke/FolderRewind-Plugin-Minecraft"
