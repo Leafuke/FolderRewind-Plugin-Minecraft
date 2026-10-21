@@ -110,11 +110,7 @@ public sealed partial class MinecraftSavesPlugin
         EnsureActivated();
         if (!KnotLinkCoreCommands.FolderCommands.Contains(command)) return new(null, []);
         var configs = await context.HostServices.Configs.QueryAsync(MinecraftKind, context.OperationCancellation).ConfigureAwait(false);
-        var active = configs.SelectMany(config => config.Folders.Where(folder => IsSessionLockHeld(folder.Path))
-            .Select(folder => new KnotLinkTarget(config.ConfigId, folder.FolderId))).Take(2).ToArray();
-        return active.Length == 1 ? new(active[0], []) : new(null,
-            [Diagnostic(active.Length == 0 ? "minerewind.command_active_world_not_found" : "minerewind.command_multiple_active_worlds",
-                DiagnosticSeverity.Error, "KnotLinkTargetResolution")]);
+        return ResolveActiveWorld(configs);
     }
 
     public ValueTask<FilePolicyResult> ResolveAsync(
