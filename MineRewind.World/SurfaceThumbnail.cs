@@ -8,6 +8,8 @@ public sealed class SurfaceThumbnail
     private readonly bool[] _shade = new bool[256];
     private readonly uint[][] _levels = [new uint[256], new uint[64], new uint[16], new uint[4], new uint[1]];
     public ChunkReadState State { get; }
+    public bool HasSurface { get; }
+    public bool MissingColor { get; }
     public long EstimatedBytes => 4096;
     public SurfaceThumbnail(ChunkSurface surface)
     {
@@ -16,6 +18,7 @@ public sealed class SurfaceThumbnail
             for (var i = 0; i < 256; i++)
             {
                 if (surface.Columns[i] is not { } c) continue;
+                HasSurface = true; MissingColor |= c.MissingColor;
                 _heights[i] = (short)c.Height;
                 _shade[i] = !c.MissingColor && c.WaterBottomHeight is null && c.BlockName is not ("minecraft:water" or "minecraft:bubble_column");
                 _base[i] = c.MissingColor && ((i % 16 + i / 16) & 3) == 0 ? 0xFF686868 : SurfaceShading.Color(c, null, null, null, null);

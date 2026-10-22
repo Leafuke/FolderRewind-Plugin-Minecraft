@@ -1,4 +1,4 @@
-using System.Buffers.Binary;
+﻿using System.Buffers.Binary;
 using System.Globalization;
 using FolderRewind.Plugin.Abstractions;
 using MineRewind.World;
@@ -14,7 +14,7 @@ internal sealed partial class WorldPreviewSession
     private readonly Dictionary<Guid, (string Source, WorldDescriptor World)> _worlds = [];
     private readonly Dictionary<CacheKey, TaskCompletionSource<ChunkSurface>> _inflight = [];
     private bool _closed;
-    private sealed record CacheKey(Guid Generation, string Dimension, ChunkKey Chunk, int Height);
+    private sealed record CacheKey(Guid Generation, string Dimension, ChunkKey Chunk, int Height, SurfaceViewMode Mode = SurfaceViewMode.Surface);
     private sealed record RawKey(CacheKey Key);
     internal long CacheBytes { get { lock (_sync) return _cache.Bytes; } }
     internal long DecodedChunks;
@@ -29,12 +29,31 @@ internal sealed partial class WorldPreviewSession
             var bounds = d.Regions.Count == 0 ? new SpatialPreviewBounds(0, 0, 512, 512)
                 : new(keys.Min(k => k.X) * 512d, keys.Min(k => k.Z) * 512d, (keys.Max(k => k.X) + 1d) * 512, (keys.Max(k => k.Z) + 1d) * 512);
             var name = d.Id switch { "minecraft:overworld" => Text("Overworld", "主世界"), "minecraft:the_nether" => Text("The Nether", "下界"), "minecraft:the_end" => Text("The End", "末地"), _ => Text(d.Id, d.Id) };
-            return new SpatialPreviewLayer(d.Id, name, bounds, 16, 512, new(-2048, 2047,
-                d.Id == "minecraft:the_nether" ? 120 : 2047, Text("Maximum scan Y", "扫描高度上限")))
-                { CoordinateBounds = new(-30_000_512, -30_000_512, 30_000_512, 30_000_512) };
+            var (minimum, maximum) = d.Id switch
+            {
+                "minecraft:overworld" => (-64, 319), "minecraft:the_nether" or "minecraft:the_end" => (0, 255), _ => (-2048, 2047)
+            };
+            var surface = new SpatialPreviewHeight(minimum, maximum, maximum, Text("Surface scan Y", "地表扫描上限 Y"));
+            var cave = new SpatialPreviewHeight(minimum, maximum, d.Id == "minecraft:the_nether" ? 120 : 64, Text("Cave starting Y", "洞穴起点 Y"));
+            var slice = new SpatialPreviewHeight(minimum, maximum, 64, Text("Slice Y", "切片 Y"));
+            return new SpatialPreviewLayer(d.Id, name, bounds, 16, 512, surface)
+            {
+                CoordinateBounds = new(-30_000_512, -30_000_512, 30_000_512, 30_000_512),
+                ViewModes = [new("surface", Text("Surface", "地表"), surface), new("cave", Text("Cave", "洞穴"), cave) { UseNavigationHeight = true },
+                    new("slice", Text("Slice", "切片"), slice) { UseNavigationHeight = true }],
+                DefaultViewModeId = d.Id == "minecraft:the_nether" ? "cave" : "surface"
+            };
         }).ToArray();
         return new(layers, Text("X", "X"), Text("Z", "Z"), [])
-        { LayerLabel = Text("Dimension", "维度"), NavigationLabel = Text("Locate player", "定位玩家"), CellLabel = Text("Chunk", "区块") };
+        { LayerLabel = Text("Dimension", "维度"), NavigationLabel = Text("Locate player", "定位玩家"), CellLabel = Text("Chunk", "区块"),
+            DistanceUnit = Text("blocks", "方块"), SupportsStatusOverlay = true,
+            Legend = [new("readable", Text("Read (green)", "已读（绿色）"), 0xFF5B9874),
+                new("pending", Text("Not decoded (blue-gray)", "未解码（蓝灰）"), 0xFF65798D),
+                new("absent", source.IsPartial ? Text("Not included / ungenerated (gray)", "未包含／未生成（灰色）") : Text("No record (gray)", "无记录（灰色）"), 0xFF555C65),
+                new("empty", Text("No visible surface (empty)", "无可见表面（空白）"), 0),
+                new("unsupported", Text("Unsupported (yellow pattern)", "不支持（黄色网纹）"), 0xFFB99A54),
+                new("failed", Text("Read failed (red pattern)", "读取失败（红色网纹）"), 0xFFAB5656),
+                new("missing", Text("Missing color (gray stripes)", "缺色（灰色斜纹）"), 0xFF969696)] };
     }
 
     public SpatialPreviewNavigation Navigation(SpatialPreviewSource source, CancellationToken token)
@@ -44,7 +63,7 @@ internal sealed partial class WorldPreviewSession
         var values = targets.Select(t => new SpatialPreviewTarget(t.Id,
             t.Spawn ? Text("World", "世界") : Text("Saved players", "玩家上次保存位置"),
             t.Spawn ? Text("World spawn", "世界出生点") : t.SinglePlayer ? Text("Singleplayer — last saved", "当前玩家 · 上次保存位置") : Text(t.Name ?? t.Id, t.Name ?? t.Id),
-            t.Dimension, t.X, t.Z)).ToArray();
+            t.Dimension, t.X, t.Z) { SuggestedHeight = t.Height }).ToArray();
         var single = targets.FirstOrDefault(t => t.SinglePlayer && world.Dimensions.Any(d => d.Id == t.Dimension));
         return new(values, single?.Id ?? targets.FirstOrDefault(t => t.Spawn && world.Dimensions.Any(d => d.Id == t.Dimension))?.Id)
         { QuickTargetId = single?.Id };
@@ -61,14 +80,14 @@ internal sealed partial class WorldPreviewSession
         var dimension = world.Dimensions.Single(d => d.Id == request.LayerId);
         var x = (int)Math.Floor(request.X); var z = (int)Math.Floor(request.Y);
         var key = Coordinates.ChunkAt(x, z);
-        var surface = Surface(world, dimension, request.Source.Generation, key, Math.Clamp(request.MaximumHeight ?? 2047, -2048, 2047), token);
+        var surface = Surface(world, dimension, request.Source.Generation, key, Math.Clamp(request.MaximumHeight ?? 2047, -2048, 2047), token, ParseMode(request.ViewModeId));
         var fields = new List<FolderMetadataField>
         {
             Field("dimension", "Dimension ID", "维度标识", dimension.Id),
             Field("block", "Block X, Z", "方块 X, Z", $"{x}, {z}"),
             Field("chunk", "Chunk", "区块", $"{key.X}, {key.Z}"),
             Field("region", "Region", "区域", $"{key.Region.X}, {key.Region.Z}"),
-            new("status", Text("State", "状态"), StateText(surface.State))
+            new("status", Text("State", "状态"), StateText(surface.State, request.Source.IsPartial))
         };
         if (surface.DataVersion is { } version) fields.Add(Field("dataVersion", "DataVersion", "数据版本", version.ToString(CultureInfo.InvariantCulture)));
         if (surface.Columns.Count == 256 && surface.Columns[Coordinates.FloorMod(z, 16) * 16 + Coordinates.FloorMod(x, 16)] is { } column)
@@ -78,6 +97,8 @@ internal sealed partial class WorldPreviewSession
             if (column.MissingColor) fields.Add(new("color", Text("Map color", "地图配色"), Text("Missing color", "缺少配色")));
             fields.Add(Field("height", "Surface Y", "表面高度", column.Height.ToString(CultureInfo.InvariantCulture)));
         }
+        else if (surface.State == ChunkReadState.Present)
+            fields.Add(new("surface", Text("View result", "当前视图结果"), Text("No visible block at this Y or below in this view", "当前视图在该高度没有可见表面或方块")));
         return new(fields.AsReadOnly(), []);
     }
 
@@ -95,10 +116,10 @@ internal sealed partial class WorldPreviewSession
         return world;
     }
 
-    private ChunkSurface Surface(WorldDescriptor world, DimensionDescriptor dimension, Guid generation, ChunkKey key, int height, CancellationToken token)
+    private ChunkSurface Surface(WorldDescriptor world, DimensionDescriptor dimension, Guid generation, ChunkKey key, int height, CancellationToken token, SurfaceViewMode mode = SurfaceViewMode.Surface)
     {
         if (!dimension.Regions.TryGetValue(key.Region, out var path)) return ChunkSurface.Empty(key, ChunkReadState.Absent);
-        var cacheKey = new CacheKey(generation, dimension.Id, key, height);
+        var cacheKey = new CacheKey(generation, dimension.Id, key, height, mode);
         TaskCompletionSource<ChunkSurface> flight;
         bool owner;
         lock (_sync)
@@ -112,7 +133,7 @@ internal sealed partial class WorldPreviewSession
         {
             try { return flight.Task.WaitAsync(token).GetAwaiter().GetResult(); }
             catch (OperationCanceledException) when (!token.IsCancellationRequested)
-            { return Surface(world, dimension, generation, key, height, token); }
+            { return Surface(world, dimension, generation, key, height, token, mode); }
         }
         try
         {
@@ -120,7 +141,7 @@ internal sealed partial class WorldPreviewSession
             Interlocked.Increment(ref DecodedChunks);
             AnvilRegionIndex? index;
             lock (_sync) index = _cache.Get<AnvilRegionIndex>(new HeaderKey(path));
-            var value = SurfaceReader.Read(key, AnvilReader.Read(world.SourceRoot, path, key, token, index), height, token);
+            var value = SurfaceReader.Read(key, AnvilReader.Read(world.SourceRoot, path, key, token, index), height, token, mode);
             lock (_sync)
             {
                 ObjectDisposedException.ThrowIf(_closed, this);
@@ -142,6 +163,11 @@ internal sealed partial class WorldPreviewSession
         }
     }
 
+    private static SurfaceViewMode ParseMode(string? id) => id switch
+    {
+        null or "surface" => SurfaceViewMode.Surface, "cave" => SurfaceViewMode.Cave, "slice" => SurfaceViewMode.Slice,
+        _ => throw new ArgumentException("Unsupported preview mode.")
+    };
     private static void Put(byte[] pixels, int x, int y, uint color) => BinaryPrimitives.WriteUInt32LittleEndian(pixels.AsSpan((y * 256 + x) * 4, 4), color);
     private static uint StateColor(ChunkReadState state, int x, int y) => state switch
     {
@@ -149,9 +175,9 @@ internal sealed partial class WorldPreviewSession
         ChunkReadState.UnsupportedVersion or ChunkReadState.UnsupportedCompression => ((x / 4 + y / 4) & 1) == 0 ? 0xFFB99A54 : 0xFF71654A,
         _ => ((x / 4 + y / 4) & 1) == 0 ? 0xFFAB5656 : 0xFF693F46
     };
-    private static LocalizedText StateText(ChunkReadState state) => state switch
+    private static LocalizedText StateText(ChunkReadState state, bool partial = false) => state switch
     {
-        ChunkReadState.Present => Text("Readable", "可读取"), ChunkReadState.Absent => Text("Not generated", "尚未生成"),
+        ChunkReadState.Present => Text("Readable", "可读取"), ChunkReadState.Absent => partial ? Text("Not included or not generated", "未包含或未生成") : Text("Not generated", "尚未生成"),
         ChunkReadState.UnsupportedVersion => Text("Unsupported data version", "数据版本暂不支持"),
         ChunkReadState.UnsupportedCompression => Text("Unsupported compression", "压缩格式暂不支持"),
         ChunkReadState.Changing => Text("Changed during reading; refresh", "读取期间发生变化，请刷新"),

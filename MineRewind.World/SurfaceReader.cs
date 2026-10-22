@@ -10,7 +10,7 @@ public static class SurfaceReader
         3463, 3465, 3578, 3698, 3700, 3837, 3839, 3953, 3955, 4080, 4082, 4189, 4325, 4435,
         4438, 4440, 4554, 4556, 4671, 4786, 4788, 4790, 4903, 5023];
 
-    public static ChunkSurface Read(ChunkKey key, ChunkRecord record, int maximumY, CancellationToken token = default)
+    public static ChunkSurface Read(ChunkKey key, ChunkRecord record, int maximumY, CancellationToken token = default, SurfaceViewMode mode = SurfaceViewMode.Surface)
     {
         if (record.State != ChunkReadState.Present || record.Nbt is null) return ChunkSurface.Empty(key, record.State);
         try
@@ -36,13 +36,15 @@ public static class SurfaceReader
             var columns = new SurfaceColumn?[256];
             var seen = new HashSet<int>();
             var complete = new bool[256];
+            var caveOpen = new bool[256];
+            var lastY = Enumerable.Repeat(int.MaxValue, 256).ToArray();
             foreach (var section in sections.Cast<NbtCompound>().OrderByDescending(s => unchecked((sbyte)(s.Get<NbtByte>("Y")?.Value ?? 0))))
             {
                 token.ThrowIfCancellationRequested();
                 var yTag = section.Get<NbtByte>("Y") ?? throw new InvalidDataException("Missing section Y.");
                 var sectionY = unchecked((sbyte)yTag.Value);
                 if (!seen.Add(sectionY)) throw new InvalidDataException("Duplicate section.");
-                if (sectionY * 16 > maximumY) continue;
+                if (sectionY * 16 > maximumY || mode == SurfaceViewMode.Slice && sectionY != Coordinates.FloorDiv(maximumY, 16)) continue;
                 var states = section.Get<NbtCompound>("block_states");
                 if (states is null) continue; // Lighting-only section.
                 var palette = states.Get<NbtList>("palette") ?? throw new InvalidDataException("Missing palette.");
@@ -72,19 +74,32 @@ public static class SurfaceReader
                 {
                     var column = z * 16 + x;
                     if (complete[column]) continue;
-                    for (var y = Math.Min(15, maximumY - sectionY * 16); y >= 0; y--)
+                    var topY = Math.Min(15, maximumY - sectionY * 16);
+                    for (var y = topY; y >= (mode == SurfaceViewMode.Slice ? topY : 0); y--)
                     {
                         var index = y * 256 + column;
                         var paletteIndex = materials.Length == 1 ? 0 : (int)((unchecked((ulong)data![index / perLong]) >> ((index % perLong) * bits)) & ((1UL << bits) - 1));
                         if (paletteIndex >= materials.Length) throw new InvalidDataException("Invalid palette index.");
                         var material = materials[paletteIndex];
-                        if ((material.Flags & 1) != 0 || material.Name is "minecraft:air" or "minecraft:cave_air" or "minecraft:void_air") continue;
-                        var biome = Biome(x, y, z); var absoluteY = sectionY * 16 + y;
+                        var absoluteY = sectionY * 16 + y;
+                        var air = material.Name is "minecraft:air" or "minecraft:cave_air" or "minecraft:void_air";
+                        var transparent = air || mode != SurfaceViewMode.Slice && (material.Flags & 1) != 0
+                            || mode == SurfaceViewMode.Cave && (material.Flags & 16) != 0;
+                        if (mode == SurfaceViewMode.Cave)
+                        {
+                            if (lastY[column] == int.MaxValue ? absoluteY < maximumY : absoluteY < lastY[column] - 1) caveOpen[column] = true;
+                            lastY[column] = absoluteY;
+                            if (transparent || (material.Flags & 8) != 0) caveOpen[column] = true;
+                            if (!caveOpen[column]) continue;
+                        }
+                        if (transparent) continue;
+                        var biome = Biome(x, y, z);
                         var color = BlockColors.Tint(version.Value, material, biome);
                         var water = (material.Flags & 8) != 0;
                         if (columns[column] is null)
                         {
                             columns[column] = new(material.Name, absoluteY, color, biome, material.Missing);
+                            if (mode == SurfaceViewMode.Slice) { complete[column] = true; break; }
                             if (material.Waterlogged && !water)
                             {
                                 var waterColor = BlockColors.Tint(version.Value, BlockColors.Material(version.Value, "minecraft:water", null), biome);

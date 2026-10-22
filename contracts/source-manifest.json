@@ -1,10 +1,10 @@
 {
   "packageId": "FolderRewind.Plugin.Abstractions",
-  "version": "3.10.0-native.d4c4f9579b00f388",
-  "apiVersion": "3.10",
+  "version": "3.11.0-preview.610a36af784e2ddc",
+  "apiVersion": "3.11",
   "assemblyVersion": "3.0.0.0",
-  "sourceCommit": "f5faba5863a51b15a6f5a1607853169f7d69e7eb",
-  "sourceDigestSha256": "d4c4f9579b00f3888e0f8d23f6181912bb851ddb4817cf2e2cea317b21324d99",
+  "sourceCommit": "cf5a8cad1f80953cc5a4e434cbfc02277f3dc494",
+  "sourceDigestSha256": "610a36af784e2ddc2e8bada870ff0c088c825b10d0bcc5c97b27f2b84cf68665",
   "sourceDigestEncoding": "SHA256 of UTF-8 compact JSON entries, ordered by Git path, hashes over committed Git blob bytes",
   "sources": [
     {
@@ -21,7 +21,7 @@
     },
     {
       "path": "FolderRewind.Plugin.Abstractions/FolderRewind.Plugin.Abstractions.csproj",
-      "sha256": "1d9a241d95d5b1e77978b974b4ac4a7a41786c540de2349f0de06c30ef1949ac"
+      "sha256": "59792d22514372afdbd0fd614032d48c14f7483ab327214e7677a19cbff15595"
     },
     {
       "path": "FolderRewind.Plugin.Abstractions/Identifiers.cs",
@@ -29,7 +29,7 @@
     },
     {
       "path": "FolderRewind.Plugin.Abstractions/KnotLinkCoreCommands.cs",
-      "sha256": "778a73ff466a42fafb41184eecf5b1a24bf807511002a75b3b5d8bda469a017b"
+      "sha256": "87d19cbef8a522456d979e9bda609b0e98bb5a7b329a178a3e68f27d9532b833"
     },
     {
       "path": "FolderRewind.Plugin.Abstractions/Lifecycle.cs",
@@ -41,11 +41,11 @@
     },
     {
       "path": "FolderRewind.Plugin.Abstractions/PluginApi.cs",
-      "sha256": "fa25a933411914e9feba5e45eeb5450d160df5e82f4ddadcef7dde3d3a3351db"
+      "sha256": "1cc60c7c7f5c067cc0bb78e75479533813ee7c567b5b8dfb048c3c44dae64276"
     },
     {
       "path": "FolderRewind.Plugin.Abstractions/README.md",
-      "sha256": "448f54b98dcf43cdb4f85cfdf77213828750eff7949225ac64b9bd2f8bd4c5f9"
+      "sha256": "31cc09cf43ea7b0cfb87d170d1d5b5a2e4820bbe797bb5be5361014f72032c85"
     },
     {
       "path": "FolderRewind.Plugin.Abstractions/Snapshots.cs",
@@ -53,9 +53,9 @@
     },
     {
       "path": "FolderRewind.Plugin.Abstractions/SpatialPreview.cs",
-      "sha256": "060e75e65b2d36070d288a568e1661d56bb8c1a5d2fc8010b83c55ffc91f2ade"
+      "sha256": "585afc8994f9422fc6e2682832ffaaba9c5cb5895f327d7976fcf98f87e2bbb1"
     }
   ],
-  "packageSha256": "e0e7b5a510f8e130cd3bc10cbfa53c051b1371385a5a814f2a343570334f9674",
-  "assemblySha256": "ce86d6eb92ecdae560ba8ba96062de79a39090225b4d9338d43c6988b339f76a"
+  "packageSha256": "2745a35ba5ba091954122c6b2cf98ba89c81ab0047aad6b8fcd2ca45803f3cfd",
+  "assemblySha256": "5be66a35c0ead2857e005110471cd98c649747c1d5c27d7a1eed1e7a8467cff1"
 }

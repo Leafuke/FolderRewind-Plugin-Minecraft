@@ -5,7 +5,10 @@ using fNbt;
 
 namespace MineRewind.World;
 
-public sealed record WorldNavigationTarget(string Id, string? Name, string Dimension, double X, double Z, bool SinglePlayer, bool Spawn);
+public sealed record WorldNavigationTarget(string Id, string? Name, string Dimension, double X, double Z, bool SinglePlayer, bool Spawn)
+{
+    public int? Height { get; init; }
+}
 
 /// <summary>Read-only saved positions. Never loads inventories into a long-lived preview model.</summary>
 public static class WorldNavigation
@@ -71,7 +74,9 @@ public static class WorldNavigation
             var name = player["bukkit"] is NbtCompound bukkit && bukkit["lastKnownName"] is NbtString knownName ? knownName.Value : null;
             if (name?.Length > 128) name = null;
             if (string.IsNullOrWhiteSpace(name)) names.TryGetValue(id, out name);
-            targets[id] = new(id, name, dimension, ((NbtDouble)position[0]).Value, ((NbtDouble)position[2]).Value, isSingle, false);
+            var y = ((NbtDouble)position[1]).Value;
+            targets[id] = new(id, name, dimension, ((NbtDouble)position[0]).Value, ((NbtDouble)position[2]).Value, isSingle, false)
+                { Height = double.IsFinite(y) && y is >= -2048 and <= 2047 ? (int)Math.Floor(y) : null };
         }
         NbtCompound? TryRead(string path)
         {

@@ -34,8 +34,15 @@ internal static class JavaLz4Block
             if (output.Length + unpacked > AnvilReader.MaximumChunkBytes) throw new InvalidDataException("Chunk exceeds the decoding limit.");
             var compressed = new byte[packed]; input.ReadExactly(compressed);
             var decoded = method == 0x10 ? compressed : new byte[unpacked];
-            if (method == 0x20 && LZ4Codec.Decode(compressed, decoded) != unpacked)
-                throw new InvalidDataException("Invalid LZ4Block payload.");
+            if (method == 0x20)
+            {
+                try
+                {
+                    if (LZ4Codec.Decode(compressed, decoded) != unpacked)
+                        throw new InvalidDataException("Invalid LZ4Block payload.");
+                }
+                catch (ArgumentException ex) { throw new InvalidDataException("Invalid LZ4Block payload.", ex); }
+            }
             if (XxHash32.HashToUInt32(decoded, unchecked((int)0x9747b28c)) != checksum)
                 throw new InvalidDataException("LZ4Block checksum mismatch.");
             token.ThrowIfCancellationRequested();
