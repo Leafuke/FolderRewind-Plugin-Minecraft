@@ -1,4 +1,4 @@
-<Project Sdk="Microsoft.NET.Sdk">
+﻿<Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
     <TargetFramework>net10.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
@@ -7,8 +7,8 @@
     <GenerateDependencyFile>false</GenerateDependencyFile>
     <CopyLocalLockFileAssemblies>true</CopyLocalLockFileAssemblies>
     <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
-    <Version>1.9.12</Version>
-    <PluginApiPackageVersion Condition="'$(PluginApiPackageVersion)'==''">3.11.0-preview.610a36af784e2ddc</PluginApiPackageVersion>
+    <Version>1.9.13</Version>
+    <PluginApiPackageVersion Condition="'$(PluginApiPackageVersion)'==''">3.11.0-preview.925a4800b63fac73</PluginApiPackageVersion>
   </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="..\MineRewind.World\MineRewind.World.csproj" />

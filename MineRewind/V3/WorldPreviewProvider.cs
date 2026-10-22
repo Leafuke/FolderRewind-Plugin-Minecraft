@@ -20,9 +20,21 @@ internal sealed partial class WorldPreviewSession
     internal long DecodedChunks;
     public void Clear() { lock (_sync) { _cache.Clear(); _worlds.Clear(); _closed = true; } }
 
+    private sealed class WorldResolutionException(bool ambiguous) : IOException
+    {
+        public bool Ambiguous { get; } = ambiguous;
+    }
     public SpatialPreviewDescription Describe(SpatialPreviewSource source, CancellationToken token)
     {
-        var world = GetWorld(source, token);
+        WorldDescriptor world;
+        try { world = GetWorld(source, token); }
+        catch (WorldResolutionException ex)
+        {
+            var reason = ex.Ambiguous ? Text("Multiple world directories found. This partial backup cannot be previewed unambiguously.", "找到多个候选世界目录，无法唯一识别这份部分备份。")
+                : Text("No recognizable Java world directory was found. A level.dat or a world/region directory structure is required.", "未找到可识别的 Java 世界目录，需要 level.dat 或世界的 region 目录结构。");
+            return new([], Text("X", "X"), Text("Z", "Z"), [new("preview.world-layout", DiagnosticSeverity.Warning, "SpatialPreview",
+                MinecraftSavesPlugin.PluginIdentity, reason.Translations)]) { DistanceUnit = Text("blocks", "方块") };
+        }
         var layers = world.Dimensions.Select(d =>
         {
             var keys = d.Regions.Keys;
@@ -39,7 +51,7 @@ internal sealed partial class WorldPreviewSession
             return new SpatialPreviewLayer(d.Id, name, bounds, 16, 512, surface)
             {
                 CoordinateBounds = new(-30_000_512, -30_000_512, 30_000_512, 30_000_512),
-                ViewModes = [new("surface", Text("Surface", "地表"), surface), new("cave", Text("Cave", "洞穴"), cave) { UseNavigationHeight = true },
+                ViewModes = [new("surface", Text("Surface", "地表"), surface), new("cave", Text("Cave", "洞穴"), cave) { UseNavigationHeight = true, UseNavigationHeightAsDefault = d.Id != "minecraft:the_nether" },
                     new("slice", Text("Slice", "切片"), slice) { UseNavigationHeight = true }],
                 DefaultViewModeId = d.Id == "minecraft:the_nether" ? "cave" : "surface"
             };
@@ -50,7 +62,7 @@ internal sealed partial class WorldPreviewSession
             Legend = [new("readable", Text("Read (green)", "已读（绿色）"), 0xFF5B9874),
                 new("pending", Text("Not decoded (blue-gray)", "未解码（蓝灰）"), 0xFF65798D),
                 new("absent", source.IsPartial ? Text("Not included / ungenerated (gray)", "未包含／未生成（灰色）") : Text("No record (gray)", "无记录（灰色）"), 0xFF555C65),
-                new("empty", Text("No visible surface (empty)", "无可见表面（空白）"), 0),
+                new("empty", Text("No visible surface (dark pattern)", "无可见表面（深灰纹）"), 0),
                 new("unsupported", Text("Unsupported (yellow pattern)", "不支持（黄色网纹）"), 0xFFB99A54),
                 new("failed", Text("Read failed (red pattern)", "读取失败（红色网纹）"), 0xFFAB5656),
                 new("missing", Text("Missing color (gray stripes)", "缺色（灰色斜纹）"), 0xFF969696)] };
@@ -106,7 +118,8 @@ internal sealed partial class WorldPreviewSession
     {
         var path = Path.GetFullPath(source.Folder.Path);
         lock (_sync) { ObjectDisposedException.ThrowIf(_closed, this); if (_worlds.TryGetValue(source.Generation, out var cached) && cached.Source == path) return cached.World; }
-        var root = WorldLocator.TryResolveWorldPath(path) ?? throw new IOException("Not a uniquely resolved Java world.");
+        var resolution = source.IsPartial ? PreviewWorldLocator.Resolve(path, token) : (WorldLocator.TryResolveWorldPath(path), false);
+        var root = resolution.Item1 ?? throw new WorldResolutionException(resolution.Item2);
         var world = WorldScanner.Scan(path, root, token);
         lock (_sync)
         {

@@ -1,10 +1,10 @@
 {
   "packageId": "FolderRewind.Plugin.Abstractions",
-  "version": "3.11.0-preview.610a36af784e2ddc",
+  "version": "3.11.0-preview.925a4800b63fac73",
   "apiVersion": "3.11",
   "assemblyVersion": "3.0.0.0",
-  "sourceCommit": "cf5a8cad1f80953cc5a4e434cbfc02277f3dc494",
-  "sourceDigestSha256": "610a36af784e2ddc2e8bada870ff0c088c825b10d0bcc5c97b27f2b84cf68665",
+  "sourceCommit": "16303d4cd4088a9ac69965e40005371731fb7844",
+  "sourceDigestSha256": "925a4800b63fac7366323a86fa22fc689fa1197e93a7b73041e3747630c08c7b",
   "sourceDigestEncoding": "SHA256 of UTF-8 compact JSON entries, ordered by Git path, hashes over committed Git blob bytes",
   "sources": [
     {
@@ -53,9 +53,9 @@
     },
     {
       "path": "FolderRewind.Plugin.Abstractions/SpatialPreview.cs",
-      "sha256": "585afc8994f9422fc6e2682832ffaaba9c5cb5895f327d7976fcf98f87e2bbb1"
+      "sha256": "03d86ed51afc6b524b66ecde34f44838f353debd7d7b29603a1ef36e9e9a2c56"
     }
   ],
-  "packageSha256": "2745a35ba5ba091954122c6b2cf98ba89c81ab0047aad6b8fcd2ca45803f3cfd",
-  "assemblySha256": "5be66a35c0ead2857e005110471cd98c649747c1d5c27d7a1eed1e7a8467cff1"
+  "packageSha256": "0e3341ed1c916b9db14f7679999d8e628c4506079283896a2baee489a2d2a8fe",
+  "assemblySha256": "9cdbb257407f9feeffebaea226260ef578ac029a7c66e6c9e3678050f249d563"
 }

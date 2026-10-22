@@ -1,8 +1,10 @@
-# MineRewind - Minecraft 存档增强插件
+﻿# MineRewind - Minecraft 存档增强插件
 
 为 [FolderRewind](https://github.com/Leafuke/FolderRewind) 提供 Minecraft 存档备份增强功能，重点覆盖热备份、热还原、自动发现世界存档，以及从现有配置识别 `.minecraft` 实例并创建配置。
 
 MineRewind 1.9.0 起实现 FolderRewind 统一发现提供程序接口。当前 1.9.5 要求支持 Plugin API 3.6 的 Host（FolderRewind 1.9.3），构建依赖 NuGet 包 FolderRewind.Plugin.Abstractions 3.6.0。旧的手动发现与批量创建入口继续兼容。正式版本以 GitHub Release 和 nuget.org 的公开记录为准。
+
+本工作树的世界预览实现为 1.9.13，使用 API 3.11 的精确冻结契约包，通过 `contracts/feed` 独立构建。地表、洞穴与切片、26.2/26.3 正式版、Java LZ4Block 和部分历史世界识别的实现与人工验收记录见 [世界预览改进记录](docs/plans/World_Preview_2026-10-22.md)。历史读取由 Host 物化临时目录后交给同一个 provider；不改变 Native 备份格式。
 
 Java 的热备份、热还原、NBT 玩家保留和区域备份只适用于 `Minecraft Saves`。新增 `Minecraft Bedrock Saves` 使用普通目录备份与还原，请先关闭游戏。
 
