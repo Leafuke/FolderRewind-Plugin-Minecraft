@@ -4,11 +4,11 @@ namespace MineRewind.World;
 
 public static class SurfaceReader
 {
-    // Release DataVersions, 1.18–26.1.2. No floor-entry fallback into future/snapshot formats.
-    // Source: https://github.com/misode/mcmeta/tree/summary/versions (2026-10-05).
+    // Release DataVersions, 1.18–26.3. No floor-entry fallback into future/snapshot formats.
+    // Source: https://github.com/misode/mcmeta/tree/summary/versions (2026-10-22).
     private static readonly HashSet<int> SupportedVersions = [2860, 2865, 2975, 3105, 3117, 3120, 3218, 3337,
         3463, 3465, 3578, 3698, 3700, 3837, 3839, 3953, 3955, 4080, 4082, 4189, 4325, 4435,
-        4438, 4440, 4554, 4556, 4671, 4786, 4788, 4790];
+        4438, 4440, 4554, 4556, 4671, 4786, 4788, 4790, 4903, 5023];
 
     public static ChunkSurface Read(ChunkKey key, ChunkRecord record, int maximumY, CancellationToken token = default)
     {
@@ -47,8 +47,7 @@ public static class SurfaceReader
                 if (states is null) continue; // Lighting-only section.
                 var palette = states.Get<NbtList>("palette") ?? throw new InvalidDataException("Missing palette.");
                 if (palette.Count is < 1 or > 4096) throw new InvalidDataException("Invalid palette length.");
-                var materials = palette.Cast<NbtCompound>().Select(p => BlockColors.Material(version.Value,
-                    p.Get<NbtString>("Name")?.Value ?? throw new InvalidDataException("Missing block name."), p.Get<NbtCompound>("Properties"))).ToArray();
+                var materials = palette.Select(p => PreviewBlockState.Read(version.Value, p)).ToArray();
                 var biomes = section.Get<NbtCompound>("biomes");
                 var biomePalette = biomes?.Get<NbtList>("palette")?.Cast<NbtString>().Select(b => b.Value).ToArray() ?? ["minecraft:plains"];
                 if (biomePalette.Length is < 1 or > 64) throw new InvalidDataException("Invalid biome palette.");

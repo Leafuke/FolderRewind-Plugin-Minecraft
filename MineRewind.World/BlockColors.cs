@@ -14,7 +14,8 @@ public static class BlockColors
     [
         (2834, new(() => new("21w37a"))), (3080, new(() => new("22w11a"))),
         (3207, new(() => new("23w12a"))), (3940, new(() => new("24w18a"))),
-        (4536, new(() => new("25w32a"))), (4764, new(() => new("26.1-snapshot-1")))
+        (4536, new(() => new("25w32a"))), (4764, new(() => new("26.1-snapshot-1"))),
+        (4883, new(() => new("26.2-snapshot-1"))), (4998, new(() => new("26.3-snapshot-1")))
     ];
     private static Mapping ForVersion(int version) => Maps.Last(m => m.Version <= version).Map.Value;
     public static uint For(string name) => Tint(4786, Material(4786, name, null), "minecraft:plains");

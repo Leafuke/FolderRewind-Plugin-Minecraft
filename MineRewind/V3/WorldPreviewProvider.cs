@@ -153,7 +153,7 @@ internal sealed partial class WorldPreviewSession
     {
         ChunkReadState.Present => Text("Readable", "可读取"), ChunkReadState.Absent => Text("Not generated", "尚未生成"),
         ChunkReadState.UnsupportedVersion => Text("Unsupported data version", "数据版本暂不支持"),
-        ChunkReadState.UnsupportedCompression => Text("Unsupported compression (including LZ4)", "压缩格式暂不支持（包括 LZ4）"),
+        ChunkReadState.UnsupportedCompression => Text("Unsupported compression", "压缩格式暂不支持"),
         ChunkReadState.Changing => Text("Changed during reading; refresh", "读取期间发生变化，请刷新"),
         ChunkReadState.Unavailable => Text("Unavailable; refresh", "暂时无法读取，请刷新"),
         _ => Text("Invalid or damaged chunk", "区块格式无效或损坏")

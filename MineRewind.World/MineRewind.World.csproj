@@ -4,7 +4,11 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
   </PropertyGroup>
-  <ItemGroup><PackageReference Include="fNbt" Version="1.0.0" /></ItemGroup>
+  <ItemGroup>
+    <PackageReference Include="fNbt" Version="1.0.0" />
+    <PackageReference Include="K4os.Compression.LZ4" Version="1.3.8" />
+    <PackageReference Include="System.IO.Hashing" Version="10.0.13" />
+  </ItemGroup>
   <ItemGroup>
     <EmbeddedResource Include="Colors/*.json" />
     <EmbeddedResource Include="Colors/MCASelector.LICENSE.txt" />

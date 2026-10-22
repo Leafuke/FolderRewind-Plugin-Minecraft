@@ -72,7 +72,7 @@ public static class AnvilReader
                 var length = BinaryPrimitives.ReadInt32BigEndian(envelope);
                 if (length < 1 || length > sectors * 4096 - 4) return new(ChunkReadState.Corrupt, null);
                 var compression = envelope[4] & 127;
-                if (compression is not (1 or 2 or 3)) return new(ChunkReadState.UnsupportedCompression, null);
+                if (compression is not (1 or 2 or 3 or 4)) return new(ChunkReadState.UnsupportedCompression, null);
                 byte[] compressed;
                 (long Length, DateTime Time)? externalStamp = null;
                 string? externalPath = null;
@@ -95,7 +95,7 @@ public static class AnvilReader
                     2 => new ZLibStream(input, CompressionMode.Decompress),
                     _ => input
                 };
-                var nbt = ReadBounded(decoded, token);
+                var nbt = compression == 4 ? JavaLz4Block.Decode(input, token) : ReadBounded(decoded, token);
                 file.Position = 0;
                 var afterHeader = new byte[8192]; file.ReadExactly(afterHeader);
                 if (before != (file.Length, File.GetLastWriteTimeUtc(path)) || !header.AsSpan().SequenceEqual(afterHeader)

@@ -27,7 +27,7 @@ foreach (var required in new[] { entryAssembly, settingsSchema })
 }
 
 var allowed = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
-{ "MineRewind.dll", "MineRewind.World.dll", "fNbt.dll", "manifest.json", "settings.schema.json", "contract-source.json" };
+{ "MineRewind.dll", "MineRewind.World.dll", "fNbt.dll", "K4os.Compression.LZ4.dll", "System.IO.Hashing.dll", "preview-dependencies.NOTICE.txt", "manifest.json", "settings.schema.json", "contract-source.json" };
 var files = Directory.EnumerateFiles(source, "*", SearchOption.AllDirectories).OrderBy(value => value, StringComparer.Ordinal).ToArray();
 if (files.Length != allowed.Count || !files.All(file => allowed.Contains(Path.GetRelativePath(source, file))))
     throw new InvalidDataException("Package staging inventory differs from the approved payload; use a clean staging directory.");
