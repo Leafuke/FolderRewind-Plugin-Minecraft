@@ -9,7 +9,7 @@ public static class WorldScanner
         var candidates = new Dictionary<string, HashSet<string>>(StringComparer.Ordinal);
         void Add(string id, string path)
         {
-            if (!Directory.Exists(Path.Combine(path, "region"))) return;
+            if (!new[] { "region", "entities", "poi" }.Any(component => Directory.Exists(Path.Combine(path, component)))) return;
             try { path = WorldPaths.RequireContained(sourceRoot, path); }
             catch (IOException) { return; } // Never traverse a sibling outside this source or a linked dimension.
             if (!candidates.TryGetValue(id, out var paths)) candidates[id] = paths = new(StringComparer.OrdinalIgnoreCase);
@@ -50,9 +50,10 @@ public static class WorldScanner
         {
             if (pair.Value.Count != 1) throw new IOException("Ambiguous dimension layout: " + pair.Key);
             var root = pair.Value.Single();
-            var regionRoot = WorldPaths.RequireContained(sourceRoot, Path.Combine(root, "region"));
+            var regionRoot = Path.Combine(root, "region");
+            if (Directory.Exists(regionRoot)) regionRoot = WorldPaths.RequireContained(sourceRoot, regionRoot);
             var regions = new Dictionary<RegionKey, string>();
-            foreach (var file in Directory.EnumerateFiles(regionRoot, "r.*.*.mca"))
+            foreach (var file in Directory.Exists(regionRoot) ? Directory.EnumerateFiles(regionRoot, "r.*.*.mca") : [])
             {
                 token.ThrowIfCancellationRequested();
                 if ((File.GetAttributes(file) & FileAttributes.ReparsePoint) != 0) continue;

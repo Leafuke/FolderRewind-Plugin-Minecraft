@@ -6,7 +6,7 @@
     "en-US": "MineRewind",
     "zh-CN": "MineRewind"
   },
-  "version": "1.9.18",
+  "version": "1.9.22",
   "author": "Leafuke",
   "description": "Enhanced Minecraft saves backup with discovery, reconciliation, region scope, consistency, metadata, hot restore, and commands.",
   "localizedDescription": {
@@ -15,7 +15,7 @@
   },
   "pluginApi": {
     "major": 3,
-    "minor": 13
+    "minor": 15
   },
   "entryAssembly": "MineRewind.dll",
   "entryType": "MineRewind.MinecraftSavesPlugin",
@@ -73,6 +73,8 @@
   ],
   "capabilities": [
     "spatialPreview",
+    "spatialComparison",
+    "spatialScopeSelection",
     "backupArtifactTransformer",
     "restoreMaterializer",
     "discovery",
@@ -189,30 +191,30 @@
       "policies": [
         {
           "policyId": "conservative",
-          "version": "1",
+          "version": "3",
           "displayName": "Conservative",
           "localizedDisplayName": {
             "en-US": "Conservative",
             "zh-CN": "保守策略"
           },
-          "description": "Merge chunk component bundles. Any ordinary entity change or unknown terrain layout requires a single side for all dimensions of that world.",
+          "description": "Automatically resolve known timing, cache and scheduled-update-only differences; equal content keeps target runtime state. Merge chunk component bundles. Any ordinary entity change or unknown terrain layout requires a single side for all dimensions of that world.",
           "localizedDescription": {
-            "en-US": "Merge chunk component bundles. Any ordinary entity change or unknown terrain layout requires a single side for all dimensions of that world.",
-            "zh-CN": "区块组件成组选择；任意普通实体变化或未知地形布局会提升为整个世界所有维度统一选择一侧。"
+            "en-US": "Automatically resolve known timing, cache and scheduled-update-only differences; equal content keeps target runtime state. Merge chunk component bundles. Any ordinary entity change or unknown terrain layout requires a single side for all dimensions of that world.",
+            "zh-CN": "已知计时、缓存和待执行更新差异自动处理；内容相同保留目标运行状态。区块组件成组选择；任意普通实体变化或未知地形布局会提升为整个世界所有维度统一选择一侧。"
           }
         },
         {
           "policyId": "terrain-first",
-          "version": "2",
+          "version": "4",
           "displayName": "Terrain first",
           "localizedDisplayName": {
             "en-US": "Terrain first",
             "zh-CN": "地形优先"
           },
-          "description": "Merge Terrain and POI by chunk. Keep ordinary entities from the target branch across every dimension. Chunks with embedded entities and their POI are fixed to the target branch, excluding source changes there. Entities may not match the resulting terrain. Unknown layouts remain blocked.",
+          "description": "Automatically resolve known timing, cache and scheduled-update-only differences; equal content keeps target runtime state. Merge Terrain and POI by chunk. Keep ordinary entities from the target branch across every dimension. Chunks with embedded entities and their POI are fixed to the target branch, excluding source changes there. Entities may not match the resulting terrain. Unknown layouts remain blocked.",
           "localizedDescription": {
-            "en-US": "Merge Terrain and POI by chunk. Keep ordinary entities from the target branch across every dimension. Chunks with embedded entities and their POI are fixed to the target branch, excluding source changes there. Entities may not match the resulting terrain. Unknown layouts remain blocked.",
-            "zh-CN": "按区块合并地形与 POI；所有维度普通实体保留目标分支。含内嵌实体的区块及其 POI 固定保留目标分支，来源在这些区块的修改不合入。实体可能与结果地形不匹配；未知布局仍阻止应用。"
+            "en-US": "Automatically resolve known timing, cache and scheduled-update-only differences; equal content keeps target runtime state. Merge Terrain and POI by chunk. Keep ordinary entities from the target branch across every dimension. Chunks with embedded entities and their POI are fixed to the target branch, excluding source changes there. Entities may not match the resulting terrain. Unknown layouts remain blocked.",
+            "zh-CN": "已知计时、缓存和待执行更新差异自动处理；内容相同保留目标运行状态。按区块合并地形与 POI；所有维度普通实体保留目标分支。含内嵌实体的区块及其 POI 固定保留目标分支，来源在这些区块的修改不合入。实体可能与结果地形不匹配；未知布局仍阻止应用。"
           }
         }
       ]

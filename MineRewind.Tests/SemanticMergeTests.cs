@@ -7,7 +7,7 @@ using FolderRewind.Plugin.Abstractions;
 namespace MineRewind.Tests;
 
 [TestClass]
-public sealed class SemanticMergeTests
+public sealed partial class SemanticMergeTests
 {
     [TestMethod]
     [DataRow(false)]
@@ -41,6 +41,7 @@ public sealed class SemanticMergeTests
         CollectionAssert.AreEqual(Region((0, Nbt(0, 0, 2)), (1, Nbt(1, 0, 3))), (await run.Build())["region/r.0.0.mca"]);
         var blocked = await Analyze(b, o, t, policy, boundary, q => q.RequirementId == "entities" ? MergeCoverageState.Filtered : MergeCoverageState.Complete);
         Assert.IsTrue(blocked.Plan.Subjects.Single().IsBlocked);
+        Assert.AreEqual(".", blocked.Plan.Subjects.Single().SpatialLocations.Single().WorldId);
         Assert.IsEmpty(blocked.Plan.Subjects.Single().AllowedDecisions);
         await Assert.ThrowsExactlyAsync<InvalidOperationException>(() => blocked.Build());
         var unknown = await Analyze(b, o, t, policy, boundary, _ => MergeCoverageState.Unknown);
@@ -236,7 +237,7 @@ public sealed class SemanticMergeTests
         MergeVersionInput Input(int i) => new("version-" + i, "representation-" + i, "tree-" + i,
             boundary ?? new(1, MergeBoundaryScope.All, [], MergeBoundaryFilter.Blacklist, [], false, "all"), views[i]);
         var request = new MergeAnalysisRequest(Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(),
-            new(new(MinecraftSavesPlugin.PluginIdentity), MinecraftSavesPlugin.MinecraftKindIdentity), policy, policy == "terrain-first" ? "2" : "1", Input(0), Input(1), Input(2), MergeLimits.Default);
+            new(new(MinecraftSavesPlugin.PluginIdentity), MinecraftSavesPlugin.MinecraftKindIdentity), policy, policy == "terrain-first" ? "4" : "3", Input(0), Input(1), Input(2), MergeLimits.Default);
         var plan = new Plan(); var context = new PluginInvocationContext(new(MinecraftSavesPlugin.PluginIdentity), null!, default, default);
         var result = await ((IMergeProviderCapability)plugin).AnalyzeAsync(request, plan, context);
         return new((IMergeProviderCapability)plugin, request, plan, views, context) { AnalysisResult = result };
@@ -244,11 +245,11 @@ public sealed class SemanticMergeTests
     private sealed record Run(IMergeProviderCapability Provider, MergeAnalysisRequest Request, Plan Plan, View[] Views, PluginInvocationContext Context)
     {
         internal MergeProviderResult AnalysisResult { get; init; } = null!;
-        internal async Task<Dictionary<string, byte[]>> Build(MergeDecisionKind choice = MergeDecisionKind.Ours)
+        internal async Task<Dictionary<string, byte[]>> Build(MergeDecisionKind choice = MergeDecisionKind.Ours, bool overrideAutomatic = false)
         {
             var files = new Dictionary<string, byte[]>();
             foreach (var group in Plan.Groups)
-                await Provider.BuildAsync(new(Request, group, new Decisions(Plan, group.GroupId, choice)), new Output(files, Views), Context);
+                await Provider.BuildAsync(new(Request, group, new Decisions(Plan, group.GroupId, choice, overrideAutomatic)), new Output(files, Views), Context);
             return files;
         }
     }
@@ -286,12 +287,12 @@ public sealed class SemanticMergeTests
         public ValueTask<Stream> OpenDataWriteAsync(string key, CancellationToken token) => ValueTask.FromResult<Stream>(new Capture(bytes => Data[key] = bytes));
         public ValueTask<Stream> OpenDataReadAsync(string key, CancellationToken token) => ValueTask.FromResult<Stream>(new MemoryStream(Data[key], false));
     }
-    private sealed class Decisions(Plan plan, string group, MergeDecisionKind choice) : IMergeDecisionReader
+    private sealed class Decisions(Plan plan, string group, MergeDecisionKind choice, bool overrideAutomatic = false) : IMergeDecisionReader
     {
         public ValueTask<MergeDecisionPage> ReadPageAsync(string? cursor, int count, CancellationToken token)
         {
             var start = int.Parse(cursor ?? "0"); var all = plan.Subjects.Where(s => s.GroupId == group).ToArray();
-            var rows = all.Skip(start).Take(count).Select(s => new MergeSubjectDecision(s, s.IsAutomatic ? MergeDecisionKind.Automatic : choice, null)).ToArray();
+            var rows = all.Skip(start).Take(count).Select(s => new MergeSubjectDecision(s, s.IsAutomatic && !(overrideAutomatic && s.CanOverrideAutomatic) ? MergeDecisionKind.Automatic : choice, null)).ToArray();
             return ValueTask.FromResult(new MergeDecisionPage(rows, start + rows.Length < all.Length ? (start + rows.Length).ToString() : null));
         }
         public ValueTask<Stream> OpenDataReadAsync(string key, CancellationToken token) => plan.OpenDataReadAsync(key, token);

@@ -46,7 +46,7 @@ internal static class MinecraftMerge
     private static void Validate(MergeAnalysisRequest request)
     {
         if (request.Kind.OwnerId.Value != MinecraftSavesPlugin.PluginIdentity || request.Kind.KindId != MinecraftSavesPlugin.MinecraftKindIdentity
-            || !(request.PolicyId == "conservative" && request.PolicyVersion == "1" || request.PolicyId == "terrain-first" && request.PolicyVersion == "2"))
+            || !(request.PolicyId == "conservative" && request.PolicyVersion == "3" || request.PolicyId == "terrain-first" && request.PolicyVersion == "4"))
             throw new InvalidDataException("merge_unsupported_kind_or_policy");
     }
 
@@ -76,7 +76,7 @@ internal static class MinecraftMerge
             blockedWorlds.Add(world);
             await BlockAsync("coverage/" + Key(world), world, MinecraftMergeCoverage.Describe(issues),
                 paths.Where(path => worlds.FirstOrDefault(w => w.Length == 0 || path.StartsWith(w + "/", StringComparison.Ordinal)) == root),
-                JsonSerializer.SerializeToElement(issues)).ConfigureAwait(false);
+                JsonSerializer.SerializeToElement(issues), world).ConfigureAwait(false);
         }
         var regions = new List<(string Path, RegionAddress Address)>();
         foreach (var path in paths.Where(p => p.EndsWith(".mca", StringComparison.OrdinalIgnoreCase)))
@@ -109,7 +109,8 @@ internal static class MinecraftMerge
                 {
                     for (var side = 0; side < 3; side++)
                         if (inventories[side].ContainsKey(region.Path))
-                            sides[side] = await MergeRegion.ReadAsync(region.Path, region.Address, views[side].OpenReadAsync, pathSets[side], token).ConfigureAwait(false);
+                            sides[side] = await MergeRegion.ReadAsync(region.Path, region.Address, views[side].OpenReadAsync, pathSets[side], token,
+                                classifyContent: true, allowEmptyRegion: true).ConfigureAwait(false);
                 }
                 catch (Exception ex) when (ex is IOException or InvalidDataException)
                 {
@@ -162,7 +163,8 @@ internal static class MinecraftMerge
                 await plan.AddSubjectsAsync([new("world", worldGroup, Key(world + request.Base.TreeDigest + request.Ours.TreeDigest + request.Theirs.TreeDigest),
                     Text($"World: {world}", $"世界：{world}"), Text("Entity movement or legacy layout requires one side for all region components across this world.",
                     "检测到实体变化或旧版布局，整个世界的所有维度及 Terrain、Entities、POI 必须统一采用一侧。"),
-                    automatic >= 0 ? [] : SideChoices, automatic >= 0, JsonSerializer.SerializeToElement(new SubjectState(-1, automatic)))], token).ConfigureAwait(false);
+                    SideChoices, automatic >= 0, JsonSerializer.SerializeToElement(new SubjectState(-1, automatic)))
+                    { CanOverrideAutomatic = automatic >= 0, SpatialLocations = [new(world, null, null)] }], token).ConfigureAwait(false);
             }
             foreach (var key in state.Keys)
             {
@@ -183,7 +185,9 @@ internal static class MinecraftMerge
                     var ids = Enumerable.Range(0, 3).Select(side => string.Join("|", components.Select(r => Chunk(r.Sides[side], slot)?.PayloadHash ?? "absent"))).ToArray();
                     var keepOurs = pinned.Contains(slot);
                     if (!keepOurs && ids[0] == ids[1] && ids[0] == ids[2]) continue;
-                    var automatic = keepOurs || ids[1] == ids[2] || ids[0] == ids[2] ? 1 : ids[0] == ids[1] ? 2 : -1;
+                    var contentIds = Enumerable.Range(0, 3).Select(side => string.Join("|", components.Select(r => ContentIdentity(Chunk(r.Sides[side], slot))))).ToArray();
+                    var automatic = keepOurs || contentIds[1] == contentIds[2] || contentIds[0] == contentIds[2] ? 1 : contentIds[0] == contentIds[1] ? 2 : -1;
+                    var semanticDecision = automatic >= 0 && (ids[1] != ids[2]) && (contentIds[1] == contentIds[2] || contentIds[0] == contentIds[1] && ids[0] != ids[1] || contentIds[0] == contentIds[2] && ids[0] != ids[2]);
                     var x = checked(address.X * 32 + slot % 32); var z = checked(address.Z * 32 + slot / 32);
                     if (keepOurs)
                     {
@@ -191,13 +195,20 @@ internal static class MinecraftMerge
                         if (pinnedExamples.Count < 8) pinnedExamples.Add($"{world} {address.DimensionId} ({x}, {z})");
                     }
                     subjects.Add(new(slot.ToString(CultureInfo.InvariantCulture), group, Key(string.Join("\0", ids)),
-                        Text($"{world} {address.DimensionId} chunk ({x}, {z})" + (keepOurs ? " · kept from target" : ""),
-                            $"{world} {address.DimensionId} 区块（{x}, {z}）" + (keepOurs ? " · 固定保留目标分支" : "")),
+                        Text($"Chunk ({x}, {z})" + (keepOurs ? " · kept from target" : ""),
+                            $"区块（{x}, {z}）" + (keepOurs ? " · 固定保留目标分支" : "")),
                         keepOurs ? Text("An input contains embedded entities. Terrain and POI at this coordinate are fixed to the target branch, including absence. Source changes here will not be merged; all ordinary entities also stay with the target branch.",
                             "输入中存在内嵌实体，此区块的地形与 POI 固定保留目标分支（目标中不存在时保持不存在）。来源分支对此区块的地形和 POI 修改不会合入；所有普通实体也保持目标分支。")
+                        : semanticDecision ? Text(automatic == 1
+                            ? "Content comparison keeps the target chunk and its runtime state. Known timing, cache and scheduled-update differences require no manual decision."
+                            : "Only the source changed content; use its complete chunk, including matching caches and runtime state.",
+                            automatic == 1 ? "按内容比较保留目标侧完整区块及运行状态；已知计时、缓存和待执行更新差异无需手动处理。"
+                            : "只有来源改变内容；采用来源完整区块及其配套缓存、运行状态。")
                         : Text(terrainFirst ? "Terrain and POI move together. Ordinary entities stay with Ours in every dimension." : "Terrain, Entities and POI move together at this coordinate.",
                             terrainFirst ? "Terrain 与 POI 统一选择；所有维度的普通实体保持 Ours。" : "此坐标的 Terrain、Entities 与 POI 统一选择。"),
-                        automatic >= 0 ? [] : SideChoices, automatic >= 0, JsonSerializer.SerializeToElement(new SubjectState(slot, automatic))));
+                        keepOurs ? [] : SideChoices, automatic >= 0, JsonSerializer.SerializeToElement(new SubjectState(slot, automatic)))
+                        { CanOverrideAutomatic = automatic >= 0 && !keepOurs,
+                          SpatialLocations = [new(world, address.DimensionId, new(x * 16d, z * 16d, (x + 1d) * 16, (z + 1d) * 16))] });
                 }
                 foreach (var batch in subjects.Chunk(Math.Min(500, request.Limits.MaximumBatchSize))) await plan.AddSubjectsAsync(batch, token).ConfigureAwait(false);
             }
@@ -213,16 +224,18 @@ internal static class MinecraftMerge
                 ["message.zh-CN"] = warning.Translations["zh-CN"], ["count"] = pinnedCount.ToString(CultureInfo.InvariantCulture)
             })]);
         bool SameFile(string path, int a, int b) => inventories[a].GetValueOrDefault(path)?.Digest == inventories[b].GetValueOrDefault(path)?.Digest;
-        async Task BlockAsync(string id, string label, LocalizedText description, IEnumerable<string> owned, JsonElement evidence)
+        async Task BlockAsync(string id, string label, LocalizedText description, IEnumerable<string> owned, JsonElement evidence, string? spatialWorld = null)
         {
             await plan.AddGroupAsync(new(id, Text(label, label), JsonSerializer.SerializeToElement(new GroupState("", false, request.PolicyId == "terrain-first") { IsBlocked = true })), token).ConfigureAwait(false);
             foreach (var batch in owned.Chunk(Math.Min(500, request.Limits.MaximumBatchSize))) await plan.ClaimPathsAsync(id, batch, [], token).ConfigureAwait(false);
             await plan.AddSubjectsAsync([new("blocked", id, Key(evidence.GetRawText()), Text($"{label}: coverage unavailable", $"{label}：暂不能语义合并"),
-                description, [], false, evidence) { IsBlocked = true }], token).ConfigureAwait(false);
+                description, [], false, evidence) { IsBlocked = true, SpatialLocations = spatialWorld is null ? [] : new[] { new SpatialSubjectLocation(spatialWorld, null, null) } }], token).ConfigureAwait(false);
         }
     }
 
-    private static string Identity(MergeRegionIndex? region) => region is null ? "" : string.Join("|", region.Chunks.Select(c => c.Slot + ":" + c.PayloadHash));
+    private static string ContentIdentity(MergeChunk? chunk) => chunk is null ? "absent"
+        : chunk.ContentIdentity is { Length: > 0 } content ? "content:" + content : "payload:" + chunk.PayloadHash;
+    private static string Identity(MergeRegionIndex? region) => region is null ? "" : string.Join("|", region.Chunks.Select(c => c.Slot + ":" + ContentIdentity(c)));
     private static MergeChunk? Chunk(MergeRegionIndex? region, int slot) => region?.Chunks.FirstOrDefault(c => c.Slot == slot);
     private static HashSet<int> EmbeddedTerrainSlots(CoordinatePlan coordinate) => coordinate.Regions
         .Where(r => r.Address.Component == ChunkComponentKind.Terrain).SelectMany(r => r.Sides).OfType<MergeRegionIndex>()

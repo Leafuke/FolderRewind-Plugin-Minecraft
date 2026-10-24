@@ -29,6 +29,7 @@ public sealed partial class MinecraftSavesPlugin
                 "仅备份所选 Minecraft 维度中的指定方块坐标区域。"),
             ["properties"] = new Dictionary<string, object?>
             {
+                [MinecraftSpatialScope.Parameter] = new Dictionary<string, object?> { ["type"] = "string", ["x-folderrewind-hidden"] = true },
                 ["dimension.overworld"] = Field("boolean", ScopeText("Overworld", "主世界"), defaultValue: true),
                 ["dimension.nether"] = Field("boolean", ScopeText("Nether", "下界"), defaultValue: false),
                 ["dimension.end"] = Field("boolean", ScopeText("The End", "末地"), defaultValue: false),
@@ -151,6 +152,12 @@ public sealed partial class MinecraftSavesPlugin
             },
             StringComparer.OrdinalIgnoreCase);
         var sourceRoot = Path.GetFullPath(request.Folder.Path);
+        if (parameters.TryGetValue(MinecraftSpatialScope.Parameter, out var selectionJson) && !string.IsNullOrWhiteSpace(selectionJson))
+        {
+            var selection = JsonSerializer.Deserialize<SpatialScopeSelection[]>(selectionJson) ?? throw new InvalidDataException("Invalid spatial scope selection.");
+            var result = MinecraftSpatialScope.Resolve(sourceRoot, selection, SelectedRegionsScopeId, context.OperationCancellation);
+            return ValueTask.FromResult(new BackupScopeResult(OperationReadiness.Ready, result.IncludePatterns, result.Diagnostics));
+        }
         var worldPath = ResolveWorldPath(sourceRoot);
         if (worldPath is null) return ValueTask.FromResult(new BackupScopeResult(OperationReadiness.Ready, ["**"], []));
         var errorCode = string.Empty;

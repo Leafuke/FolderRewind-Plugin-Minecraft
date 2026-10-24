@@ -26,6 +26,10 @@ internal sealed partial class WorldPreviewSession
     }
     public SpatialPreviewDescription Describe(SpatialPreviewSource source, CancellationToken token)
     {
+        var roots = SpatialWorldCatalog.Worlds(SpatialWorldCatalog.Inventory(SpatialWorldCatalog.Root(source), token));
+        var worlds = roots.Select(w => new SpatialWorld(w.Length == 0 ? "." : w, Text(w.Length == 0 ? Path.GetFileName(source.Folder.Path) : w, w.Length == 0 ? Path.GetFileName(source.Folder.Path) : w))).ToArray();
+        if (source.WorldId is { } requested && !worlds.Any(w => w.Id == requested))
+            return new([], Text("X", "X"), Text("Z", "Z"), []) { Worlds = worlds };
         WorldDescriptor world;
         try { world = GetWorld(source, token); }
         catch (WorldResolutionException ex)
@@ -57,7 +61,7 @@ internal sealed partial class WorldPreviewSession
             };
         }).ToArray();
         return new(layers, Text("X", "X"), Text("Z", "Z"), [])
-        { LayerLabel = Text("Dimension", "维度"), NavigationLabel = Text("Locate player", "定位玩家"), CellLabel = Text("Chunk", "区块"),
+        { Worlds = worlds, LayerLabel = Text("Dimension", "维度"), NavigationLabel = Text("Locate player", "定位玩家"), CellLabel = Text("Chunk", "区块"),
             DistanceUnit = Text("blocks", "方块"), SupportsStatusOverlay = true,
             Legend = [new("readable", Text("Read (green)", "已读（绿色）"), 0xFF5B9874),
                 new("pending", Text("Not decoded (blue-gray)", "未解码（蓝灰）"), 0xFF65798D),
@@ -116,10 +120,17 @@ internal sealed partial class WorldPreviewSession
 
     private WorldDescriptor GetWorld(SpatialPreviewSource source, CancellationToken token)
     {
-        var path = Path.GetFullPath(source.Folder.Path);
+        var path = SpatialWorldCatalog.Root(source);
         lock (_sync) { ObjectDisposedException.ThrowIf(_closed, this); if (_worlds.TryGetValue(source.Generation, out var cached) && cached.Source == path) return cached.World; }
-        var resolution = source.IsPartial ? PreviewWorldLocator.Resolve(path, token) : (WorldLocator.TryResolveWorldPath(path), false);
-        var root = resolution.Item1 ?? throw new WorldResolutionException(resolution.Item2);
+        var resolution = source.WorldId is { } worldId ? (SpatialWorldCatalog.PathFor(path, worldId), false)
+            : source.IsPartial ? PreviewWorldLocator.Resolve(path, token) : (WorldLocator.TryResolveWorldPath(path), false);
+        var root = resolution.Item1;
+        if (root is null && source.WorldId is null)
+        {
+            var first = SpatialWorldCatalog.Worlds(SpatialWorldCatalog.Inventory(path, token)).FirstOrDefault();
+            if (first is not null) root = SpatialWorldCatalog.PathFor(path, first.Length == 0 ? "." : first);
+        }
+        if (root is null) throw new WorldResolutionException(resolution.Item2);
         var world = WorldScanner.Scan(path, root, token);
         lock (_sync)
         {
@@ -215,7 +226,7 @@ internal sealed class WorldPreviewProvider
         {
             token.ThrowIfCancellationRequested();
             if (!_sessions.TryGetValue(source.Generation, out session!))
-                _sessions.Add(source.Generation, session = new());
+                _sessions.Add(source.Generation, session = new(Math.Clamp(source.CacheBudgetBytes, 1024 * 1024, 128L * 1024 * 1024)));
         }
         return session.Describe(source, token);
     }

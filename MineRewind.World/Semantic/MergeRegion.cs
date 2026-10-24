@@ -8,6 +8,7 @@ public sealed record MergeChunk(int Slot, uint Timestamp, byte Compression, stri
     long Offset, int Length, string PayloadHash, bool SeparatedTerrain)
 {
     public bool HasEmbeddedEntities { get; init; }
+    public string? ContentIdentity { get; init; }
 }
 public sealed record MergeRegionIndex(string Path, RegionAddress Address, IReadOnlyList<MergeChunk> Chunks);
 public sealed record MergeChunkSource(MergeRegionIndex Region, MergeChunk Chunk, int Side);
@@ -19,9 +20,13 @@ public static class MergeRegion
         => WorldCapture.TryAddress(path, worlds, out address);
 
     public static async Task<MergeRegionIndex> ReadAsync(string path, RegionAddress address,
-        Func<string, CancellationToken, ValueTask<Stream>> open, IReadOnlySet<string> paths, CancellationToken token)
+        Func<string, CancellationToken, ValueTask<Stream>> open, IReadOnlySet<string> paths, CancellationToken token,
+        bool classifyContent = false, bool allowEmptyRegion = false)
     {
         await using var file = await open(path, token).ConfigureAwait(false);
+        token.ThrowIfCancellationRequested();
+        // Minecraft leaves newly opened region containers empty until their first write.
+        if (allowEmptyRegion && file.CanSeek && file.Length == 0) return new(path, address, []);
         if (!file.CanSeek || file.Length < 8192) throw new InvalidDataException("merge_invalid_region_header: " + path);
         var header = new byte[8192]; await file.ReadExactlyAsync(header, token).ConfigureAwait(false);
         var index = new AnvilRegionIndex(header, file.Length, DateTime.UnixEpoch);
@@ -47,6 +52,7 @@ public static class MergeRegion
                 : new RegionCodec.BoundedReadStream(file, length - 1);
             int? dataVersion = null, chunkX = null, chunkZ = null;
             var embedded = false; var unknownEntities = false; var legacy = false;
+            string? contentIdentity = null;
             var hash = RegionCodec.HashDecoded(payload, compression, token, reader =>
             {
                 if (reader.TagName is "Entities" or "entities")
@@ -68,7 +74,9 @@ public static class MergeRegion
                         case "zPos": chunkZ = reader.ReadValueAs<int>(); break;
                     }
                 }
-            });
+            }, classifyContent && address.Component == ChunkComponentKind.Terrain
+                ? (bytes, count) => contentIdentity = ChunkContentFingerprint.Read(bytes, count, new(x, z), token)?.MergeIdentity
+                : null);
             // Root-level position tags identify the modern terrain layout; legacy/mixed layouts
             // remain valid opaque payloads, but cannot participate in terrain-first composition.
             var knownModern = dataVersion > 0 && chunkX == x && chunkZ == z && !legacy && !unknownEntities;
@@ -76,7 +84,8 @@ public static class MergeRegion
             if (address.Component == ChunkComponentKind.Terrain && (chunkX.HasValue && chunkX != x || chunkZ.HasValue && chunkZ != z))
                 throw new InvalidDataException("merge_chunk_coordinate_mismatch: " + path);
             chunks.Add(new(slot, BinaryPrimitives.ReadUInt32BigEndian(header.AsSpan(4096 + slot * 4, 4)),
-                compression, externalPath, offset + 5, length - 1, hash, separated) { HasEmbeddedEntities = knownModern && embedded });
+                compression, externalPath, offset + 5, length - 1, hash, separated)
+                { HasEmbeddedEntities = knownModern && embedded, ContentIdentity = contentIdentity });
         }
         return new(path, address, chunks);
     }

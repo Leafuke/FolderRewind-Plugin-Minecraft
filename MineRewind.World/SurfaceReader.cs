@@ -10,6 +10,7 @@ public static class SurfaceReader
         3463, 3465, 3578, 3698, 3700, 3837, 3839, 3953, 3955, 4080, 4082, 4189, 4325, 4435,
         4438, 4440, 4554, 4556, 4671, 4786, 4788, 4790, 4903, 5023];
 
+    internal static bool SupportsVersion(int version) => SupportedVersions.Contains(version);
     public static ChunkSurface Read(ChunkKey key, ChunkRecord record, int maximumY, CancellationToken token = default, SurfaceViewMode mode = SurfaceViewMode.Surface)
     {
         if (record.State != ChunkReadState.Present || record.Nbt is null) return ChunkSurface.Empty(key, record.State);
