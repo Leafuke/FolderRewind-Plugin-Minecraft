@@ -5,7 +5,7 @@ namespace MineRewind.World;
 
 public sealed record ChunkRecord(ChunkReadState State, byte[]? Nbt);
 
-/// <summary>Validated header extents, reusable only while the file stamp still agrees.</summary>
+/// <summary>Validated sector allocation; readers must also check each record against the physical EOF.</summary>
 public sealed class AnvilRegionIndex(byte[] header, long length, DateTime writeTime)
 {
     public byte[] Header { get; } = header;
@@ -16,12 +16,15 @@ public sealed class AnvilRegionIndex(byte[] header, long length, DateTime writeT
     {
         var valid = new bool[1024];
         var extents = new List<(long Start, long End, int Slot)>();
+        var physicalSectors = length / 4096 + (length % 4096 == 0 ? 0 : 1);
         for (var slot = 0; slot < 1024; slot++)
         {
             var entry = BinaryPrimitives.ReadUInt32BigEndian(header.AsSpan(slot * 4, 4));
             if (entry == 0) { valid[slot] = true; continue; }
             var start = (long)(entry >> 8) * 4096; var end = start + (entry & 255) * 4096L;
-            valid[slot] = start >= 8192 && end > start && end <= length;
+            // The final allocated sector may omit padding after its complete record. Do not
+            // admit missing whole sectors, missing envelopes, or overlapping allocations.
+            valid[slot] = start >= 8192 && end > start && end / 4096 <= physicalSectors && start <= length - 5;
             extents.Add((start, end, slot));
         }
         var ordered = extents.OrderBy(e => e.Start).ToArray();
@@ -70,7 +73,8 @@ public static class AnvilReader
                 file.Position = offset;
                 Span<byte> envelope = stackalloc byte[5]; file.ReadExactly(envelope);
                 var length = BinaryPrimitives.ReadInt32BigEndian(envelope);
-                if (length < 1 || length > sectors * 4096 - 4) return new(ChunkReadState.Corrupt, null);
+                if (length < 1 || length > sectors * 4096 - 4 || length > file.Length - offset - 4)
+                    return new(ChunkReadState.Corrupt, null);
                 var compression = envelope[4] & 127;
                 if (compression is not (1 or 2 or 3 or 4)) return new(ChunkReadState.UnsupportedCompression, null);
                 byte[] compressed;

@@ -1,61 +1,70 @@
 {
   "packageId": "FolderRewind.Plugin.Abstractions",
-  "version": "3.11.0-preview.925a4800b63fac73",
-  "apiVersion": "3.11",
+  "version": "3.13.0-preview.b79fcb6466c9b129",
+  "apiVersion": "3.13",
   "assemblyVersion": "3.0.0.0",
-  "sourceCommit": "16303d4cd4088a9ac69965e40005371731fb7844",
-  "sourceDigestSha256": "925a4800b63fac7366323a86fa22fc689fa1197e93a7b73041e3747630c08c7b",
-  "sourceDigestEncoding": "SHA256 of UTF-8 compact JSON entries, ordered by Git path, hashes over committed Git blob bytes",
+  "sourceCommit": "a09d80aee503647518a7a99aa07e5ea6dc4d2683",
+  "sourceState": "working-tree-snapshot",
+  "sourceDigestSha256": "b79fcb6466c9b129ec792954bd55e667f74dbda113bba414f13e1c65b2ac1576",
+  "sourceDigestEncoding": "SHA256 of UTF-8 compact JSON entries ordered by filename; hashes cover working-tree file bytes (sourceCommit is the base, not the snapshot)",
   "sources": [
     {
       "path": "FolderRewind.Plugin.Abstractions/ArtifactIncremental.cs",
-      "sha256": "ebc8358f797e671c89c849fc12b185b491da5d19b2499f0b48e0e8dd2ca450ad"
+      "sha256": "a3021ffe5c3ac0eac6fdd276fdb5ff9115ad2527f54fe063aa968bb6353c64a8"
     },
     {
       "path": "FolderRewind.Plugin.Abstractions/Artifacts.cs",
-      "sha256": "fa1958071fbb6c1af3c07a23ed75c85916dbf9e6f5ecc34d60d75bb979c1a459"
+      "sha256": "c28303775d8bbdecf02a877f6fc320ccb8b3955e7759c42ad161ea9bcafdb04f"
     },
     {
       "path": "FolderRewind.Plugin.Abstractions/Capabilities.cs",
-      "sha256": "bf5561506e8647c4b2d1a00b240f4054394fe9e39ba48c7d008c78cdf552507e"
+      "sha256": "c5f17557534d7ed303d670080ef6d13abb68f667f1b05748ae1f9f4cfcb3b309"
     },
     {
       "path": "FolderRewind.Plugin.Abstractions/FolderRewind.Plugin.Abstractions.csproj",
-      "sha256": "59792d22514372afdbd0fd614032d48c14f7483ab327214e7677a19cbff15595"
+      "sha256": "5fdcab2618cc7a85e7d27c5d58d44ce28b8664e4ee2129061d821b102fc9eb4a"
     },
     {
       "path": "FolderRewind.Plugin.Abstractions/Identifiers.cs",
-      "sha256": "deb6c8d3f3aa4a13ac8d3e48efab66fde11b22939ca3992bc39b9e760faad6df"
+      "sha256": "3f52a3b1a7fdb5255b99fd3efae1beddead304989505527d04f6eba450febe27"
     },
     {
       "path": "FolderRewind.Plugin.Abstractions/KnotLinkCoreCommands.cs",
-      "sha256": "87d19cbef8a522456d979e9bda609b0e98bb5a7b329a178a3e68f27d9532b833"
+      "sha256": "8317c9f8edcc362e829bae7827a7f5bc440c3862073f7652780c9401b3287a5c"
     },
     {
       "path": "FolderRewind.Plugin.Abstractions/Lifecycle.cs",
-      "sha256": "b765867c4aabd42b6908894f15d11710275e51d719982172bf8e6dbaa4b23d1c"
+      "sha256": "570fc0986d64396f0350772113163ff7d831ae8b64a76f931b98781e3aa8e871"
     },
     {
       "path": "FolderRewind.Plugin.Abstractions/Manifest.cs",
-      "sha256": "3ea31a1486d9b6864d04fbe2f71aaca827886b1b5943c5f2efb29f166228e729"
+      "sha256": "a35d829f3cba16b6f2eb7835fd7d1268c7dfa4adba38bc584da06fec6c157d47"
+    },
+    {
+      "path": "FolderRewind.Plugin.Abstractions/Merge.cs",
+      "sha256": "12faa6a4f027c26300c3f1006f14ad7b7a04f035d6608f5b96011c25f86f031b"
+    },
+    {
+      "path": "FolderRewind.Plugin.Abstractions/MergeCoverage.cs",
+      "sha256": "acf6341a8b7958d6a4ab4f480ced10f273f99bf9f5bc42f9894e015c1e9ac756"
     },
     {
       "path": "FolderRewind.Plugin.Abstractions/PluginApi.cs",
-      "sha256": "1cc60c7c7f5c067cc0bb78e75479533813ee7c567b5b8dfb048c3c44dae64276"
+      "sha256": "136cf766cca30157e0acfc113f6bd691ad50305507a7272d7dec275256ac929b"
     },
     {
       "path": "FolderRewind.Plugin.Abstractions/README.md",
-      "sha256": "31cc09cf43ea7b0cfb87d170d1d5b5a2e4820bbe797bb5be5361014f72032c85"
+      "sha256": "feae118b7342d2bff3a1eb75446aa97c29c128c38791aafd8ebc37a4937e0a5f"
     },
     {
       "path": "FolderRewind.Plugin.Abstractions/Snapshots.cs",
-      "sha256": "f0cd4fd645a9e0dbfc026f375c3d3d0686787c1485c9ab5515335369bb0e77a4"
+      "sha256": "ab7ef7eb03fdaf98f132f4da45c54c38b27fd4b8e10b121b5fafbaa87656bea3"
     },
     {
       "path": "FolderRewind.Plugin.Abstractions/SpatialPreview.cs",
-      "sha256": "03d86ed51afc6b524b66ecde34f44838f353debd7d7b29603a1ef36e9e9a2c56"
+      "sha256": "114d05ef0e768c6c0d567a00b2d614ab9192bf08b5ed538b8551f14b119b9f30"
     }
   ],
-  "packageSha256": "0e3341ed1c916b9db14f7679999d8e628c4506079283896a2baee489a2d2a8fe",
-  "assemblySha256": "9cdbb257407f9feeffebaea226260ef578ac029a7c66e6c9e3678050f249d563"
+  "packageSha256": "a4aebd3d7c0ff0387ab073b7d66d567bed73fd6715681c45a296a8ab31726d57",
+  "assemblySha256": "577312922510db3b65ae9115a8bf1db0be98a25647eed3ef3b2cb3e4ffb7ec5c"
 }

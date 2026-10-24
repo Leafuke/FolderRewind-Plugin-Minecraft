@@ -142,6 +142,28 @@ public sealed class SemanticTests
     }
 
     [TestMethod]
+    [DataRow(2, false)]
+    [DataRow(3, true)]
+    public async Task MissingFinalPaddingKeepsCompleteRecordsReadableAndByteExact(int compression, bool external)
+    {
+        var source = Dir("world"); var path = Region(source, compression: compression, external: external);
+        var bytes = File.ReadAllBytes(path);
+        var end = 4 * 4096 + 4 + BinaryPrimitives.ReadInt32BigEndian(bytes.AsSpan(4 * 4096));
+        File.WriteAllBytes(path, bytes[..end]);
+        var preview = AnvilReader.Read(source, path, new(-1, -1));
+        Assert.AreEqual(ChunkReadState.Present, preview.State);
+        CollectionAssert.AreEqual(Nbt(1), preview.Nbt!);
+        var relative = "region/r.-1.-1.mca";
+        Assert.IsTrue(MergeRegion.TryAddress(relative, [""], out var address));
+        ValueTask<Stream> Open(string name, CancellationToken _) => ValueTask.FromResult<Stream>(File.OpenRead(Path.Combine(source, name)));
+        var merged = await MergeRegion.ReadAsync(relative, address!, Open, Oracle(source).Keys.ToHashSet(), default);
+        Assert.HasCount(1, merged.Chunks);
+        var scratch = Capture(source);
+        Assert.AreEqual(0, ScratchArchive.Validate(scratch).Summary.OpaqueRegions);
+        CheckRoundTrip(source, scratch);
+    }
+
+    [TestMethod]
     public void CompressionDoesNotChangePayloadHashButContainerChangesAreRetained()
     {
         var hashes = new List<string?>(); var raw = new List<string>();
@@ -174,7 +196,8 @@ public sealed class SemanticTests
     [DataRow("truncated")] [DataRow("overlap")] [DataRow("extent")] [DataRow("length")]
     [DataRow("compression")] [DataRow("nbt")] [DataRow("missing")]
     [DataRow("decode_limit")] [DataRow("broken_zlib")]
-    public void InvalidRegionsAreOpaqueAndNeverComparable(string failure)
+    [DataRow("payload_eof")] [DataRow("envelope_eof")]
+    public async Task InvalidRegionsAreOpaqueAndNeverComparable(string failure)
     {
         var source = Dir("world");
         var path = Region(source, compression: failure == "compression" ? 4 : failure == "decode_limit" ? 2 : 3,
@@ -186,7 +209,22 @@ public sealed class SemanticTests
         if (failure == "length") BinaryPrimitives.WriteInt32BigEndian(bytes.AsSpan(16384), int.MaxValue);
         if (failure == "broken_zlib") bytes[16388] = 2;
         if (failure == "missing") File.Delete(Path.Combine(source, "region", "c.-1.-1.mcc"));
+        if (failure == "payload_eof")
+        {
+            var length = BinaryPrimitives.ReadInt32BigEndian(bytes.AsSpan(16384));
+            bytes = bytes[..(16384 + 4 + length)];
+            // The NBT itself is complete, but the declared record promises one missing byte.
+            BinaryPrimitives.WriteInt32BigEndian(bytes.AsSpan(16384), length + 1);
+        }
+        if (failure == "envelope_eof") bytes = bytes[..16388];
         File.WriteAllBytes(path, bytes);
+        if (failure is "payload_eof" or "envelope_eof")
+        {
+            Assert.AreEqual(ChunkReadState.Corrupt, AnvilReader.Read(source, path, new(-1, -1)).State);
+            Assert.IsTrue(MergeRegion.TryAddress("region/r.-1.-1.mca", [""], out var address));
+            ValueTask<Stream> Open(string name, CancellationToken _) => ValueTask.FromResult<Stream>(File.OpenRead(Path.Combine(source, name)));
+            await Assert.ThrowsExactlyAsync<InvalidDataException>(() => MergeRegion.ReadAsync("region/r.-1.-1.mca", address!, Open, Oracle(source).Keys.ToHashSet(), default));
+        }
         var scratch = Capture(source);
         var summary = ScratchArchive.Validate(scratch).Summary;
         Assert.AreEqual(1, summary.OpaqueRegions); Assert.AreEqual(0, summary.ComparableChunks); Assert.IsFalse(summary.InputComplete);

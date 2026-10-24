@@ -99,6 +99,12 @@ public sealed class IncrementalTests
         var one = WorldIncrementalFormat.Read<RegionEntry>(objects, first.Files[0].Index!, default);
         var two = WorldIncrementalFormat.Read<RegionEntry>(objects, second.Files[0].Index!, default);
         Assert.AreEqual(one.Chunks[0].PayloadHash, two.Chunks[0].PayloadHash);
+        var unpadded = changed[..(8192 + 4 + BinaryPrimitives.ReadInt32BigEndian(changed.AsSpan(8192)))];
+        var third = Capture(new(new() { ["region/r.0.0.mca"] = unpadded }), objects, second);
+        CollectionAssert.AreEqual(unpadded, Restore(third, "region/r.0.0.mca", objects));
+        var three = WorldIncrementalFormat.Read<RegionEntry>(objects, third.Files[0].Index!, default);
+        Assert.AreEqual(SemanticState.Present, three.State);
+        Assert.AreEqual(one.Chunks[0].PayloadHash, three.Chunks[0].PayloadHash);
     }
 
     [TestMethod]

@@ -122,14 +122,7 @@ public sealed partial class MinecraftSavesPlugin
         if (ResolveWorldPath(request.Folder.Path) is null)
             return ValueTask.FromResult(new FilePolicyResult([], [], []));
         return ValueTask.FromResult(new FilePolicyResult(
-            [
-                "session.lock",
-                "**/session.lock",
-                "voxy/**",
-                "**/DistantHorizons.sqlite",
-                "**/DistantHorizons.sqlite-shm",
-                "**/DistantHorizons.sqlite-wal"
-            ],
+            MinecraftWorldFilePolicy.BackupExclusions,
             Array.Empty<string>(),
             Array.Empty<PluginDiagnostic>()));
     }

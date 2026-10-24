@@ -14,4 +14,4 @@ try {
     finally { $assembly.Dispose() }
     if ($hash -ine $provenance.assemblySha256) { throw 'Contract assembly SHA256 differs.' }
 } finally { $archive.Dispose() }
-Write-Output "Verified $($provenance.version) from Host $($provenance.sourceCommit)."
+Write-Output "Verified $($provenance.version); Host base $($provenance.sourceCommit), source state $($provenance.sourceState), source digest $($provenance.sourceDigestSha256)."

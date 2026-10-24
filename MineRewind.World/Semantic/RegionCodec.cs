@@ -42,7 +42,7 @@ internal static class RegionCodec
             var externalPath = external ? JoinParent(info.RelativePath, $"c.{x}.{z}.mcc") : null;
             string? hash = null, diagnostic = null, externalHash = null, storageHash = null; var chunkState = SemanticState.Present;
             var previous = baseline?.Chunks.FirstOrDefault(c => c.Slot == slot);
-            if (length < 1 || length > sectors * 4096L - 4 || (external && length != 1))
+            if (length < 1 || length > sectors * 4096L - 4 || length > file.Length - offset - 4 || (external && length != 1))
                 (chunkState, diagnostic) = (SemanticState.Corrupt, "invalid_record_length");
             else if (compression is not (1 or 2 or 3))
                 (chunkState, diagnostic) = (SemanticState.Unsupported, "unsupported_compression");
@@ -92,7 +92,7 @@ internal static class RegionCodec
             new(info.RelativePath, address, "", failure, [], [code]), []);
     }
 
-    internal static string HashDecoded(Stream input, byte compression, CancellationToken token)
+    internal static string HashDecoded(Stream input, byte compression, CancellationToken token, Action<NbtReader>? inspect = null)
     {
         using Stream decoded = compression switch
         {
@@ -127,6 +127,7 @@ internal static class RegionCodec
                     if (reader.Depth > 64 || reader.TagsRead > 100_000
                         || (reader.HasLength && (reader.TagLength < 0 || reader.TagLength > 1_048_576)))
                         throw new DecodeLimitException();
+                    inspect?.Invoke(reader);
                 }
                 if (!seenRoot || nbt.Position != count) throw new InvalidDataException("Invalid NBT framing.");
             }
@@ -142,7 +143,7 @@ internal static class RegionCodec
         => relative[..(relative.LastIndexOf('/') + 1)] + name;
     private sealed class DecodeLimitException : IOException { }
 
-    private sealed class BoundedReadStream(Stream inner, long remaining) : Stream
+    internal sealed class BoundedReadStream(Stream inner, long remaining) : Stream
     {
         public override int Read(byte[] buffer, int offset, int count)
         {
