@@ -6,7 +6,7 @@
     "en-US": "MineRewind",
     "zh-CN": "MineRewind"
   },
-  "version": "1.9.22",
+  "version": "1.9.24",
   "author": "Leafuke",
   "description": "Enhanced Minecraft saves backup with discovery, reconciliation, region scope, consistency, metadata, hot restore, and commands.",
   "localizedDescription": {
@@ -15,7 +15,7 @@
   },
   "pluginApi": {
     "major": 3,
-    "minor": 15
+    "minor": 17
   },
   "entryAssembly": "MineRewind.dll",
   "entryType": "MineRewind.MinecraftSavesPlugin",
@@ -191,7 +191,7 @@
       "policies": [
         {
           "policyId": "conservative",
-          "version": "3",
+          "version": "4",
           "displayName": "Conservative",
           "localizedDisplayName": {
             "en-US": "Conservative",
@@ -205,7 +205,7 @@
         },
         {
           "policyId": "terrain-first",
-          "version": "4",
+          "version": "5",
           "displayName": "Terrain first",
           "localizedDisplayName": {
             "en-US": "Terrain first",

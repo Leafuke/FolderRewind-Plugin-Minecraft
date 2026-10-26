@@ -49,6 +49,35 @@ public sealed partial class SemanticMergeTests
     }
 
     [TestMethod]
+    [DataRow("session.lock", PathFilterTarget.Any, 1, true)]
+    [DataRow("SESSION.LOCK", PathFilterTarget.Any, 1, true)]
+    [DataRow("voxy/**", PathFilterTarget.Any, 1, true)]
+    [DataRow("voxy", PathFilterTarget.Directory, 2, true)]
+    [DataRow("/session.lock", PathFilterTarget.Any, 1, false)]
+    [DataRow("**/session.lock", PathFilterTarget.Any, 1, false)]
+    [DataRow("session.lock/**", PathFilterTarget.Any, 1, false)]
+    [DataRow("regex:.*session.lock.*", PathFilterTarget.Any, 1, false)]
+    [DataRow("voxy", PathFilterTarget.Any, 1, false)]
+    [DataRow("/voxy", PathFilterTarget.Directory, 2, false)]
+    [DataRow("./voxy", PathFilterTarget.Directory, 2, false)]
+    [DataRow("**/voxy", PathFilterTarget.Directory, 2, false)]
+    [DataRow("voxy", PathFilterTarget.File, 2, false)]
+    [DataRow("session.lock", PathFilterTarget.File, 2, false)]
+    public async Task CoverageExceptionsIdentifyOnlyTheKnownRuleShapes(string pattern, PathFilterTarget target, int version, bool ignored)
+    {
+        var rule = new PathFilterRule(pattern, target, version);
+        var boundary = new MergeInputBoundary(2, MergeBoundaryScope.All, [], MergeBoundaryFilter.Blacklist, [], false, "typed-world")
+        { TypedFilterRules = [rule] };
+        var world = World(("region/r.0.0.mca", Region((0, Nbt(0, 0, 1)))));
+        var run = await Analyze(world, world, world, boundary: boundary);
+        _ = await run.Build();
+        var queries = run.Views.SelectMany(view => view.Queries).ToArray();
+        Assert.IsNotEmpty(queries);
+        foreach (var query in queries)
+            CollectionAssert.AreEqual(ignored ? new[] { rule } : [], query.IgnoredBlacklistRules.ToArray());
+    }
+
+    [TestMethod]
     public async Task SameChunkDecisionSupportsBaseDeleteAndExactExternalPayloadReuse()
     {
         var b = World(("region/r.0.0.mca", ExternalRegion()), ("region/c.0.0.mcc", Nbt(0, 0, 1)));
@@ -237,7 +266,7 @@ public sealed partial class SemanticMergeTests
         MergeVersionInput Input(int i) => new("version-" + i, "representation-" + i, "tree-" + i,
             boundary ?? new(1, MergeBoundaryScope.All, [], MergeBoundaryFilter.Blacklist, [], false, "all"), views[i]);
         var request = new MergeAnalysisRequest(Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(),
-            new(new(MinecraftSavesPlugin.PluginIdentity), MinecraftSavesPlugin.MinecraftKindIdentity), policy, policy == "terrain-first" ? "4" : "3", Input(0), Input(1), Input(2), MergeLimits.Default);
+            new(new(MinecraftSavesPlugin.PluginIdentity), MinecraftSavesPlugin.MinecraftKindIdentity), policy, policy == "terrain-first" ? "5" : "4", Input(0), Input(1), Input(2), MergeLimits.Default);
         var plan = new Plan(); var context = new PluginInvocationContext(new(MinecraftSavesPlugin.PluginIdentity), null!, default, default);
         var result = await ((IMergeProviderCapability)plugin).AnalyzeAsync(request, plan, context);
         return new((IMergeProviderCapability)plugin, request, plan, views, context) { AnalysisResult = result };
@@ -263,9 +292,13 @@ public sealed partial class SemanticMergeTests
     private sealed class View(Dictionary<string, byte[]> files, string fingerprint, Func<MergeCoverageQuery, MergeCoverageState>? coverage) : IMergeSourceView
     {
         public Dictionary<string, byte[]> Files => files;
+        public List<MergeCoverageQuery> Queries { get; } = [];
         public ValueTask<MergeCoverageResult> CheckCoverageAsync(MergeCoverageQuery query, CancellationToken token)
-            => ValueTask.FromResult(new MergeCoverageResult(query.RequirementId, fingerprint, coverage?.Invoke(query) ?? MergeCoverageState.Complete,
+        {
+            Queries.Add(query);
+            return ValueTask.FromResult(new MergeCoverageResult(query.RequirementId, fingerprint, coverage?.Invoke(query) ?? MergeCoverageState.Complete,
                 [new("test-proof", "historical-filter", null)]));
+        }
         public ValueTask<MergeInputPage> ReadPageAsync(string? cursor, int count, CancellationToken token)
         {
             var start = int.Parse(cursor ?? "0"); var entries = files.Skip(start).Take(count)

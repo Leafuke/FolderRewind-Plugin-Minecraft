@@ -13,13 +13,17 @@ internal static class MinecraftMergeCoverage
         var inputs = new[] { request.Base, request.Ours, request.Theirs };
         for (var side = 0; side < inputs.Length; side++)
         {
+            var boundary = inputs[side].Boundary;
+            var rules = boundary.TypedFilterRules.Count > 0 ? boundary.TypedFilterRules : boundary.FilterRules.Select(PathFilterRule.Legacy).ToArray();
+            var ignored = rules.Where(MinecraftWorldFilePolicy.IsSemanticNonDependency).ToArray();
             foreach (var component in new[] { "region", "entities", "poi" })
             {
                 // All possible dimensions and external payloads participate, including files absent
                 // from every visible inventory. Entity migration therefore cannot escape the proof.
                 var patterns = new[] { component, "DIM-1/" + component, "DIM1/" + component, "dimensions/*/**/" + component }
                     .SelectMany(prefix => new[] { prefix + "/*.mca", prefix + "/*.mcc" }).ToArray();
-                var proof = await inputs[side].Files.CheckCoverageAsync(new(component, root, patterns), token).ConfigureAwait(false);
+                var proof = await inputs[side].Files.CheckCoverageAsync(new(component, root, patterns)
+                { IgnoredBlacklistRules = ignored }, token).ConfigureAwait(false);
                 var state = proof.BoundaryFingerprint == inputs[side].Boundary.Fingerprint ? proof.State : MergeCoverageState.Unknown;
                 if (state == MergeCoverageState.Complete) continue;
                 var evidence = proof.Evidence.FirstOrDefault();

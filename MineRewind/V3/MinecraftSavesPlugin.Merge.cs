@@ -46,7 +46,7 @@ internal static class MinecraftMerge
     private static void Validate(MergeAnalysisRequest request)
     {
         if (request.Kind.OwnerId.Value != MinecraftSavesPlugin.PluginIdentity || request.Kind.KindId != MinecraftSavesPlugin.MinecraftKindIdentity
-            || !(request.PolicyId == "conservative" && request.PolicyVersion == "3" || request.PolicyId == "terrain-first" && request.PolicyVersion == "4"))
+            || !(request.PolicyId == "conservative" && request.PolicyVersion == "4" || request.PolicyId == "terrain-first" && request.PolicyVersion == "5"))
             throw new InvalidDataException("merge_unsupported_kind_or_policy");
     }
 

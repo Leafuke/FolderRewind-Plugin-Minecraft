@@ -6,6 +6,24 @@ namespace MineRewind.Tests;
 public sealed partial class V3VerticalSliceTests
 {
     [TestMethod]
+    public async Task SnapshotDistinguishesRuntimeFilesFromSameNamedDirectories()
+    {
+        using var temporary = TemporaryWorld.Create();
+        var (source, world) = CreateSnapshotLayout(temporary.Root, "paper");
+        WriteSnapshotFile(world, "nested/session.lock/ordinary.dat", "directory content");
+        WriteSnapshotFile(world, "DistantHorizons.sqlite/ordinary.dat", "directory content");
+        WriteSnapshotFile(world, "prefixDistantHorizons.sqlite", "ordinary file");
+        WriteSnapshotFile(world, "voxy", "ordinary file");
+        WriteSnapshotFile(world, "nested/voxy/cache.bin", "cache");
+        WriteSnapshotFile(world, "other/session.lock", "lock");
+        var fixture = Activate(); var (config, folder) = Snapshots(source);
+        await using var lease = await fixture.Plugin.AcquireAsync(new(config, folder, ConsistencyIntent.Require), fixture.Invocation);
+        foreach (var relative in new[] { "nested/session.lock/ordinary.dat", "DistantHorizons.sqlite/ordinary.dat", "prefixDistantHorizons.sqlite", "voxy" })
+            Assert.IsTrue(File.Exists(Path.Combine(lease.SourcePath, "world", relative)), relative);
+        Assert.IsFalse(Directory.Exists(Path.Combine(lease.SourcePath, "world", "nested", "voxy")));
+        Assert.IsFalse(File.Exists(Path.Combine(lease.SourcePath, "world", "other", "session.lock")));
+    }
+    [TestMethod]
     [DataRow("direct")]
     [DataRow("saves")]
     [DataRow("default-server")]

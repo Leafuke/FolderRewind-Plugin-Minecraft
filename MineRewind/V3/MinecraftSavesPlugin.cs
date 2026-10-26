@@ -157,6 +157,8 @@ public sealed partial class MinecraftSavesPlugin :
         return candidate.ConfigDrafts.Any(draft => draft.Kind == MinecraftKind) ? MinecraftDefinitionIdentity : null;
     }
 
+    public bool SupportsCoordinationOnly => true;
+
     public async ValueTask<IConsistencyLease> AcquireAsync(
         BackupConsistencyRequest request,
         PluginInvocationContext context)
@@ -170,6 +172,7 @@ public sealed partial class MinecraftSavesPlugin :
         var diagnostics = new List<PluginDiagnostic>();
         var worldState = ProbeWorldLock(worldPath);
         var worldIsActive = worldState.State == WorldLockState.InUse;
+        var saveAcknowledged = false;
         if (worldState.State == WorldLockState.Unknown)
         {
             var diagnostic = LockProbeDiagnostic(worldState,
@@ -202,6 +205,7 @@ public sealed partial class MinecraftSavesPlugin :
                 {
                     var saved = await RequestWorldSaveForBackupAsync(request, worldPath, context)
                         .ConfigureAwait(false);
+                    saveAcknowledged = saved;
                     if (!saved)
                     {
                         if (request.Intent == ConsistencyIntent.Require)
@@ -239,6 +243,24 @@ public sealed partial class MinecraftSavesPlugin :
                 DiagnosticSeverity.Warning,
                 "BackupConsistency"));
         }
+
+        // Keep legacy acquisition available to older Hosts. New Hosts explicitly own input copying.
+        for (var i = 0; i < diagnostics.Count; i++)
+        {
+            var arguments = new Dictionary<string, string>(diagnostics[i].Arguments)
+            {
+                ["lockPath"] = worldState.LockPath,
+                ["lockState"] = worldState.State.ToString(),
+                ["hresult"] = worldState.HResult ?? "",
+                ["exceptionType"] = worldState.ExceptionType ?? "",
+                ["coordination"] = saveAcknowledged ? "save_acknowledged" : "not_acknowledged",
+                ["sourceView"] = request.CoordinationOnly ? "host_managed" : "provider_copy"
+            };
+            diagnostics[i] = diagnostics[i] with { Arguments = arguments };
+        }
+        context.HostServices.Logger.Log(DiagnosticSeverity.Information,
+            $"Minecraft capture coordination: world={worldPath}; lockPath={worldState.LockPath}; lockState={worldState.State}; saveAcknowledged={saveAcknowledged}; coordinationOnly={request.CoordinationOnly}");
+        if (request.CoordinationOnly) return new MinecraftConsistencyLease(sourceRoot, diagnostics, null);
 
         string? snapshotPath = null;
         try

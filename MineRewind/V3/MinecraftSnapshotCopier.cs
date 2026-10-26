@@ -25,9 +25,8 @@ internal static class MinecraftSnapshotCopier
                 if ((attributes & FileAttributes.ReparsePoint) != 0) continue;
                 var relative = Path.GetRelativePath(source, entry).Replace('\\', '/');
                 var isDirectory = (attributes & FileAttributes.Directory) != 0;
-                if (IsDerivedCache(relative, isDirectory)) continue;
+                if (MinecraftWorldFilePolicy.Excludes(relative, isDirectory)) continue;
                 if (isDirectory) { pending.Push(entry); continue; }
-                if (string.Equals(Path.GetFileName(entry), "session.lock", StringComparison.OrdinalIgnoreCase)) continue;
                 Count(); bytes = checked(bytes + new FileInfo(entry).Length);
                 if (bytes > limits.MaximumBytes) throw new IOException("Snapshot source exceeds its byte budget.");
             }
@@ -80,13 +79,12 @@ internal static class MinecraftSnapshotCopier
                 var relative = Path.GetRelativePath(source, entry).Replace('\\', '/');
                 var destination = Destination(relative);
                 var isDirectory = (attributes & FileAttributes.Directory) != 0;
-                if (IsDerivedCache(relative, isDirectory)) continue;
+                if (MinecraftWorldFilePolicy.Excludes(relative, isDirectory)) continue;
                 if (isDirectory)
                 {
                     pending.Push(entry);
                     continue;
                 }
-                if (string.Equals(Path.GetFileName(entry), "session.lock", StringComparison.OrdinalIgnoreCase)) continue;
                 // Recheck immediately before copying; this is not a handle-based defense against hostile races.
                 if (IsLink(entry))
                 {
@@ -141,11 +139,4 @@ internal static class MinecraftSnapshotCopier
 
     private static bool IsLink(string path) => (File.GetAttributes(path) & FileAttributes.ReparsePoint) != 0;
 
-    private static bool IsDerivedCache(string relativePath, bool isDirectory)
-        => (isDirectory && string.Equals(Path.GetFileName(relativePath), "voxy", StringComparison.OrdinalIgnoreCase))
-           || relativePath.StartsWith("voxy/", StringComparison.OrdinalIgnoreCase)
-           || relativePath.Contains("/voxy/", StringComparison.OrdinalIgnoreCase)
-           || relativePath.EndsWith("DistantHorizons.sqlite", StringComparison.OrdinalIgnoreCase)
-           || relativePath.EndsWith("DistantHorizons.sqlite-shm", StringComparison.OrdinalIgnoreCase)
-           || relativePath.EndsWith("DistantHorizons.sqlite-wal", StringComparison.OrdinalIgnoreCase);
 }

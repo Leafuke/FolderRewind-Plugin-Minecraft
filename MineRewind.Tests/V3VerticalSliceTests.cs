@@ -388,8 +388,8 @@ public sealed partial class V3VerticalSliceTests
             new FilePolicyRequest(config, folder),
             fixture.Invocation);
 
-        Assert.Contains("session.lock", result.RequiredExclusions);
-        Assert.Contains("voxy/**", result.RequiredExclusions);
+        Assert.Contains(new PathFilterRule("session.lock", PathFilterTarget.File), result.TypedRequiredExclusions);
+        Assert.Contains(new PathFilterRule("voxy", PathFilterTarget.Directory), result.TypedRequiredExclusions);
     }
 
     [TestMethod]

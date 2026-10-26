@@ -122,10 +122,8 @@ public sealed partial class MinecraftSavesPlugin
         ValidateKind(request.Config.Kind);
         if (ResolveWorldPath(request.Folder.Path) is null)
             return ValueTask.FromResult(new FilePolicyResult([], [], []));
-        return ValueTask.FromResult(new FilePolicyResult(
-            MinecraftWorldFilePolicy.BackupExclusions,
-            Array.Empty<string>(),
-            Array.Empty<PluginDiagnostic>()));
+        return ValueTask.FromResult(new FilePolicyResult([], [], [])
+        { TypedRequiredExclusions = MinecraftWorldFilePolicy.BackupExclusions });
     }
 
     public ValueTask<BackupScopeResult> ResolveAsync(
@@ -229,6 +227,16 @@ public sealed partial class MinecraftSavesPlugin
                 CreateMetadataField("regionFileCount", "Region files", "区域文件数", FormatNumber(regionCount))
             ],
             Array.Empty<PluginDiagnostic>()));
+    }
+
+    public ValueTask<IReadOnlyList<string>> GetRequiredSourcePathsAsync(
+        ConfigSnapshot config, FolderSnapshot folder, PluginInvocationContext context)
+    {
+        EnsureActivated();
+        ValidateKind(config.Kind);
+        var world = ResolveWorldPath(folder.Path);
+        return ValueTask.FromResult<IReadOnlyList<string>>(world is null ? [] :
+            [Path.GetRelativePath(Path.GetFullPath(folder.Path), Path.Combine(world, "level.dat")).Replace('\\', '/')]);
     }
 
     public async ValueTask<VersionMetadataCaptureResult> CaptureAsync(
