@@ -101,13 +101,15 @@ public sealed partial class MinecraftSavesPlugin
     private sealed class IncrementalView(WorldIncrementalState state, ArtifactObjects objects) : IArtifactFileView
     {
         private bool _disposed;
+        private readonly IReadOnlyDictionary<string, WorldStateFile> _files = state.Files.ToDictionary(f => f.Path, StringComparer.Ordinal);
         public IReadOnlyList<ArtifactMaterializedFile> Files { get; } = Array.AsReadOnly(state.Files.Select(f => new ArtifactMaterializedFile(
             f.Path, f.Length, f.Sha256, new(new(f.Recipe.ArtifactId), f.Recipe.Path, f.Recipe.Offset, f.Recipe.Length,
                 f.Recipe.Sha256, WorldIncrementalFormat.Format, 1))).ToArray());
         public ValueTask<Stream> OpenReadAsync(string path, CancellationToken token)
         {
             ObjectDisposedException.ThrowIf(_disposed, this);
-            var file = state.Files.Single(f => f.Path == path);
+            if (!_files.TryGetValue(path, out var file))
+                throw new InvalidOperationException("Sequence contains no matching element");
             return ValueTask.FromResult(WorldIncrementalFormat.OpenFile(file, objects, token));
         }
         public ValueTask DisposeAsync() { _disposed = true; objects.Dispose(); return ValueTask.CompletedTask; }
