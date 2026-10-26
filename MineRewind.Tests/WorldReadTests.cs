@@ -1,5 +1,6 @@
 using System.Buffers.Binary;
 using System.IO.Compression;
+using System.IO.Hashing;
 using System.Security.Cryptography;
 using fNbt;
 using MineRewind.World;
@@ -32,11 +33,12 @@ public sealed class WorldReadTests
     [TestMethod]
     [DataRow(1, false)] [DataRow(2, false)] [DataRow(3, false)]
     [DataRow(1, true)] [DataRow(2, true)] [DataRow(3, true)]
+    [DataRow(4, false)] [DataRow(4, true)]
     public void RegionEnvelopeReadsInternalAndExternalRecordsWithoutWriting(int compression, bool external)
     {
         // Independent literal NBT: unnamed compound containing no tags.
         byte[] nbt = [10, 0, 0, 0];
-        var path = WriteRegion(nbt, compression, external);
+        var path = WriteRegion(nbt, compression, external, validLz4: true);
         var original = SHA256.HashData(File.ReadAllBytes(path));
         var record = AnvilReader.Read(_root, path, new(-1, -1));
         Assert.AreEqual(ChunkReadState.Present, record.State);
@@ -48,8 +50,10 @@ public sealed class WorldReadTests
     [TestMethod]
     public void BadExtentsOverlapsAndLz4NeverBecomeEmptyChunks()
     {
-        var path = WriteRegion([10, 0, 0, 0], 4, false);
+        var path = WriteRegion([10, 0, 0, 0], 5, false);
         Assert.AreEqual(ChunkReadState.UnsupportedCompression, AnvilReader.Read(_root, path, new(-1, -1)).State);
+        path = WriteRegion([10, 0, 0, 0], 4, false); // Truncated Java LZ4Block, not an unsupported codec.
+        Assert.AreEqual(ChunkReadState.Corrupt, AnvilReader.Read(_root, path, new(-1, -1)).State);
         var bytes = File.ReadAllBytes(path);
         BinaryPrimitives.WriteUInt32BigEndian(bytes.AsSpan(4092, 4), 0xFFFFFF01);
         File.WriteAllBytes(path, bytes);
@@ -117,13 +121,23 @@ public sealed class WorldReadTests
         Assert.AreEqual(ChunkReadState.Corrupt, surface.State);
     }
 
-    private string WriteRegion(byte[] nbt, int compression, bool external)
+    private string WriteRegion(byte[] nbt, int compression, bool external, bool validLz4 = false)
     {
         using var content = new MemoryStream();
         if (compression is 1 or 2)
         {
             using Stream encoder = compression == 1 ? new GZipStream(content, CompressionLevel.Fastest, true) : new ZLibStream(content, CompressionLevel.Fastest, true);
             encoder.Write(nbt);
+        }
+        else if (compression == 4 && validLz4)
+        {
+            // Independent literal Java LZ4Block raw block and terminal block; no production writer.
+            var header = new byte[21]; "LZ4Block"u8.CopyTo(header); header[8] = 0x10;
+            BinaryPrimitives.WriteInt32LittleEndian(header.AsSpan(9), nbt.Length);
+            BinaryPrimitives.WriteInt32LittleEndian(header.AsSpan(13), nbt.Length);
+            BinaryPrimitives.WriteUInt32LittleEndian(header.AsSpan(17), XxHash32.HashToUInt32(nbt, unchecked((int)0x9747b28c)));
+            content.Write(header); content.Write(nbt);
+            Array.Clear(header, 9, 12); content.Write(header);
         }
         else content.Write(nbt);
         var payload = content.ToArray();
