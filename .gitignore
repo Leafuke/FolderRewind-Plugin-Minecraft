@@ -363,3 +363,6 @@ MigrationBackup/
 FodyWeavers.xsd
 *.dll
 *.zip
+
+# Exact public contract input; version and hashes are pinned in source-manifest.json.
+!contracts/feed/FolderRewind.Plugin.Abstractions.3.17.0.nupkg

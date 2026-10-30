@@ -8,6 +8,7 @@ namespace MineRewind;
 
 public sealed partial class MinecraftSavesPlugin :
     IFolderRewindPlugin,
+    IFixedSpatialPreviewCapability,
     IDiscoveryCapability,
     IDiscoveryDefinitionCatalog,
     IBackupConsistencyCapability,
@@ -82,6 +83,7 @@ public sealed partial class MinecraftSavesPlugin :
     public DiscoveryProviderId ProviderId { get; } = new(DiscoveryIdentity);
     public IReadOnlyList<DiscoveryDefinitionDescriptor> Definitions => DiscoveryDefinitions;
     public ConfigKindRef Kind => MinecraftKind;
+    public bool SupportsBoundedSourceView => true;
     public StateOwnerId StateOwnerId => MineRewindStateOwnerId;
     public int CurrentSchemaVersion => 1;
     public bool SupportsPlayerDataOverride => true;
@@ -124,6 +126,8 @@ public sealed partial class MinecraftSavesPlugin :
 
     public ValueTask DeactivateAsync(CancellationToken cancellationToken)
     {
+        _preview.Clear();
+        ClearSpatialComparisons();
         _activated = false;
         return ValueTask.CompletedTask;
     }
@@ -153,17 +157,30 @@ public sealed partial class MinecraftSavesPlugin :
         return candidate.ConfigDrafts.Any(draft => draft.Kind == MinecraftKind) ? MinecraftDefinitionIdentity : null;
     }
 
+    public bool SupportsCoordinationOnly => true;
+
     public async ValueTask<IConsistencyLease> AcquireAsync(
         BackupConsistencyRequest request,
         PluginInvocationContext context)
     {
         EnsureActivated();
         ValidateKind(request.Config.Kind);
-        var sourcePath = ResolveWorldPath(request.Folder.Path);
+        var sourceRoot = Path.GetFullPath(request.Folder.Path);
+        var worldPath = ResolveWorldPath(sourceRoot);
         // Ordinary folders in a Minecraft configuration do not require world coordination.
-        if (sourcePath is null) return new MinecraftConsistencyLease(request.Folder.Path, [], null);
+        if (worldPath is null) return new MinecraftConsistencyLease(sourceRoot, [], null);
         var diagnostics = new List<PluginDiagnostic>();
-        var worldIsActive = IsSessionLockHeld(sourcePath);
+        var worldState = ProbeWorldLock(worldPath);
+        var worldIsActive = worldState.State == WorldLockState.InUse;
+        var saveAcknowledged = false;
+        if (worldState.State == WorldLockState.Unknown)
+        {
+            var diagnostic = LockProbeDiagnostic(worldState,
+                request.Intent == ConsistencyIntent.Require ? DiagnosticSeverity.Error : DiagnosticSeverity.Warning, "BackupConsistency");
+            if (request.Intent == ConsistencyIntent.Require)
+                throw new IOException($"{diagnostic.Code}: {worldState.LockPath}: {worldState.Message}", worldState.Error);
+            diagnostics.Add(diagnostic);
+        }
 
         if (worldIsActive && context.HostServices.KnotLink.IsAvailable)
         {
@@ -171,7 +188,7 @@ public sealed partial class MinecraftSavesPlugin :
             {
                 var compatible = await PerformModHandshakeAsync(
                     "backup",
-                    Path.GetFileName(sourcePath),
+                    Path.GetFileName(worldPath),
                     context).ConfigureAwait(false);
                 if (!compatible)
                 {
@@ -186,8 +203,9 @@ public sealed partial class MinecraftSavesPlugin :
                 }
                 else
                 {
-                    var saved = await RequestWorldSaveForBackupAsync(request, sourcePath, context)
+                    var saved = await RequestWorldSaveForBackupAsync(request, worldPath, context)
                         .ConfigureAwait(false);
+                    saveAcknowledged = saved;
                     if (!saved)
                     {
                         if (request.Intent == ConsistencyIntent.Require)
@@ -205,7 +223,7 @@ public sealed partial class MinecraftSavesPlugin :
             {
                 throw;
             }
-            catch (Exception ex) when (request.Intent == ConsistencyIntent.Prefer)
+            catch (Exception ex) when (ex is not OperationCanceledException && request.Intent == ConsistencyIntent.Prefer)
             {
                 diagnostics.Add(Diagnostic(
                     "minerewind.consistency_coordination_failed",
@@ -226,16 +244,45 @@ public sealed partial class MinecraftSavesPlugin :
                 "BackupConsistency"));
         }
 
+        // Keep legacy acquisition available to older Hosts. New Hosts explicitly own input copying.
+        for (var i = 0; i < diagnostics.Count; i++)
+        {
+            var arguments = new Dictionary<string, string>(diagnostics[i].Arguments)
+            {
+                ["lockPath"] = worldState.LockPath,
+                ["lockState"] = worldState.State.ToString(),
+                ["hresult"] = worldState.HResult ?? "",
+                ["exceptionType"] = worldState.ExceptionType ?? "",
+                ["coordination"] = saveAcknowledged ? "save_acknowledged" : "not_acknowledged",
+                ["sourceView"] = request.CoordinationOnly ? "host_managed" : "provider_copy"
+            };
+            diagnostics[i] = diagnostics[i] with { Arguments = arguments };
+        }
+        context.HostServices.Logger.Log(DiagnosticSeverity.Information,
+            $"Minecraft capture coordination: world={worldPath}; lockPath={worldState.LockPath}; lockState={worldState.State}; saveAcknowledged={saveAcknowledged}; coordinationOnly={request.CoordinationOnly}");
+        if (request.CoordinationOnly) return new MinecraftConsistencyLease(sourceRoot, diagnostics, null);
+
         string? snapshotPath = null;
         try
         {
             var temporaryRoot = await context.HostServices.TemporaryStorage.CreateDirectoryAsync(
                 context.OperationCancellation).ConfigureAwait(false);
             snapshotPath = Path.Combine(temporaryRoot, "minerewind-snapshot-" + Guid.NewGuid().ToString("N"));
-            CopyWorldSnapshot(sourcePath, snapshotPath, context.OperationCancellation);
+            var expectedSpace = request.SourceViewLimits is { } limits
+                ? MinecraftSnapshotCopier.InspectSpace(sourceRoot, limits, context.OperationCancellation) : (long?)null;
+            using var reservation = expectedSpace is { } bytes
+                ? await context.HostServices.TemporaryStorage.ReserveAsync(temporaryRoot, bytes, context.OperationCancellation) : null;
+            var copy = MinecraftSnapshotCopier.Copy(sourceRoot, snapshotPath, context.OperationCancellation, request.SourceViewLimits, expectedSpace);
+            if (copy.SkippedLinkCount > 0)
+            {
+                diagnostics.Add(Diagnostic("minerewind.snapshot_links_skipped", DiagnosticSeverity.Warning,
+                    "BackupConsistency",
+                    ("count", copy.SkippedLinkCount.ToString(System.Globalization.CultureInfo.InvariantCulture)),
+                    ("paths", JsonSerializer.Serialize(copy.SkippedLinkPaths))));
+            }
             return new MinecraftConsistencyLease(snapshotPath, diagnostics, snapshotPath);
         }
-        catch (Exception ex) when (request.Intent == ConsistencyIntent.Prefer)
+        catch (Exception ex) when (ex is not OperationCanceledException && request.Intent == ConsistencyIntent.Prefer)
         {
             if (snapshotPath is not null)
             {
@@ -246,7 +293,7 @@ public sealed partial class MinecraftSavesPlugin :
                 DiagnosticSeverity.Warning,
                 "BackupConsistency",
                 ("message", ex.Message)));
-            return new MinecraftConsistencyLease(sourcePath, diagnostics, temporaryPath: null);
+            return new MinecraftConsistencyLease(sourceRoot, diagnostics, temporaryPath: null);
         }
         catch
         {
@@ -279,152 +326,6 @@ public sealed partial class MinecraftSavesPlugin :
         }
     }
 
-    public async ValueTask<RestoreCoordinatorResult> CoordinateAsync(
-        RestoreCoordinatorRequest request,
-        PluginInvocationContext context)
-    {
-        EnsureActivated();
-        ValidateKind(request.Config.Kind);
-        var diagnostics = new List<PluginDiagnostic>();
-        var affected = request.Folders.ToArray();
-        if (affected.Length == 0)
-            return new(await request.ContinueMutationAsync(context.OperationCancellation), diagnostics);
-        var worlds = affected.Where(folder => ResolveWorldPath(folder.Path) is not null).ToArray();
-        if (worlds.Length == 0) return new(await request.ContinueMutationAsync(context.OperationCancellation), diagnostics);
-        var active = worlds.Where(folder => IsSessionLockHeld(folder.Path)).ToArray();
-        if (active.Length > 1)
-            return new(OperationOutcome.Blocked, [Diagnostic("minerewind.restore_multiple_active_worlds",
-                DiagnosticSeverity.Error, "RestoreCoordinator")]);
-        request = request with { Folders = [active.SingleOrDefault() ?? worlds[0]] };
-        var worldWasActive = IsSessionLockHeld(request.Folders.Single().Path);
-        var signalGateHeld = false;
-        var prepared = false;
-        var cancellationReported = false;
-        var outcome = OperationOutcome.Blocked;
-        try
-        {
-            if (worldWasActive)
-            {
-                if (!context.HostServices.KnotLink.IsAvailable)
-                {
-                    diagnostics.Add(Diagnostic(
-                        "minerewind.restore_knotlink_unavailable",
-                        DiagnosticSeverity.Error,
-                        "RestoreCoordinator"));
-                    return new RestoreCoordinatorResult(OperationOutcome.Blocked, diagnostics);
-                }
-
-                await _restoreSignalGate.WaitAsync(context.OperationCancellation).ConfigureAwait(false);
-                signalGateHeld = true;
-                var compatible = await PerformModHandshakeAsync(
-                    "restore",
-                    Path.GetFileName(request.Folders.Single().Path),
-                    context).ConfigureAwait(false);
-                if (!compatible)
-                {
-                    diagnostics.Add(Diagnostic(
-                        "minerewind.restore_handshake_unavailable",
-                        DiagnosticSeverity.Error,
-                        "RestoreCoordinator"));
-                    await ReportRestoreCancelledAsync(request, "no_mod", context).ConfigureAwait(false);
-                    cancellationReported = true;
-                }
-                else if (!await RequestWorldExitAsync(request, context).ConfigureAwait(false))
-                {
-                    diagnostics.Add(Diagnostic(
-                        "minerewind.restore_world_exit_timeout",
-                        DiagnosticSeverity.Error,
-                        "RestoreCoordinator"));
-                    await ReportRestoreCancelledAsync(request, "timeout", context).ConfigureAwait(false);
-                    cancellationReported = true;
-                }
-                else if (!await WaitForWorldReleaseAsync(
-                        request.Folders.Single().Path,
-                        context.OperationCancellation).ConfigureAwait(false))
-                {
-                    diagnostics.Add(Diagnostic(
-                        "minerewind.restore_world_still_occupied",
-                        DiagnosticSeverity.Error,
-                        "RestoreCoordinator"));
-                    await ReportRestoreCancelledAsync(request, "world_occupied", context).ConfigureAwait(false);
-                    cancellationReported = true;
-                }
-                else
-                {
-                    prepared = true;
-                }
-            }
-
-            if ((!worldWasActive || prepared) && worlds.All(folder => !IsSessionLockHeld(folder.Path)))
-            {
-                outcome = await request.ContinueMutationAsync(context.OperationCancellation).ConfigureAwait(false);
-            }
-        }
-        catch (OperationCanceledException) when (context.OperationCancellation.IsCancellationRequested)
-        {
-            outcome = OperationOutcome.Canceled;
-        }
-        catch (Exception ex)
-        {
-            diagnostics.Add(Diagnostic(
-                "minerewind.restore_coordination_failed",
-                DiagnosticSeverity.Error,
-                "RestoreCoordinator",
-                ("message", ex.Message)));
-            outcome = OperationOutcome.Failed;
-        }
-
-        if (worldWasActive && !prepared && !cancellationReported)
-        {
-            await ReportRestoreCancelledAsync(
-                request,
-                outcome == OperationOutcome.Canceled ? "cancelled" : "failed",
-                context).ConfigureAwait(false);
-        }
-
-        if (prepared && outcome is not (OperationOutcome.RecoveryRequired or OperationOutcome.CommittedRecoveryRequired))
-        {
-            try
-            {
-                await ReportRestoreMutationFinishedAsync(request, outcome, context).ConfigureAwait(false);
-                var rejoinResult = await RequestWorldRejoinAsync(request, context).ConfigureAwait(false);
-                await ReportHotRestoreCompletedAsync(request, outcome, rejoinResult, context).ConfigureAwait(false);
-                if (rejoinResult != RejoinResult.Succeeded)
-                {
-                    diagnostics.Add(Diagnostic(
-                        "minerewind.restore_rejoin_failed",
-                        DiagnosticSeverity.Warning,
-                        "RestoreCoordinator"));
-                    if (outcome == OperationOutcome.Success)
-                    {
-                        outcome = OperationOutcome.SuccessWithWarnings;
-                    }
-                }
-            }
-            catch (Exception ex)
-            {
-                diagnostics.Add(Diagnostic(
-                    "minerewind.restore_rejoin_failed",
-                    DiagnosticSeverity.Warning,
-                    "RestoreCoordinator",
-                    ("message", ex.Message)));
-                if (outcome == OperationOutcome.Success)
-                {
-                    outcome = OperationOutcome.SuccessWithWarnings;
-                }
-            }
-        }
-
-        if (signalGateHeld)
-        {
-            Volatile.Write(ref _pendingWorldExited, null);
-            Volatile.Write(ref _pendingRejoin, null);
-            _restoreSignalGate.Release();
-        }
-
-        return new RestoreCoordinatorResult(outcome, diagnostics);
-    }
-
     public async ValueTask<PluginCommandResult> ExecuteAsync(
         PluginCommandRequest request,
         PluginInvocationContext context)
@@ -443,10 +344,14 @@ public sealed partial class MinecraftSavesPlugin :
             if (config is null || config.Kind != MinecraftKind)
                 return CommandFailure("minerewind.command_kind_unsupported");
         }
+        Guid? activeFolderId = null;
         if (string.IsNullOrWhiteSpace(configId))
         {
-            config = await FindActiveConfigAsync(context).ConfigureAwait(false);
-            if (config is null) return CommandFailure("minerewind.command_active_world_not_found");
+            var configs = await context.HostServices.Configs.QueryAsync(MinecraftKind, context.OperationCancellation).ConfigureAwait(false);
+            var selection = ResolveActiveWorld(configs);
+            if (selection.Target is null) return new(OperationOutcome.Blocked, new Dictionary<string, JsonElement>(), selection.Diagnostics);
+            config = configs.Single(item => item.ConfigId == selection.Target.ConfigId);
+            activeFolderId = selection.Target.FolderId;
             configId = config.ConfigId;
         }
 
@@ -456,7 +361,7 @@ public sealed partial class MinecraftSavesPlugin :
                 ? backupFolderId
                 : hasExplicitConfig
                     ? null
-                    : FindActiveFolder(config)?.FolderId;
+                    : activeFolderId;
             if (!hasExplicitConfig && !folderId.HasValue)
                 return CommandFailure("minerewind.command_active_world_not_found");
             var outcome = await context.HostServices.Backups.RequestAsync(
@@ -473,9 +378,13 @@ public sealed partial class MinecraftSavesPlugin :
         {
             var folderId = TryGuid(request.Arguments, "folderId", out var requestedFolderId)
                 ? requestedFolderId
-                : FindActiveFolder(config ??= await context.HostServices.Configs.FindAsync(
-                    configId,
-                    context.OperationCancellation).ConfigureAwait(false))?.FolderId;
+                : activeFolderId;
+            if (!folderId.HasValue && config is not null)
+            {
+                var selection = ResolveActiveWorld([config]);
+                if (selection.Target is null) return new(OperationOutcome.Blocked, new Dictionary<string, JsonElement>(), selection.Diagnostics);
+                folderId = selection.Target.FolderId;
+            }
             if (!folderId.HasValue)
             {
                 return CommandFailure("minerewind.command_active_world_not_found");
@@ -504,37 +413,6 @@ public sealed partial class MinecraftSavesPlugin :
         }
 
         return CommandFailure("minerewind.command_unknown");
-    }
-
-    private static async ValueTask<ConfigSnapshot?> FindActiveConfigAsync(PluginInvocationContext context)
-    {
-        var configs = await context.HostServices.Configs.QueryAsync(MinecraftKind, context.OperationCancellation)
-            .ConfigureAwait(false);
-        return configs.FirstOrDefault(config => FindActiveFolder(config) is not null);
-    }
-
-    private static FolderSnapshot? FindActiveFolder(ConfigSnapshot? config)
-        => config?.Folders.FirstOrDefault(folder => IsSessionLockHeld(folder.Path));
-
-    private static bool IsSessionLockHeld(string folderPath)
-    {
-        var worldPath = ResolveWorldPath(folderPath);
-        if (worldPath is null) return false;
-        var lockPath = Path.Combine(worldPath, "session.lock");
-        if (!File.Exists(lockPath)) return false;
-        try
-        {
-            using var stream = new FileStream(lockPath, FileMode.Open, FileAccess.ReadWrite, FileShare.None);
-            return false;
-        }
-        catch (IOException)
-        {
-            return true;
-        }
-        catch (UnauthorizedAccessException)
-        {
-            return true;
-        }
     }
 
     public ValueTask<ProviderStatePatch> MigrateAsync(
@@ -659,37 +537,6 @@ public sealed partial class MinecraftSavesPlugin :
     {
         if (!_activated) throw new InvalidOperationException("MineRewind is not active.");
     }
-
-    private static void CopyWorldSnapshot(string source, string target, CancellationToken cancellationToken)
-    {
-        Directory.CreateDirectory(target);
-        foreach (var directory in Directory.EnumerateDirectories(source, "*", SearchOption.AllDirectories))
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-            if ((File.GetAttributes(directory) & FileAttributes.ReparsePoint) != 0) continue;
-            var relative = Path.GetRelativePath(source, directory).Replace('\\', '/');
-            if (IsDerivedCache(relative)) continue;
-            Directory.CreateDirectory(Path.Combine(target, relative));
-        }
-        foreach (var file in Directory.EnumerateFiles(source, "*", SearchOption.AllDirectories))
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-            if ((File.GetAttributes(file) & FileAttributes.ReparsePoint) != 0) continue;
-            var relative = Path.GetRelativePath(source, file).Replace('\\', '/');
-            if (string.Equals(Path.GetFileName(relative), "session.lock", StringComparison.OrdinalIgnoreCase)
-                || IsDerivedCache(relative)) continue;
-            var destination = Path.Combine(target, relative);
-            Directory.CreateDirectory(Path.GetDirectoryName(destination)!);
-            File.Copy(file, destination, overwrite: true);
-        }
-    }
-
-    private static bool IsDerivedCache(string relativePath)
-        => relativePath.StartsWith("voxy/", StringComparison.OrdinalIgnoreCase)
-           || relativePath.Contains("/voxy/", StringComparison.OrdinalIgnoreCase)
-           || relativePath.EndsWith("DistantHorizons.sqlite", StringComparison.OrdinalIgnoreCase)
-           || relativePath.EndsWith("DistantHorizons.sqlite-shm", StringComparison.OrdinalIgnoreCase)
-           || relativePath.EndsWith("DistantHorizons.sqlite-wal", StringComparison.OrdinalIgnoreCase);
 
     private sealed class MinecraftConsistencyLease(
         string sourcePath,

@@ -29,6 +29,7 @@ public sealed partial class MinecraftSavesPlugin
                 "仅备份所选 Minecraft 维度中的指定方块坐标区域。"),
             ["properties"] = new Dictionary<string, object?>
             {
+                [MinecraftSpatialScope.Parameter] = new Dictionary<string, object?> { ["type"] = "string", ["x-folderrewind-hidden"] = true },
                 ["dimension.overworld"] = Field("boolean", ScopeText("Overworld", "主世界"), defaultValue: true),
                 ["dimension.nether"] = Field("boolean", ScopeText("Nether", "下界"), defaultValue: false),
                 ["dimension.end"] = Field("boolean", ScopeText("The End", "末地"), defaultValue: false),
@@ -66,9 +67,11 @@ public sealed partial class MinecraftSavesPlugin
     [
         CurrentSaveCommand("BACKUP", "Back up the currently active Minecraft world"),
         CurrentSaveCommand("LIST_BACKUPS", "List backups for the currently active Minecraft world"),
+        CurrentSaveCommand("LIST_VERSIONS", "List stable version IDs for the currently active Minecraft world"),
         CurrentSaveCommand("RESTORE", "Restore the currently active Minecraft world; default clean"),
         CurrentSaveCommand("AUTO_BACKUP", "Start periodic backup bound to the currently active world"),
         CurrentSaveCommand("STOP_AUTO_BACKUP", "Stop periodic backup for the currently active world"),
+        CurrentSaveCommand("GET_IMPORTANCE", "Query a backup protection flag for the current world"),
         CurrentSaveCommand("MARK_IMPORTANT", "Mark a backup of the currently active world"),
         new("HANDSHAKE_RESPONSE", "Report the companion mod version during a pending handshake")
             { Arguments = [new("mod_version", "Required companion mod version; minimum 3.0.0.")] },
@@ -98,7 +101,7 @@ public sealed partial class MinecraftSavesPlugin
         {
             FunctionName = "minerewind_" + command.ToLowerInvariant() + "_current_save",
             IsTargetSelector = true,
-            Returns = KnotLinkCoreCommands.Find(command)!.Returns,
+            Returns = command == "GET_IMPORTANCE" ? ["file", "important"] : KnotLinkCoreCommands.Find(command)!.Returns,
             RequiredArguments = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase) { ["current_save"] = "true" }
         };
 
@@ -108,11 +111,7 @@ public sealed partial class MinecraftSavesPlugin
         EnsureActivated();
         if (!KnotLinkCoreCommands.FolderCommands.Contains(command)) return new(null, []);
         var configs = await context.HostServices.Configs.QueryAsync(MinecraftKind, context.OperationCancellation).ConfigureAwait(false);
-        var active = configs.SelectMany(config => config.Folders.Where(folder => IsSessionLockHeld(folder.Path))
-            .Select(folder => new KnotLinkTarget(config.ConfigId, folder.FolderId))).Take(2).ToArray();
-        return active.Length == 1 ? new(active[0], []) : new(null,
-            [Diagnostic(active.Length == 0 ? "minerewind.command_active_world_not_found" : "minerewind.command_multiple_active_worlds",
-                DiagnosticSeverity.Error, "KnotLinkTargetResolution")]);
+        return ResolveActiveWorld(configs);
     }
 
     public ValueTask<FilePolicyResult> ResolveAsync(
@@ -123,17 +122,8 @@ public sealed partial class MinecraftSavesPlugin
         ValidateKind(request.Config.Kind);
         if (ResolveWorldPath(request.Folder.Path) is null)
             return ValueTask.FromResult(new FilePolicyResult([], [], []));
-        return ValueTask.FromResult(new FilePolicyResult(
-            [
-                "session.lock",
-                "**/session.lock",
-                "voxy/**",
-                "**/DistantHorizons.sqlite",
-                "**/DistantHorizons.sqlite-shm",
-                "**/DistantHorizons.sqlite-wal"
-            ],
-            Array.Empty<string>(),
-            Array.Empty<PluginDiagnostic>()));
+        return ValueTask.FromResult(new FilePolicyResult([], [], [])
+        { TypedRequiredExclusions = MinecraftWorldFilePolicy.BackupExclusions });
     }
 
     public ValueTask<BackupScopeResult> ResolveAsync(
@@ -160,6 +150,12 @@ public sealed partial class MinecraftSavesPlugin
             },
             StringComparer.OrdinalIgnoreCase);
         var sourceRoot = Path.GetFullPath(request.Folder.Path);
+        if (parameters.TryGetValue(MinecraftSpatialScope.Parameter, out var selectionJson) && !string.IsNullOrWhiteSpace(selectionJson))
+        {
+            var selection = JsonSerializer.Deserialize<SpatialScopeSelection[]>(selectionJson) ?? throw new InvalidDataException("Invalid spatial scope selection.");
+            var result = MinecraftSpatialScope.Resolve(sourceRoot, selection, SelectedRegionsScopeId, context.OperationCancellation);
+            return ValueTask.FromResult(new BackupScopeResult(OperationReadiness.Ready, result.IncludePatterns, result.Diagnostics));
+        }
         var worldPath = ResolveWorldPath(sourceRoot);
         if (worldPath is null) return ValueTask.FromResult(new BackupScopeResult(OperationReadiness.Ready, ["**"], []));
         var errorCode = string.Empty;
@@ -233,17 +229,30 @@ public sealed partial class MinecraftSavesPlugin
             Array.Empty<PluginDiagnostic>()));
     }
 
+    public ValueTask<IReadOnlyList<string>> GetRequiredSourcePathsAsync(
+        ConfigSnapshot config, FolderSnapshot folder, PluginInvocationContext context)
+    {
+        EnsureActivated();
+        ValidateKind(config.Kind);
+        var world = ResolveWorldPath(folder.Path);
+        return ValueTask.FromResult<IReadOnlyList<string>>(world is null ? [] :
+            [Path.GetRelativePath(Path.GetFullPath(folder.Path), Path.Combine(world, "level.dat")).Replace('\\', '/')]);
+    }
+
     public async ValueTask<VersionMetadataCaptureResult> CaptureAsync(
         VersionMetadataCaptureRequest request,
         PluginInvocationContext context)
     {
         EnsureActivated();
         ValidateKind(request.Config.Kind);
-        if (ResolveWorldPath(request.Folder.Path) is null) return new([], []);
+        var worldPath = ResolveWorldPath(request.Folder.Path);
+        if (worldPath is null) return new([], []);
         try
         {
+            var levelPath = Path.GetRelativePath(Path.GetFullPath(request.Folder.Path),
+                Path.Combine(worldPath, "level.dat")).Replace('\\', '/');
             await using var stream = await request.Source.OpenReadAsync(
-                "level.dat",
+                levelPath,
                 context.OperationCancellation).ConfigureAwait(false);
             var file = new NbtFile();
             file.LoadFromStream(stream, NbtCompression.AutoDetect);

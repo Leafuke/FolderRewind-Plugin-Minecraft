@@ -188,7 +188,7 @@ public sealed partial class MinecraftSavesPlugin
         }
     }
 
-    private static async ValueTask<bool> WaitForWorldReleaseAsync(
+    private async ValueTask<WorldLockProbeResult> WaitForWorldReleaseAsync(
         string worldPath,
         CancellationToken cancellationToken)
     {
@@ -196,10 +196,11 @@ public sealed partial class MinecraftSavesPlugin
         while (stopwatch.ElapsedMilliseconds < WorldReleaseTimeoutMs)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            if (!IsSessionLockHeld(worldPath)) return true;
+            var probe = ProbeWorldLock(worldPath);
+            if (probe.State != WorldLockState.InUse) return probe;
             await Task.Delay(200, cancellationToken).ConfigureAwait(false);
         }
-        return !IsSessionLockHeld(worldPath);
+        return ProbeWorldLock(worldPath);
     }
 
     private async ValueTask ReportRestoreCancelledAsync(
