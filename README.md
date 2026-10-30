@@ -2,9 +2,9 @@
 
 为 [FolderRewind](https://github.com/Leafuke/FolderRewind) 提供 Minecraft 存档备份增强功能，重点覆盖热备份、热还原、自动发现世界存档，以及从现有配置识别 `.minecraft` 实例并创建配置。
 
-MineRewind 1.9.0 起实现 FolderRewind 统一发现提供程序接口。当前 1.9.5 要求支持 Plugin API 3.6 的 Host（FolderRewind 1.9.3），构建依赖 NuGet 包 FolderRewind.Plugin.Abstractions 3.6.0。旧的手动发现与批量创建入口继续兼容。正式版本以 GitHub Release 和 nuget.org 的公开记录为准。
+当前源码版本为 **1.10.0**，要求 Host 支持 **Plugin API 3.17**，配套 FolderRewind 1.10.0。构建从 NuGet.org 精确恢复已公开的 `FolderRewind.Plugin.Abstractions 3.17.0`，程序集身份保持 `3.0.0.0`。插件与主程序是否正式发布，以各自 GitHub Release 的公开记录为准。
 
-本工作树的世界预览实现为 1.9.13，使用 API 3.11 的精确冻结契约包，通过 `contracts/feed` 独立构建。地表、洞穴与切片、26.2/26.3 正式版、Java LZ4Block 和部分历史世界识别的实现与人工验收记录见 [世界预览改进记录](docs/plans/World_Preview_2026-10-22.md)。历史读取由 Host 物化临时目录后交给同一个 provider；不改变 Native 备份格式。
+世界预览支持地表、洞穴与切片、26.2/26.3 格式、Java LZ4Block 和部分历史世界识别。历史读取由 Host 物化临时目录后交给同一个 provider。公开 SDK 的精确来源及哈希见 `contracts/source-manifest.json`；`contracts/feed` 保留验证副本，普通构建不依赖 Host 源码。维护者操作见[插件、SDK 与主程序发布流程](https://folderrewind.top/docs/architecture/releasing)。
 
 Java 的热备份、热还原、NBT 玩家保留和区域备份只适用于 `Minecraft Saves`。新增 `Minecraft Bedrock Saves` 使用普通目录备份与还原，请先关闭游戏。
 
@@ -26,8 +26,8 @@ Java 的热备份、热还原、NBT 玩家保留和区域备份只适用于 `Min
 ### 3. 分支合并边界
 
 - MineRewind 参与配置级 Restore/Checkout/Merge 环境协调，并检查全部受影响世界。
-- FolderRewind 1.9.0 对 Minecraft 存档仍使用通用保守文件级三方合并；插件不注册 region/chunk/NBT 语义 Merge provider。
-- `.mca`、玩家 NBT、stats 或 advancements 双方都改变时按文件冲突处理，不显示区块级自动合并。
+- 注册 Minecraft 世界语义 Merge provider，提供保守与地形优先策略，策略版本独立于插件产品版本。
+- 区块组件、实体与未知布局按照各策略的边界处理；最终选择与写入事务由 Host 控制。
 
 ### 4. 批量扫描与配置创建
 - 支持官方 Java 默认位置、HMCL、PCL2、PCLCE、Prism、Modrinth、网易中国版及 Bedrock 的常见位置
@@ -150,7 +150,7 @@ World1/
 
 ## 使用方法
 
-1. 安装插件到 FolderRewind。可以下载 [Releases](https://github.com/Leafuke/FolderRewind-Plugin-Minecraft/releases) 中的 `.zip` 文件后，使用“本地安装”导入；也可以在插件市场中搜索安装。
+1. 安装插件到 FolderRewind。可以下载 [Releases](https://github.com/Leafuke/FolderRewind-Plugin-Minecraft/releases) 中的 `.frplugin` 文件，核对 SHA-256 后使用“本地安装”导入；也可以通过官方插件目录安装。
 2. 在设置中启用插件。
 3. 新建配置时选择扫描 `.minecraft` 目录，或者直接选择 `saves` / 单个世界目录。
 4. 插件会自动按 Minecraft 版本创建备份配置。
@@ -164,16 +164,20 @@ World1/
 
 ## 构建说明
 
-1. 使用 Visual Studio 2026
-2. 确保已安装 .NET 10.0 SDK
-3. 打开解决方案文件或直接构建 `MineRewind/MineRewind.csproj`
-4. 目标框架为 `net10.0-windows10.0.19041.0`
-5. 构建输出在 `MineRewind/bin/Release/net10.0-windows10.0.19041.0/` 目录
+使用 .NET 10 SDK，目标框架为 `net10.0`；插件不依赖 WinUI 或 Host 应用项目。在插件仓库根目录运行：
+
+```powershell
+./tools/Verify-Contract.ps1
+dotnet restore FolderRewind-Plugin-Minecraft.slnx -p:Platform=x64 --configfile NuGet.Config
+dotnet build FolderRewind-Plugin-Minecraft.slnx -c Release -p:Platform=x64 --no-restore
+dotnet test MineRewind.Tests/MineRewind.Tests.csproj -c Release -p:Platform=x64 --no-restore --no-build
+dotnet test MineRewind.World.Tests/MineRewind.World.Tests.csproj -c Release --no-restore --no-build
+```
 
 ### 打包为插件
 
-1. 构建 Release 版本
-2. 将以下文件打包为 `.zip`：
-   - `MineRewind.dll`
-   - `manifest.json`
-   - `fNBT.dll`
+```powershell
+dotnet msbuild MineRewind/MineRewind.csproj /t:PackFrPlugin /p:Configuration=Release /p:Version=1.10.0
+```
+
+输出为 `artifacts/MineRewind-1.10.0.frplugin` 与同名 `.sha256`。打包器使用固定载荷清单，生成可移植托管入口，包含私有依赖、设置模式及公开契约来源；不捆绑 `FolderRewind.Plugin.Abstractions.dll`。

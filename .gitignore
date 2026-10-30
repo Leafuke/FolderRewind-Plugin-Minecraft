@@ -364,7 +364,5 @@ FodyWeavers.xsd
 *.dll
 *.zip
 
-# Exact P5 contract build input
-!contracts/feed/FolderRewind.Plugin.Abstractions.3.14.0-preview.e119795b08783604.nupkg
-
-!contracts/feed/FolderRewind.Plugin.Abstractions.3.15.0-preview.266401d3f6eda90f.nupkg
+# Exact public contract input; version and hashes are pinned in source-manifest.json.
+!contracts/feed/FolderRewind.Plugin.Abstractions.3.17.0.nupkg

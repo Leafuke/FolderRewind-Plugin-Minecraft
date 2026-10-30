@@ -1,78 +1,79 @@
 {
   "packageId": "FolderRewind.Plugin.Abstractions",
-  "version": "3.17.0-preview.94b680025073aa37",
+  "version": "3.17.0",
   "apiVersion": "3.17",
   "assemblyVersion": "3.0.0.0",
-  "sourceCommit": "525665614fa326cc5422bf08625085d8675e5c5a",
-  "sourceState": "working-tree-snapshot",
-  "sourceDigestSha256": "94b680025073aa378302e0c5119aeb011b4a1112cd9eb13191ec031ff814a304",
-  "sourceDigestEncoding": "SHA256 of UTF-8 compact JSON entries ordered by filename; hashes cover working-tree file bytes (sourceCommit is the base, not the snapshot)",
+  "sourceCommit": "16b6c78d4b1766436a7d4825251fe00a2f9db2e7",
+  "sourceState": "committed",
+  "sourceDigestSha256": "4a2edc3fb11a1c80bf0e47d032494fbbb80bd51075e6da173e263813edb4b311",
+  "sourceDigestEncoding": "SHA256 of UTF-8 compact JSON entries ordered by filename; hashes cover committed source file bytes",
   "sources": [
     {
-      "path": "FolderRewind.Plugin.Abstractions/ArtifactIncremental.cs",
+      "path": "src/FolderRewind.Plugin.Abstractions/ArtifactIncremental.cs",
       "sha256": "a3021ffe5c3ac0eac6fdd276fdb5ff9115ad2527f54fe063aa968bb6353c64a8"
     },
     {
-      "path": "FolderRewind.Plugin.Abstractions/Artifacts.cs",
+      "path": "src/FolderRewind.Plugin.Abstractions/Artifacts.cs",
       "sha256": "c28303775d8bbdecf02a877f6fc320ccb8b3955e7759c42ad161ea9bcafdb04f"
     },
     {
-      "path": "FolderRewind.Plugin.Abstractions/Capabilities.cs",
+      "path": "src/FolderRewind.Plugin.Abstractions/Capabilities.cs",
       "sha256": "1ead032a4620707ac869cda16e653ba3ddb0d2dc65fb49efa602fb085235bceb"
     },
     {
-      "path": "FolderRewind.Plugin.Abstractions/FolderRewind.Plugin.Abstractions.csproj",
-      "sha256": "cf83714c4696b400454b0bf0d1a6bcd65bb01514f4d373cfd32cdf44d8a7fabc"
+      "path": "src/FolderRewind.Plugin.Abstractions/FolderRewind.Plugin.Abstractions.csproj",
+      "sha256": "eacdc6bf2754cc0427c56b50cb8da8ece87f5dd9acb863be8c9b9d89a2a5d6e8"
     },
     {
-      "path": "FolderRewind.Plugin.Abstractions/Identifiers.cs",
+      "path": "src/FolderRewind.Plugin.Abstractions/Identifiers.cs",
       "sha256": "3f52a3b1a7fdb5255b99fd3efae1beddead304989505527d04f6eba450febe27"
     },
     {
-      "path": "FolderRewind.Plugin.Abstractions/KnotLinkCoreCommands.cs",
+      "path": "src/FolderRewind.Plugin.Abstractions/KnotLinkCoreCommands.cs",
       "sha256": "8317c9f8edcc362e829bae7827a7f5bc440c3862073f7652780c9401b3287a5c"
     },
     {
-      "path": "FolderRewind.Plugin.Abstractions/Lifecycle.cs",
+      "path": "src/FolderRewind.Plugin.Abstractions/Lifecycle.cs",
       "sha256": "570fc0986d64396f0350772113163ff7d831ae8b64a76f931b98781e3aa8e871"
     },
     {
-      "path": "FolderRewind.Plugin.Abstractions/Manifest.cs",
+      "path": "src/FolderRewind.Plugin.Abstractions/Manifest.cs",
       "sha256": "71e3f4e65ba57eaf0acf87b3711680da886d2b3ac2f0458eb0b95aafa7a83fe4"
     },
     {
-      "path": "FolderRewind.Plugin.Abstractions/Merge.cs",
+      "path": "src/FolderRewind.Plugin.Abstractions/Merge.cs",
       "sha256": "826793468917be46a4c15293543fef05c3c832e801253c2f498bc2a96dfb4d96"
     },
     {
-      "path": "FolderRewind.Plugin.Abstractions/MergeCoverage.cs",
+      "path": "src/FolderRewind.Plugin.Abstractions/MergeCoverage.cs",
       "sha256": "206dc1c033fe116d80e7776c922e70e16edcb2af500a7f0b6cd5a1ae789aa220"
     },
     {
-      "path": "FolderRewind.Plugin.Abstractions/PathFilterRule.cs",
+      "path": "src/FolderRewind.Plugin.Abstractions/PathFilterRule.cs",
       "sha256": "5d52452b30e56e99f144a2b28d78e8d180acfaaf76e7385d59bc9cafae0af890"
     },
     {
-      "path": "FolderRewind.Plugin.Abstractions/PluginApi.cs",
+      "path": "src/FolderRewind.Plugin.Abstractions/PluginApi.cs",
       "sha256": "0fafd6570200993cb236390b9e0f6eee3299e9ca1a4e6f38bdae906380408b7b"
     },
     {
-      "path": "FolderRewind.Plugin.Abstractions/README.md",
-      "sha256": "00d79c8534643084dc61ffd642360f0985533d098ce3651771e8354cc8ff7d37"
+      "path": "src/FolderRewind.Plugin.Abstractions/README.md",
+      "sha256": "c4383621c1889b2e1d207476b37b479c0e02bc1548b5a2926b1366767af906d2"
     },
     {
-      "path": "FolderRewind.Plugin.Abstractions/Snapshots.cs",
+      "path": "src/FolderRewind.Plugin.Abstractions/Snapshots.cs",
       "sha256": "ab7ef7eb03fdaf98f132f4da45c54c38b27fd4b8e10b121b5fafbaa87656bea3"
     },
     {
-      "path": "FolderRewind.Plugin.Abstractions/SpatialPreview.cs",
+      "path": "src/FolderRewind.Plugin.Abstractions/SpatialPreview.cs",
       "sha256": "199179ecb332aad35f29f717ec541543e4adc7f5095667314e57bd0ab4def90f"
     },
     {
-      "path": "FolderRewind.Plugin.Abstractions/SpatialWorkspace.cs",
+      "path": "src/FolderRewind.Plugin.Abstractions/SpatialWorkspace.cs",
       "sha256": "a8ba4bb47ddd86bc2b1186b709e222aa6bfd3e40722a76c074afe2ca00cc0a66"
     }
   ],
-  "packageSha256": "8a5ac78b39edfe28daf3e749520dc5c8721642dcd69bf7a29b0f08823609042a",
-  "assemblySha256": "037cfdb8b89f8e8b1784438f61afbe471cd85b97d16fad91024e0def9e4dbacd"
+  "packageSource": "https://api.nuget.org/v3-flatcontainer/folderrewind.plugin.abstractions/3.17.0/folderrewind.plugin.abstractions.3.17.0.nupkg",
+  "packageSha256": "fcb44577e54f6db2f60e320db462fdbe51ff8449e13d7d97aad543c09b207f6a",
+  "assemblySha256": "e84d505c4a1778762790c291aa9149f766fc71b7dc8d65723395d9e7ac073033"
 }
