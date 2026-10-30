@@ -7,7 +7,7 @@ namespace MineRewind;
 
 internal sealed partial class WorldPreviewSession
 {
-    private sealed record TileKey(Guid Generation, string Layer, int Height, int X, int Z, int Units, SurfaceViewMode Mode, bool Overlay);
+    private sealed record TileKey(Guid Generation, string WorldRoot, string Layer, int Height, int X, int Z, int Units, SurfaceViewMode Mode, bool Overlay);
     private sealed record HeaderKey(string Path);
     private sealed class Sample(ChunkSurface surface, int attempts, long retryAt)
     {
@@ -16,21 +16,34 @@ internal sealed partial class WorldPreviewSession
         public long RetryAt { get; } = retryAt;
         public bool Retry => Thumbnail.State is ChunkReadState.Unavailable or ChunkReadState.Changing && Attempts < 3;
     }
-    private sealed class TileWork(TileKey key, RegionKey[] regions)
+    private sealed class TileWork(TileKey key, IEnumerable<RegionKey> regions)
     {
         public readonly object Gate = new();
-        public byte[] Pixels { get; } = new byte[256 * 256 * 4];
-        public RegionKey[] Regions { get; } = regions;
-        public int RegionCursor;
+        public byte[] Pixels { get; } = new byte[key.Units < 16 ? 256 * 256 * 4 : 0];
+        private readonly IEnumerator<RegionKey> _regions = regions.GetEnumerator();
+        private bool _hasRegion;
+        public bool RegionsComplete { get; private set; }
         public int RegionSlot;
         public int Cursor;
         public int[] CoarseCounts { get; } = new int[7];
         public int Remaining = key.Units < 16 ? 256 * key.Units / 16 * (256 * key.Units / 16) : 0;
         public byte[] States { get; } = new byte[key.Units < 16 ? 256 * key.Units / 16 * (256 * key.Units / 16) : 0];
         public readonly HashSet<ChunkReadState> HeaderErrors = [];
-        // Coarse accumulation includes coverage (alpha); empty chunks do not become opaque terrain.
-        public uint[][]? Sums { get; } = key.Units >= 16 ? [new uint[65536], new uint[65536], new uint[65536], new uint[65536]] : null;
-        public long Bytes => 512L + Pixels.Length + States.Length + Regions.Length * 8L + (Sums is null ? 0 : 4L * 65536 * 4);
+        // At most (4096 / 16)^2 samples contribute to a pixel: each channel sum fits in 24 bits.
+        // Keep coverage (alpha), but generate the returned raster without retaining a second buffer.
+        public byte[]? Sums { get; } = key.Units >= 16 ? new byte[65536 * 4 * 3] : null;
+        public long Bytes => 1024L + Pixels.Length + States.Length + (Sums?.Length ?? 0);
+        public bool TryRegion(out RegionKey region)
+        {
+            if (!_hasRegion && !RegionsComplete)
+            {
+                _hasRegion = _regions.MoveNext();
+                if (!_hasRegion) { RegionsComplete = true; _regions.Dispose(); }
+            }
+            region = _hasRegion ? _regions.Current : default;
+            return _hasRegion;
+        }
+        public void AdvanceRegion() { _hasRegion = false; RegionSlot = 0; }
     }
 
     private SpatialPreviewTile RenderProgressive(SpatialPreviewTileRequest request, CancellationToken token)
@@ -42,7 +55,7 @@ internal sealed partial class WorldPreviewSession
             throw new ArgumentException("Invalid world preview tile coordinates.");
         var world = GetWorld(request.Source, token);
         var dimension = world.Dimensions.Single(d => d.Id == request.LayerId);
-        var key = new TileKey(request.Source.Generation, dimension.Id, Math.Clamp(request.MaximumHeight ?? 2047, -2048, 2047),
+        var key = new TileKey(request.Source.Generation, NormalizeWorldRoot(world.WorldRoot), dimension.Id, Math.Clamp(request.MaximumHeight ?? 2047, -2048, 2047),
             (int)request.OriginX, (int)request.OriginY, (int)request.UnitsPerPixel, ParseMode(request.ViewModeId), request.ShowStatusOverlay);
         TileWork work;
         lock (_sync)
@@ -51,10 +64,7 @@ internal sealed partial class WorldPreviewSession
             work = _cache.Get<TileWork>(key)!;
             if (work is null)
             {
-                var span = 256d * key.Units;
-                var regions = dimension.Regions.Keys.Where(r => r.X * 512d < key.X + span && r.Z * 512d < key.Z + span
-                    && (r.X + 1d) * 512 > key.X && (r.Z + 1d) * 512 > key.Z).ToArray();
-                work = new(key, regions);
+                work = new(key, dimension.Regions.Keys);
                 _cache.Put(key, work, work.Bytes, 2);
             }
         }
@@ -65,14 +75,20 @@ internal sealed partial class WorldPreviewSession
             token.ThrowIfCancellationRequested();
             var watch = Stopwatch.StartNew();
             var headerCount = 0;
-            while (work.RegionCursor < work.Regions.Length && headerCount < 64 && watch.ElapsedMilliseconds < 50)
+            while (headerCount < 64 && watch.ElapsedMilliseconds < 50 && work.TryRegion(out var region))
             {
                 token.ThrowIfCancellationRequested();
-                var region = work.Regions[work.RegionCursor];
-                DrawRegion(world, dimension, key, work, region, token);
-                work.RegionCursor++; work.RegionSlot = 0; headerCount++;
+                // Advance even past off-tile keys within the time slice; no unbounded filtering scan.
+                var span = 256d * key.Units;
+                if (region.X * 512d < key.X + span && region.Z * 512d < key.Z + span
+                    && (region.X + 1d) * 512 > key.X && (region.Z + 1d) * 512 > key.Z)
+                {
+                    DrawRegion(world, dimension, key, work, region, token);
+                    headerCount++;
+                }
+                work.AdvanceRegion();
             }
-            if (key.Units < 16 && work.RegionCursor == work.Regions.Length)
+            if (key.Units < 16 && work.RegionsComplete)
             {
                 work.HeaderErrors.Clear();
                 var width = 256 * key.Units / 16;
@@ -95,7 +111,7 @@ internal sealed partial class WorldPreviewSession
                         FillChunk(work.Pixels, key, chunk, (x, z) => key.Overlay ? NoDataColor(x, z) : 0);
                         work.States[index] = 128 + (byte)ChunkReadState.Absent + 1; work.Remaining--; continue;
                     }
-                    var ck = new CacheKey(key.Generation, key.Layer, chunk, key.Height, key.Mode);
+                    var ck = new CacheKey(key.Generation, key.WorldRoot, key.Layer, chunk, key.Height, key.Mode);
                     Sample? sample;
                     lock (_sync) sample = _cache.Get<Sample>(ck);
                     if (sample is null || sample.Retry && Environment.TickCount64 >= sample.RetryAt)
@@ -121,7 +137,7 @@ internal sealed partial class WorldPreviewSession
                     if (!sample.Retry) { work.States[index] |= 128; work.Remaining--; }
                 }
             }
-            var final = work.RegionCursor == work.Regions.Length && work.Remaining == 0;
+            var final = work.RegionsComplete && work.Remaining == 0;
             if (final && key.Units < 16)
             {
                 // Requeries after neighboring tiles finish only repaint cached boundary samples, without decoding.
@@ -130,7 +146,7 @@ internal sealed partial class WorldPreviewSession
                     for (var i = 0; i < width; i++)
                         foreach (var chunk in new[] { new ChunkKey(key.X / 16 + i, key.Z / 16), new(key.X / 16 + i, key.Z / 16 + width - 1),
                             new(key.X / 16, key.Z / 16 + i), new(key.X / 16 + width - 1, key.Z / 16 + i) })
-                            if (_cache.Get<Sample>(new CacheKey(key.Generation, key.Layer, chunk, key.Height, key.Mode)) is { } sample) ShadeAndPaint(key, work, chunk, sample);
+                            if (_cache.Get<Sample>(new CacheKey(key.Generation, key.WorldRoot, key.Layer, chunk, key.Height, key.Mode)) is { } sample) ShadeAndPaint(key, work, chunk, sample);
             }
             var states = work.States.Where(s => s != 0).Select(s => (ChunkReadState)((s & 15) - 1))
                 .Concat(work.HeaderErrors).Distinct().Where(s => s is not (ChunkReadState.Present or ChunkReadState.Absent));
@@ -146,7 +162,7 @@ internal sealed partial class WorldPreviewSession
                 : statistics.Readable > 0 || statistics.Pending > 0 ? SpatialPreviewContentState.HasData
                 : statistics.NoVisibleSurface > 0 ? SpatialPreviewContentState.NoVisibleSurface
                 : statistics.Failed > 0 || statistics.Unsupported > 0 ? SpatialPreviewContentState.Unknown : SpatialPreviewContentState.NoData;
-            return new(256, 256, work.Pixels.ToArray(), states.Select(Diagnostic).ToArray())
+            return new(256, 256, Raster(key, work), states.Select(Diagnostic).ToArray())
                 { IsFinal = final, ContentState = content, Statistics = statistics };
         }
         finally { Monitor.Exit(work.Gate); }
@@ -197,7 +213,7 @@ internal sealed partial class WorldPreviewSession
                     work.HeaderErrors.Add(ChunkReadState.Corrupt);
                 }
                 else lock (_sync)
-                    if (_cache.Get<Sample>(new CacheKey(key.Generation, key.Layer, chunk, key.Height, key.Mode)) is { } sample)
+                    if (_cache.Get<Sample>(new CacheKey(key.Generation, key.WorldRoot, key.Layer, chunk, key.Height, key.Mode)) is { } sample)
                     {
                         Rebuild(key, chunk, sample); encoded = Encode(sample.Thumbnail);
                         color = SampleColor(key, sample.Thumbnail, 16, 0, 0);
@@ -215,17 +231,28 @@ internal sealed partial class WorldPreviewSession
     {
         var x = (int)Math.Floor((bx - (double)key.X) / key.Units); var z = (int)Math.Floor((bz - (double)key.Z) / key.Units);
         if (x is < 0 or >= 256 || z is < 0 or >= 256) return;
-        var index = z * 256 + x; var divisor = (uint)(key.Units / 16 * (key.Units / 16)); uint result = 0;
+        var index = (z * 256 + x) * 4 * 3;
         for (var channel = 0; channel < 4; channel++)
         {
-            work.Sums![channel][index] += color >> (channel * 8) & 255;
-            result |= Math.Min(255, (work.Sums[channel][index] + divisor / 2) / divisor) << (channel * 8);
+            var offset = index + channel * 3;
+            var sums = work.Sums!;
+            var sum = ReadSum(sums, offset) + (color >> (channel * 8) & 255);
+            sums[offset] = (byte)sum; sums[offset + 1] = (byte)(sum >> 8); sums[offset + 2] = (byte)(sum >> 16);
         }
-        Put(work.Pixels, x, z, result);
+    }
+    private static uint ReadSum(byte[] sums, int offset) => (uint)(sums[offset] | sums[offset + 1] << 8 | sums[offset + 2] << 16);
+    private static byte[] Raster(TileKey key, TileWork work)
+    {
+        if (work.Sums is not { } sums) return work.Pixels.ToArray();
+        var pixels = new byte[256 * 256 * 4];
+        var divisor = (uint)(key.Units / 16 * (key.Units / 16));
+        for (var index = 0; index < pixels.Length; index++)
+            pixels[index] = (byte)Math.Min(255, (ReadSum(sums, index * 3) + divisor / 2) / divisor);
+        return pixels;
     }
     private void Rebuild(TileKey key, ChunkKey chunk, Sample sample)
     {
-        SurfaceThumbnail? Get(int x, int z) => _cache.Get<Sample>(new CacheKey(key.Generation, key.Layer, new(x, z), key.Height, key.Mode))?.Thumbnail;
+        SurfaceThumbnail? Get(int x, int z) => _cache.Get<Sample>(new CacheKey(key.Generation, key.WorldRoot, key.Layer, new(x, z), key.Height, key.Mode))?.Thumbnail;
         sample.Thumbnail.Rebuild(Get(chunk.X - 1, chunk.Z), Get(chunk.X + 1, chunk.Z), Get(chunk.X, chunk.Z - 1), Get(chunk.X, chunk.Z + 1));
     }
     private void ShadeAndPaint(TileKey key, TileWork work, ChunkKey chunk, Sample sample)

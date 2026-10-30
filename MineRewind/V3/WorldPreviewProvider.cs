@@ -11,10 +11,11 @@ internal sealed partial class WorldPreviewSession
     private readonly object _sync = new();
     private readonly PreviewBudgetCache _cache;
     public WorldPreviewSession(long cacheLimit = 128L * 1024 * 1024) => _cache = new(cacheLimit);
-    private readonly Dictionary<Guid, (string Source, WorldDescriptor World)> _worlds = [];
+    private readonly Dictionary<WorldKey, WorldDescriptor> _worlds = [];
     private readonly Dictionary<CacheKey, TaskCompletionSource<ChunkSurface>> _inflight = [];
     private bool _closed;
-    private sealed record CacheKey(Guid Generation, string Dimension, ChunkKey Chunk, int Height, SurfaceViewMode Mode = SurfaceViewMode.Surface);
+    private sealed record WorldKey(Guid Generation, string Source, string? WorldId, bool Partial);
+    private sealed record CacheKey(Guid Generation, string WorldRoot, string Dimension, ChunkKey Chunk, int Height, SurfaceViewMode Mode = SurfaceViewMode.Surface);
     private sealed record RawKey(CacheKey Key);
     internal long CacheBytes { get { lock (_sync) return _cache.Bytes; } }
     internal long DecodedChunks;
@@ -121,7 +122,8 @@ internal sealed partial class WorldPreviewSession
     private WorldDescriptor GetWorld(SpatialPreviewSource source, CancellationToken token)
     {
         var path = SpatialWorldCatalog.Root(source);
-        lock (_sync) { ObjectDisposedException.ThrowIf(_closed, this); if (_worlds.TryGetValue(source.Generation, out var cached) && cached.Source == path) return cached.World; }
+        var key = new WorldKey(source.Generation, NormalizeWorldRoot(path), source.WorldId, source.IsPartial);
+        lock (_sync) { ObjectDisposedException.ThrowIf(_closed, this); if (_worlds.TryGetValue(key, out var cached)) return cached; }
         var resolution = source.WorldId is { } worldId ? (SpatialWorldCatalog.PathFor(path, worldId), false)
             : source.IsPartial ? PreviewWorldLocator.Resolve(path, token) : (WorldLocator.TryResolveWorldPath(path), false);
         var root = resolution.Item1;
@@ -135,7 +137,7 @@ internal sealed partial class WorldPreviewSession
         lock (_sync)
         {
             ObjectDisposedException.ThrowIf(_closed, this);
-            _worlds[source.Generation] = (path, world);
+            _worlds[key] = world;
         }
         return world;
     }
@@ -143,7 +145,7 @@ internal sealed partial class WorldPreviewSession
     private ChunkSurface Surface(WorldDescriptor world, DimensionDescriptor dimension, Guid generation, ChunkKey key, int height, CancellationToken token, SurfaceViewMode mode = SurfaceViewMode.Surface)
     {
         if (!dimension.Regions.TryGetValue(key.Region, out var path)) return ChunkSurface.Empty(key, ChunkReadState.Absent);
-        var cacheKey = new CacheKey(generation, dimension.Id, key, height, mode);
+        var cacheKey = new CacheKey(generation, NormalizeWorldRoot(world.WorldRoot), dimension.Id, key, height, mode);
         TaskCompletionSource<ChunkSurface> flight;
         bool owner;
         lock (_sync)
@@ -185,6 +187,12 @@ internal sealed partial class WorldPreviewSession
             if (ex is OperationCanceledException) flight.TrySetCanceled(); else { flight.TrySetException(ex); _ = flight.Task.Exception; }
             throw;
         }
+    }
+
+    private static string NormalizeWorldRoot(string path)
+    {
+        var full = Path.TrimEndingDirectorySeparator(Path.GetFullPath(path));
+        return OperatingSystem.IsWindows() ? full.ToUpperInvariant() : full;
     }
 
     private static SurfaceViewMode ParseMode(string? id) => id switch

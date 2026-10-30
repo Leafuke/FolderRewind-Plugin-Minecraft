@@ -7,7 +7,7 @@ namespace MineRewind.Tests;
 
 public sealed partial class V3VerticalSliceTests
 {
-    private static void WritePreviewRegion(string path, int count, bool firstBroken = false)
+    private static void WritePreviewRegion(string path, int count, bool firstBroken = false, string blockName = "minecraft:stone")
     {
         Directory.CreateDirectory(Path.GetDirectoryName(path)!);
         var bytes = new byte[(2 + count) * 4096];
@@ -15,7 +15,7 @@ public sealed partial class V3VerticalSliceTests
         {
             var root = new NbtCompound("") { new NbtInt("DataVersion", 4786), new NbtInt("xPos", slot % 32), new NbtInt("zPos", slot / 32) };
             if (!(firstBroken && slot == 0)) root.Add(new NbtList("sections", new[] { new NbtCompound { new NbtByte("Y", 0), new NbtCompound("block_states") {
-                new NbtList("palette", new[] { new NbtCompound { new NbtString("Name", "minecraft:stone") } }) } } }));
+                new NbtList("palette", new[] { new NbtCompound { new NbtString("Name", blockName) } }) } } }));
             var payload = new NbtFile(root).SaveToBuffer(NbtCompression.None);
             BinaryPrimitives.WriteUInt32BigEndian(bytes.AsSpan(slot * 4), (uint)((slot + 2) << 8 | 1));
             BinaryPrimitives.WriteInt32BigEndian(bytes.AsSpan((slot + 2) * 4096), payload.Length + 1);
