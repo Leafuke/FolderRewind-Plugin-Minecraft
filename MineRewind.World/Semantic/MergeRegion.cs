@@ -22,6 +22,16 @@ public static class MergeRegion
     public static async Task<MergeRegionIndex> ReadAsync(string path, RegionAddress address,
         Func<string, CancellationToken, ValueTask<Stream>> open, IReadOnlySet<string> paths, CancellationToken token,
         bool classifyContent = false, bool allowEmptyRegion = false)
+        => await ReadCoreAsync(path, address, open, paths, token, classifyContent, allowEmptyRegion, null).ConfigureAwait(false);
+
+    internal static Task<MergeRegionIndex> ReadForAnalysisAsync(string path, RegionAddress address,
+        Func<string, CancellationToken, ValueTask<Stream>> open, IReadOnlySet<string> paths, CancellationToken token,
+        MergeChunkFingerprintCache fingerprints)
+        => ReadCoreAsync(path, address, open, paths, token, true, true, fingerprints);
+
+    private static async Task<MergeRegionIndex> ReadCoreAsync(string path, RegionAddress address,
+        Func<string, CancellationToken, ValueTask<Stream>> open, IReadOnlySet<string> paths, CancellationToken token,
+        bool classifyContent, bool allowEmptyRegion, MergeChunkFingerprintCache? fingerprints)
     {
         await using var file = await open(path, token).ConfigureAwait(false);
         token.ThrowIfCancellationRequested();
@@ -75,7 +85,9 @@ public static class MergeRegion
                     }
                 }
             }, classifyContent && address.Component == ChunkComponentKind.Terrain
-                ? (bytes, count) => contentIdentity = ChunkContentFingerprint.Read(bytes, count, new(x, z), token)?.MergeIdentity
+                ? (bytes, count, payloadHash) => contentIdentity = fingerprints is null
+                    ? ChunkContentFingerprint.ReadValidated(bytes, count, new(x, z), token)?.MergeIdentity
+                    : fingerprints.ReadValidated(bytes, count, new(x, z), payloadHash, token)
                 : null);
             // Root-level position tags identify the modern terrain layout; legacy/mixed layouts
             // remain valid opaque payloads, but cannot participate in terrain-first composition.

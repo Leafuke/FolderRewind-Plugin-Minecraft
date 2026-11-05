@@ -93,7 +93,7 @@ internal static class RegionCodec
     }
 
     internal static string HashDecoded(Stream input, byte compression, CancellationToken token, Action<NbtReader>? inspect = null,
-        Action<byte[], int>? inspectPayload = null)
+        Action<byte[], int, string>? inspectPayload = null)
     {
         using Stream decoded = compression switch
         {
@@ -133,10 +133,12 @@ internal static class RegionCodec
                 if (!seenRoot || nbt.Position != count) throw new InvalidDataException("Invalid NBT framing.");
             }
             catch (NbtFormatException ex) { throw new InvalidDataException("Malformed NBT.", ex); }
-            inspectPayload?.Invoke(bytes, count);
+            token.ThrowIfCancellationRequested();
             using var hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
             hash.AppendData(HashPrefix); hash.AppendData(bytes, 0, count);
-            return Convert.ToHexString(hash.GetHashAndReset());
+            var identity = Convert.ToHexString(hash.GetHashAndReset());
+            inspectPayload?.Invoke(bytes, count, identity);
+            return identity;
         }
         finally { Array.Clear(bytes, 0, count); ArrayPool<byte>.Shared.Return(bytes); }
     }

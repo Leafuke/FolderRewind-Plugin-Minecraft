@@ -291,6 +291,8 @@ public sealed partial class SemanticMergeTests
     }
     private sealed class View(Dictionary<string, byte[]> files, string fingerprint, Func<MergeCoverageQuery, MergeCoverageState>? coverage) : IMergeSourceView
     {
+        public Dictionary<string, int> OpenCounts { get; } = new(StringComparer.Ordinal);
+        public Action<string>? OnOpen { get; set; }
         public Dictionary<string, byte[]> Files => files;
         public List<MergeCoverageQuery> Queries { get; } = [];
         public ValueTask<MergeCoverageResult> CheckCoverageAsync(MergeCoverageQuery query, CancellationToken token)
@@ -305,7 +307,12 @@ public sealed partial class SemanticMergeTests
                 .Select(p => new MergeInputEntry(p.Key, false, p.Value.Length, Convert.ToHexString(SHA256.HashData(p.Value)))).ToArray();
             return ValueTask.FromResult(new MergeInputPage(entries, start + entries.Length < files.Count ? (start + entries.Length).ToString() : null));
         }
-        public ValueTask<Stream> OpenReadAsync(string path, CancellationToken token) => ValueTask.FromResult<Stream>(new MemoryStream(files[path], false));
+        public ValueTask<Stream> OpenReadAsync(string path, CancellationToken token)
+        {
+            token.ThrowIfCancellationRequested(); OnOpen?.Invoke(path);
+            OpenCounts[path] = OpenCounts.GetValueOrDefault(path) + 1;
+            return ValueTask.FromResult<Stream>(new MemoryStream(files[path], false));
+        }
     }
     private sealed class Capture(Action<byte[]> done) : MemoryStream
     { protected override void Dispose(bool disposing) { if (disposing) done(ToArray()); base.Dispose(disposing); } }

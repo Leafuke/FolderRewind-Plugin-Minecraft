@@ -1,4 +1,5 @@
 using fNbt;
+using System.Buffers;
 using System.Security.Cryptography;
 using System.Text;
 
@@ -7,22 +8,32 @@ namespace MineRewind.World;
 /// <summary>Version-gated semantic comparison. Exact payload identities remain the write/verification authority.</summary>
 public sealed record ChunkContentFingerprint(string Blocks, string BlockEntities, string Biomes, string Other)
 {
+    internal const string MergeAlgorithmVersion = "minerewind/merge-content/1";
     public string MergeIdentity { get; init; } = "";
     public static ChunkContentFingerprint? Read(byte[] bytes, ChunkKey key, CancellationToken token = default)
         => Read(bytes, bytes.Length, key, token);
     internal static ChunkContentFingerprint? Read(byte[] bytes, int length, ChunkKey key, CancellationToken token = default)
+        => ReadCore(bytes, length, key, token, validated: false);
+    // Only RegionCodec may supply a payload whose complete framing and budgets it has checked.
+    internal static ChunkContentFingerprint? ReadValidated(byte[] bytes, int length, ChunkKey key, CancellationToken token)
+        => ReadCore(bytes, length, key, token, validated: true);
+    private static ChunkContentFingerprint? ReadCore(byte[] bytes, int length, ChunkKey key, CancellationToken token, bool validated)
     {
         try
         {
+            token.ThrowIfCancellationRequested();
             using var input = new MemoryStream(bytes, 0, length, false);
-            var reader = new NbtReader(input);
-            while (reader.ReadToFollowing())
+            if (!validated)
             {
-                token.ThrowIfCancellationRequested();
-                if (reader.Depth > 64 || reader.TagsRead > 100_000 || reader.HasLength && (reader.TagLength < 0 || reader.TagLength > 1_048_576))
-                    return null;
+                var reader = new NbtReader(input);
+                while (reader.ReadToFollowing())
+                {
+                    token.ThrowIfCancellationRequested();
+                    if (reader.Depth > 64 || reader.TagsRead > 100_000 || reader.HasLength && (reader.TagLength < 0 || reader.TagLength > 1_048_576))
+                        return null;
+                }
+                input.Position = 0;
             }
-            input.Position = 0;
             var file = new NbtFile(); file.LoadFromStream(input, NbtCompression.None);
             var root = file.RootTag;
             var version = root.Get<NbtInt>("DataVersion")?.Value;
@@ -47,7 +58,7 @@ public sealed record ChunkContentFingerprint(string Blocks, string BlockEntities
                     w.Write(unchecked((sbyte)section.Get<NbtByte>("Y")!.Value));
                     foreach (var i in indices) w.Write(names[i]);
                 }
-            });
+            }, buffered: true);
             var biomes = Hash(w =>
             {
                 foreach (var section in sections)
@@ -58,7 +69,7 @@ public sealed record ChunkContentFingerprint(string Blocks, string BlockEntities
                     w.Write(unchecked((sbyte)section.Get<NbtByte>("Y")!.Value));
                     foreach (var i in Indices(states, palette.Length, 64, 1)) w.Write(palette[i]);
                 }
-            });
+            }, buffered: true);
             var blockEntities = Hash(w => { if (root["block_entities"] is { } value) WriteTag(w, value, token); });
             // Remove only the data represented above. Unknown fields remain visible in Other.
             string OtherHash(bool runtimeIndependent) => Hash(w =>
@@ -89,7 +100,7 @@ public sealed record ChunkContentFingerprint(string Blocks, string BlockEntities
             {
                 MergeIdentity = Hash(w =>
                 {
-                    w.Write("minerewind/merge-content/1"); w.Write(blocks); w.Write(blockEntities); w.Write(biomes); w.Write(semanticOther);
+                    w.Write(MergeAlgorithmVersion); w.Write(blocks); w.Write(blockEntities); w.Write(biomes); w.Write(semanticOther);
                 })
             };
         }
@@ -137,13 +148,56 @@ public sealed record ChunkContentFingerprint(string Blocks, string BlockEntities
         }
         return result;
     }
-    private static string Hash(Action<BinaryWriter> write)
+    private static string Hash(Action<BinaryWriter> write, bool buffered = false)
     {
         using var hash = SHA256.Create();
         using var stream = new CryptoStream(Stream.Null, hash, CryptoStreamMode.Write);
-        using var writer = new BinaryWriter(stream, Encoding.UTF8, true);
+        using var buffer = buffered ? new PooledHashWriteStream(stream) : null;
+        using var writer = new BinaryWriter(buffer ?? (Stream)stream, Encoding.UTF8, true);
         write(writer); writer.Flush(); stream.FlushFinalBlock();
         return Convert.ToHexString(hash.Hash!);
+    }
+    // Canonical bytes still come exclusively from BinaryWriter. Only their write granularity changes.
+    private sealed class PooledHashWriteStream(Stream output) : Stream
+    {
+        private const int Capacity = 4096;
+        private byte[]? _buffer = ArrayPool<byte>.Shared.Rent(Capacity);
+        private int _count;
+        public override void Write(byte[] buffer, int offset, int count) => Write(buffer.AsSpan(offset, count));
+        public override void Write(ReadOnlySpan<byte> value)
+        {
+            ObjectDisposedException.ThrowIf(_buffer is null, this);
+            while (!value.IsEmpty)
+            {
+                var length = Math.Min(Capacity - _count, value.Length);
+                value[..length].CopyTo(_buffer.AsSpan(_count)); _count += length; value = value[length..];
+                if (_count == Capacity) FlushBuffer();
+            }
+        }
+        public override void WriteByte(byte value)
+        {
+            ObjectDisposedException.ThrowIf(_buffer is null, this);
+            _buffer[_count++] = value;
+            if (_count == Capacity) FlushBuffer();
+        }
+        private void FlushBuffer()
+        {
+            if (_count == 0) return;
+            output.Write(_buffer!, 0, _count); _count = 0;
+        }
+        public override void Flush() { ObjectDisposedException.ThrowIf(_buffer is null, this); FlushBuffer(); output.Flush(); }
+        protected override void Dispose(bool disposing)
+        {
+            // Hash owns flushing/finalization; an exceptional write must only release its buffer.
+            if (disposing && _buffer is { } buffer) { _buffer = null; ArrayPool<byte>.Shared.Return(buffer, clearArray: true); }
+            base.Dispose(disposing);
+        }
+        public override bool CanRead => false; public override bool CanSeek => false; public override bool CanWrite => _buffer is not null;
+        public override long Length => throw new NotSupportedException();
+        public override long Position { get => throw new NotSupportedException(); set => throw new NotSupportedException(); }
+        public override int Read(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+        public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+        public override void SetLength(long value) => throw new NotSupportedException();
     }
     private static void WriteTag(BinaryWriter writer, NbtTag tag, CancellationToken token)
     {

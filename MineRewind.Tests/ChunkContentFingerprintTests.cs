@@ -2,12 +2,51 @@ using fNbt;
 using MineRewind.World;
 using FolderRewind.Plugin.Abstractions;
 using System.Buffers.Binary;
+using System.Security.Cryptography;
+using System.Text;
+using MineRewind.World.Semantic;
 
 namespace MineRewind.Tests;
 
 [TestClass]
 public sealed class ChunkContentFingerprintTests
 {
+    [TestMethod]
+    public void CanonicalHashesMatchFrozen110AcrossUtf8AndBufferBoundaries()
+    {
+        // Oracle: exact released 1.10.0 World DLL DB8FAB647C81552095DBCC3E8ED5F63A18B5EE478462D2D3EB7EC62D32DF214F.
+        var bytes = Bytes(FingerprintGoldenFixture.Create());
+        Assert.AreEqual("5A29B97AC83FEE6D59FA250207A35BE4CCFDFD0B7C9908AA1657D687E65F6295", Convert.ToHexString(SHA256.HashData(bytes)));
+        var expected = new ChunkContentFingerprint("9EA79FF6AEB9B450E2ED3A0D4F13E789F641A82405C99A3AE661D3339D1D69B7",
+            "1C0A419E37015F91D0BF1ADAE237C5E2873BFD7AC6DBF419D94712D679B866D0",
+            "BB014B9F999AE8DE9A804CBB9FFA5330A82FBBA5DA14E41919ED4191E46CCF0A",
+            "25B72F840F0ABF9E5BD28405DDBFE3DC6D679959DFC972A94756C4F35B0A2D2A")
+        { MergeIdentity = "4F00491301F44D92D033BAE5AFF316691A8E92E41DEE93F0AA101ED22A9CBF3C" };
+        Assert.AreEqual(expected, ChunkContentFingerprint.Read(bytes, new(-1, 0)));
+        ChunkContentFingerprint? validated = null; string? callbackHash = null;
+        using var stream = new MemoryStream(bytes, false);
+        var raw = RegionCodec.HashDecoded(stream, 3, default, inspectPayload: (buffer, length, hash) =>
+        { callbackHash = hash; validated = ChunkContentFingerprint.ReadValidated(buffer, length, new(-1, 0), default); });
+        Assert.AreEqual(expected, validated);
+        Assert.AreEqual(Convert.ToHexString(SHA256.HashData([.. Encoding.UTF8.GetBytes("minerewind/opaque-nbt-bytes/1\0"), .. bytes])), raw);
+        Assert.AreEqual(raw, callbackHash);
+    }
+
+    [TestMethod]
+    public void ValidatedClassificationNeverReceivesMalformedOrCanceledPayloads()
+    {
+        var called = false;
+        using var malformed = new MemoryStream([10, 0, 0]);
+        Assert.ThrowsExactly<EndOfStreamException>(() => RegionCodec.HashDecoded(malformed, 3, default,
+            inspectPayload: (_, _, _) => called = true));
+        Assert.IsFalse(called);
+        using var cancellation = new CancellationTokenSource(); cancellation.Cancel();
+        using var valid = new MemoryStream(Bytes(FingerprintGoldenFixture.Create()));
+        Assert.ThrowsExactly<OperationCanceledException>(() => RegionCodec.HashDecoded(valid, 3, cancellation.Token,
+            inspectPayload: (_, _, _) => called = true));
+        Assert.IsFalse(called);
+    }
+
     [TestMethod]
     public async Task FixedComparisonPreservesCategoriesAndSourcePaths()
     {

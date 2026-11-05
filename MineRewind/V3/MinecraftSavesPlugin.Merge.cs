@@ -94,6 +94,8 @@ internal static class MinecraftMerge
         if (regions.Select(r => r.Address.SortKey).Distinct(StringComparer.Ordinal).Count() != regions.Count)
             throw new InvalidDataException("merge_ambiguous_region_identity");
         var pathSets = inventories.Select(i => (IReadOnlySet<string>)i.Keys.ToHashSet(StringComparer.Ordinal)).ToArray();
+        var externalFamilies = MinecraftMergeAnalysisCache.IndexExternalFamilies(paths);
+        var inputs = new[] { request.Base, request.Ours, request.Theirs };
         var states = new SortedDictionary<string, WorldState>(StringComparer.Ordinal);
         // One bounded coordinate index at a time; decoded world payloads never enter plan storage.
         foreach (var coordinate in regions.GroupBy(r => r.Address.GroupKey).OrderBy(g => g.Key, StringComparer.Ordinal))
@@ -102,6 +104,7 @@ internal static class MinecraftMerge
             var world = coordinate.First().Address.WorldId;
             if (!states.TryGetValue(world, out var state)) states.Add(world, state = new());
             var entries = new List<RegionPlan>();
+            var analysisCache = new MinecraftMergeAnalysisCache();
             foreach (var region in coordinate)
             {
                 var sides = new MergeRegionIndex?[3]; var opaque = false;
@@ -109,8 +112,8 @@ internal static class MinecraftMerge
                 {
                     for (var side = 0; side < 3; side++)
                         if (inventories[side].ContainsKey(region.Path))
-                            sides[side] = await MergeRegion.ReadAsync(region.Path, region.Address, views[side].OpenReadAsync, pathSets[side], token,
-                                classifyContent: true, allowEmptyRegion: true).ConfigureAwait(false);
+                            sides[side] = await analysisCache.ReadAsync(region.Path, region.Address, inputs[side], inventories[side], pathSets[side],
+                                externalFamilies.GetValueOrDefault((region.Path[..(region.Path.LastIndexOf('/') + 1)], region.Address.X, region.Address.Z)) ?? [], token).ConfigureAwait(false);
                 }
                 catch (Exception ex) when (ex is IOException or InvalidDataException)
                 {
