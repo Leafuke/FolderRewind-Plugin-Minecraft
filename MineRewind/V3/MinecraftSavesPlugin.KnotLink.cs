@@ -30,6 +30,9 @@ public sealed partial class MinecraftSavesPlugin
         IReadOnlyDictionary<string, string> arguments,
         PluginInvocationContext context)
     {
+        lock (_runGate)
+            if (_coordinationNeedsReset)
+                return CommandFailure("minerewind.coordination_needs_reset");
         switch (command.ToUpperInvariant())
         {
             case "HANDSHAKE_RESPONSE":
@@ -72,6 +75,8 @@ public sealed partial class MinecraftSavesPlugin
         }
         catch (Exception ex)
         {
+            MarkCoordinationUncertain();
+            compatible = false;
             context.HostServices.Logger.Log(
                 DiagnosticSeverity.Warning,
                 "Failed to send the MineRewind handshake acknowledgement.",
@@ -110,11 +115,13 @@ public sealed partial class MinecraftSavesPlugin
             }
             catch (TimeoutException)
             {
+                MarkCoordinationUncertain();
                 return false;
             }
         }
         finally
         {
+            if (!pending.Task.IsCompleted) MarkCoordinationUncertain();
             Interlocked.CompareExchange(ref _pendingHandshake, null, pending);
             _handshakeGate.Release();
         }
@@ -130,6 +137,7 @@ public sealed partial class MinecraftSavesPlugin
         Volatile.Write(ref _pendingWorldSaved, pending);
         try
         {
+            _acquiringRun.Value?.SavingStarted();
             await context.HostServices.KnotLink.SendAsync(
                 "pre_hot_backup",
                 new Dictionary<string, string>(StringComparer.Ordinal)
@@ -149,11 +157,13 @@ public sealed partial class MinecraftSavesPlugin
             }
             catch (TimeoutException)
             {
+                MarkCoordinationUncertain();
                 return false;
             }
         }
         finally
         {
+            if (!pending.Task.IsCompleted) MarkCoordinationUncertain();
             Interlocked.CompareExchange(ref _pendingWorldSaved, null, pending);
             _worldSaveGate.Release();
         }
@@ -184,6 +194,7 @@ public sealed partial class MinecraftSavesPlugin
         }
         finally
         {
+            if (!pending.Task.IsCompleted) MarkCoordinationUncertain();
             Interlocked.CompareExchange(ref _pendingWorldExited, null, pending);
         }
     }
@@ -208,6 +219,7 @@ public sealed partial class MinecraftSavesPlugin
         string reason,
         PluginInvocationContext context)
     {
+        using var cleanup = new CancellationTokenSource(TimeSpan.FromSeconds(5));
         try
         {
             var arguments = RestoreArguments(request).ToDictionary(pair => pair.Key, pair => pair.Value);
@@ -215,7 +227,7 @@ public sealed partial class MinecraftSavesPlugin
             await context.HostServices.KnotLink.SendAsync(
                 "restore_cancelled",
                 arguments,
-                CancellationToken.None).ConfigureAwait(false);
+                cleanup.Token).ConfigureAwait(false);
         }
         catch (Exception ex)
         {
@@ -223,6 +235,7 @@ public sealed partial class MinecraftSavesPlugin
                 DiagnosticSeverity.Warning,
                 "Failed to report the canceled hot restore through KnotLink.",
                 ex);
+            MarkCoordinationUncertain();
         }
     }
 
@@ -231,6 +244,7 @@ public sealed partial class MinecraftSavesPlugin
         OperationOutcome outcome,
         PluginInvocationContext context)
     {
+        using var cleanup = new CancellationTokenSource(TimeSpan.FromSeconds(5));
         try
         {
             await Task.Delay(PostMutationSignalDelayMs, context.PluginLifetime).ConfigureAwait(false);
@@ -239,7 +253,7 @@ public sealed partial class MinecraftSavesPlugin
             await context.HostServices.KnotLink.SendAsync(
                 "restore_finished",
                 arguments,
-                CancellationToken.None).ConfigureAwait(false);
+                cleanup.Token).ConfigureAwait(false);
 
             context.HostServices.Logger.Log(
                 DiagnosticSeverity.Information,
@@ -251,6 +265,7 @@ public sealed partial class MinecraftSavesPlugin
                 DiagnosticSeverity.Warning,
                 "Failed to report restore mutation completion through KnotLink.",
                 ex);
+            MarkCoordinationUncertain();
         }
     }
 
@@ -260,6 +275,7 @@ public sealed partial class MinecraftSavesPlugin
         RejoinResult rejoinResult,
         PluginInvocationContext context)
     {
+        using var cleanup = new CancellationTokenSource(TimeSpan.FromSeconds(5));
         try
         {
             var arguments = RestoreArguments(request).ToDictionary(pair => pair.Key, pair => pair.Value);
@@ -267,7 +283,7 @@ public sealed partial class MinecraftSavesPlugin
             await context.HostServices.KnotLink.SendAsync(
                 "hot_restore_complete",
                 arguments,
-                CancellationToken.None).ConfigureAwait(false);
+                cleanup.Token).ConfigureAwait(false);
 
             context.HostServices.Logger.Log(
                 DiagnosticSeverity.Information,
@@ -279,6 +295,7 @@ public sealed partial class MinecraftSavesPlugin
                 DiagnosticSeverity.Warning,
                 "Failed to report final hot-restore completion through KnotLink.",
                 ex);
+            MarkCoordinationUncertain();
         }
     }
 
@@ -302,15 +319,16 @@ public sealed partial class MinecraftSavesPlugin
             await context.HostServices.KnotLink.SendAsync(
                 "rejoin_world",
                 RestoreArguments(request),
-                CancellationToken.None).ConfigureAwait(false);
+                context.PluginLifetime).ConfigureAwait(false);
             try
             {
-                return await pending.Task.WaitAsync(TimeSpan.FromMilliseconds(RejoinTimeoutMs)).ConfigureAwait(false)
+                return await pending.Task.WaitAsync(TimeSpan.FromMilliseconds(RejoinTimeoutMs), context.PluginLifetime).ConfigureAwait(false)
                     ? RejoinResult.Succeeded
                     : RejoinResult.Failed;
             }
             catch (TimeoutException)
             {
+                MarkCoordinationUncertain();
                 context.HostServices.Logger.Log(
                     DiagnosticSeverity.Warning,
                     "Timed out waiting for KnotLink REJOIN_RESULT.");
@@ -319,6 +337,7 @@ public sealed partial class MinecraftSavesPlugin
         }
         finally
         {
+            if (!pending.Task.IsCompleted) MarkCoordinationUncertain();
             Interlocked.CompareExchange(ref _pendingRejoin, null, pending);
         }
     }

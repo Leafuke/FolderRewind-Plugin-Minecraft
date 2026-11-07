@@ -7,9 +7,9 @@ public sealed partial class MinecraftSavesPlugin
     internal Func<string, WorldLockProbeResult> ProbeWorldLock { get; set; } = path => MinecraftWorldLockProbe.Inspect(path);
     private sealed record CoordinatedWorld(FolderSnapshot Folder, string WorldPath);
     private static CoordinatedWorld[] ResolveWorlds(IEnumerable<FolderSnapshot> folders)
-        => folders.Select(folder => (Folder: folder, World: ResolveWorldPath(folder.Path)))
-            .Where(item => item.World is not null)
-            .Select(item => new CoordinatedWorld(item.Folder, item.World!)).ToArray();
+        => folders.SelectMany(folder => MinecraftWorldPathResolver.Observe(folder.Path).Worlds
+            .Select(world => new CoordinatedWorld(folder, world.Path)))
+            .DistinctBy(world => world.WorldPath, StringComparer.OrdinalIgnoreCase).ToArray();
     private static PluginDiagnostic LockProbeDiagnostic(WorldLockProbeResult probe, DiagnosticSeverity severity, string capability)
         => Diagnostic("minerewind.world_lock_probe_failed", severity, capability,
             ("path", probe.LockPath), ("exceptionType", probe.ExceptionType ?? ""),
@@ -37,7 +37,26 @@ public sealed partial class MinecraftSavesPlugin
     {
         EnsureActivated(); ValidateKind(request.Config.Kind);
         var diagnostics = new List<PluginDiagnostic>();
-        var worlds = ResolveWorlds(request.Folders);
+        var affectedFolders = request.Folders;
+        var observations = affectedFolders.Select(folder => MinecraftWorldPathResolver.Observe(folder.Path, context.OperationCancellation)).ToArray();
+        if (observations.Any(o => o.Kind == World.WorldObservationKind.WorldEvidenceUnresolved))
+            return new(OperationOutcome.Blocked, [Diagnostic("minerewind.world_identity_unresolved", DiagnosticSeverity.Error, "RestoreCoordinator")]);
+        var worlds = affectedFolders.SelectMany((folder, index) => observations[index].Worlds
+            .Select(world => new CoordinatedWorld(folder, world.Path))).DistinctBy(world => world.WorldPath, StringComparer.OrdinalIgnoreCase).ToArray();
+        var safetyViolation = false;
+        request.RegisterMutationSafetyCheck?.Invoke(token =>
+        {
+            var current = affectedFolders.Select(f => MinecraftWorldPathResolver.Observe(f.Path, token)).ToArray();
+            IReadOnlyList<PluginDiagnostic> issues;
+            if (current.Any(o => o.Kind == World.WorldObservationKind.WorldEvidenceUnresolved)
+                || !current.SelectMany(o => o.Worlds).Select(w => w.Path).ToHashSet(StringComparer.OrdinalIgnoreCase).SetEquals(worlds.Select(w => w.WorldPath)))
+                issues = [Diagnostic("minerewind.world_identity_changed", DiagnosticSeverity.Error, "RestoreCoordinator")];
+            else issues = worlds.Select(w => ProbeWorldLock(w.WorldPath)).Where(p => p.State != WorldLockState.Released)
+                .Select(p => p.State == WorldLockState.Unknown ? LockProbeDiagnostic(p, DiagnosticSeverity.Error, "RestoreCoordinator")
+                    : Diagnostic("minerewind.restore_world_still_occupied", DiagnosticSeverity.Error, "RestoreCoordinator")).ToArray();
+            if (issues.Count != 0) safetyViolation = true;
+            return ValueTask.FromResult(issues);
+        });
         if (worlds.Length == 0) return new(await request.ContinueMutationAsync(context.OperationCancellation), diagnostics);
         var states = worlds.Select(world => (World: world, Probe: ProbeWorldLock(world.WorldPath))).ToArray();
         var unknown = states.Where(item => item.Probe.State == WorldLockState.Unknown).ToArray();
@@ -60,6 +79,11 @@ public sealed partial class MinecraftSavesPlugin
                     if (!context.HostServices.KnotLink.IsAvailable)
                         return new(OperationOutcome.Blocked,
                             [Diagnostic("minerewind.restore_knotlink_unavailable", DiagnosticSeverity.Error, "RestoreCoordinator")]);
+                    lock (_runGate)
+                        if (_coordinationNeedsReset) return new(OperationOutcome.Blocked,
+                            [Diagnostic("minerewind.coordination_needs_reset", DiagnosticSeverity.Error, "RestoreCoordinator")]);
+                    if (request.AdmitKnotLinkChannelAsync is { } admit)
+                        await admit(context.OperationCancellation).ConfigureAwait(false);
                     await _restoreSignalGate.WaitAsync(context.OperationCancellation).ConfigureAwait(false);
                     signalGateHeld = true;
                     var compatible = await PerformModHandshakeAsync("restore", Path.GetFileName(selected.WorldPath), context).ConfigureAwait(false);
@@ -89,6 +113,13 @@ public sealed partial class MinecraftSavesPlugin
                 }
                 if (!worldWasActive || prepared)
                 {
+                    var finalObservations = worlds.Select(w => w.Folder).DistinctBy(f => f.FolderId)
+                        .Select(f => MinecraftWorldPathResolver.Observe(f.Path, context.OperationCancellation)).ToArray();
+                    if (finalObservations.Any(o => o.Kind == World.WorldObservationKind.WorldEvidenceUnresolved)
+                        || !finalObservations.SelectMany(o => o.Worlds).Select(w => w.Path).ToHashSet(StringComparer.OrdinalIgnoreCase)
+                            .SetEquals(worlds.Select(w => w.WorldPath)))
+                        return new(OperationOutcome.Blocked,
+                            [Diagnostic("minerewind.world_identity_changed", DiagnosticSeverity.Error, "RestoreCoordinator")]);
                     var finalStates = worlds.Select(world => ProbeWorldLock(world.WorldPath)).ToArray();
                     foreach (var probe in finalStates.Where(probe => probe.State == WorldLockState.Unknown))
                         diagnostics.Add(LockProbeDiagnostic(probe, DiagnosticSeverity.Error, "RestoreCoordinator"));
@@ -98,6 +129,7 @@ public sealed partial class MinecraftSavesPlugin
                     {
                         safeToRejoin = true;
                         outcome = await request.ContinueMutationAsync(context.OperationCancellation).ConfigureAwait(false);
+                        if (safetyViolation) safeToRejoin = false;
                     }
                 }
             }
@@ -108,16 +140,18 @@ public sealed partial class MinecraftSavesPlugin
                     ("message", ex.Message), ("exceptionType", ex.GetType().FullName ?? ex.GetType().Name), ("hresult", $"0x{ex.HResult:X8}")));
                 outcome = OperationOutcome.Failed;
             }
-            if (worldWasActive && (!prepared || !safeToRejoin) && !cancellationReported)
+            if (worldWasActive && signalGateHeld && (!prepared || !safeToRejoin) && !cancellationReported)
                 await ReportRestoreCancelledAsync(request, outcome == OperationOutcome.Canceled ? "cancelled" : "failed", context).ConfigureAwait(false);
             if (prepared && safeToRejoin && outcome is not (OperationOutcome.RecoveryRequired or OperationOutcome.CommittedRecoveryRequired))
             {
                 try
                 {
                     await ReportRestoreMutationFinishedAsync(request, outcome, context).ConfigureAwait(false);
-                    var rejoin = await RequestWorldRejoinAsync(request, context).ConfigureAwait(false);
-                    await ReportHotRestoreCompletedAsync(request, outcome, rejoin, context).ConfigureAwait(false);
-                    if (rejoin != RejoinResult.Succeeded)
+                    bool uncertain;
+                    lock (_runGate) uncertain = _coordinationNeedsReset;
+                    var rejoin = uncertain ? RejoinResult.Failed : await RequestWorldRejoinAsync(request, context).ConfigureAwait(false);
+                    if (!uncertain) await ReportHotRestoreCompletedAsync(request, outcome, rejoin, context).ConfigureAwait(false);
+                    if (uncertain || rejoin != RejoinResult.Succeeded)
                     {
                         diagnostics.Add(Diagnostic("minerewind.restore_rejoin_failed", DiagnosticSeverity.Warning, "RestoreCoordinator"));
                         if (outcome == OperationOutcome.Success) outcome = OperationOutcome.SuccessWithWarnings;

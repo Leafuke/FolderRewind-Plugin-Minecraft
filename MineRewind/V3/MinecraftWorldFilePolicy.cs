@@ -23,6 +23,10 @@ internal static class MinecraftWorldFilePolicy
     internal static bool IsSemanticNonDependency(PathFilterRule rule)
     {
         var pattern = rule.Pattern.Replace('\\', '/');
+        if (rule.SemanticsVersion == 2 && rule.Target == PathFilterTarget.Directory
+            && pattern.EndsWith("/**/voxy", StringComparison.OrdinalIgnoreCase)) return true;
+        if (rule.SemanticsVersion == 2 && rule.Target == PathFilterTarget.File
+            && pattern.EndsWith("/**/session.lock", StringComparison.OrdinalIgnoreCase)) return true;
         return rule.SemanticsVersion == 1 && rule.Target == PathFilterTarget.Any
             && (pattern.Equals("session.lock", StringComparison.OrdinalIgnoreCase) || pattern.Equals("voxy/**", StringComparison.OrdinalIgnoreCase))
             || rule.SemanticsVersion == 2 && rule.Target == PathFilterTarget.Directory && pattern.Equals("voxy", StringComparison.OrdinalIgnoreCase);

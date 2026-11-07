@@ -47,7 +47,8 @@ try
     if (command == "roundtrip")
     {
         var restored = new DirectorySemanticScratch(Path.Combine(output, "reconstructed"), create: true);
-        ScratchArchive.Reconstruct(snapshots[0], new CountedScratch(restored, _ => { }, n => io.ReconstructedWriteBytes += n), cancellation.Token);
+        ScratchArchive.Reconstruct(snapshots[0], new CountedScratch(restored, _ => { }, n => io.ReconstructedWriteBytes += n), cancellation.Token,
+            new SemanticArchiveReadLimits(sources[0].GetInventory(cancellation.Token).Sum(f => f.Length)));
         verification = ScratchArchive.VerifySource(new CountedSource(new DirectoryWorldSource(restored.Root),
             n => io.ReconstructionVerificationReadBytes += n), snapshots[0], cancellation.Token);
     }

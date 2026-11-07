@@ -39,11 +39,12 @@ public static class WorldFullFormat
         return m;
     }
 
-    public static void Materialize(ISemanticScratch storage, ISemanticScratch destination, string expectedSourceId, CancellationToken token)
+    public static void Materialize(ISemanticScratch storage, ISemanticScratch destination, string expectedSourceId, CancellationToken token,
+        SemanticArchiveReadLimits? limits = null)
     {
         var m = ReadManifest(storage);
         if (m.SourceId != expectedSourceId) throw new InvalidDataException("Full representation belongs to a different Source.");
-        ScratchArchive.Reconstruct(new FullReadView(storage, m), destination, token);
+        ScratchArchive.Reconstruct(new FullReadView(storage, m), destination, token, limits);
     }
 
     private sealed class FullReadView(ISemanticScratch inner, WorldFullManifest m) : ISemanticScratch

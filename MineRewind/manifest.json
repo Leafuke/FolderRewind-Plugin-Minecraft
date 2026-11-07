@@ -6,7 +6,7 @@
     "en-US": "MineRewind",
     "zh-CN": "MineRewind"
   },
-  "version": "1.10.1",
+  "version": "1.10.2",
   "author": "Leafuke",
   "description": "Enhanced Minecraft saves backup with discovery, reconciliation, region scope, consistency, metadata, hot restore, and commands.",
   "localizedDescription": {
@@ -15,7 +15,7 @@
   },
   "pluginApi": {
     "major": 3,
-    "minor": 17
+    "minor": 18
   },
   "entryAssembly": "MineRewind.dll",
   "entryType": "MineRewind.MinecraftSavesPlugin",
@@ -72,6 +72,7 @@
     "any"
   ],
   "capabilities": [
+    "backupRunCoordination",
     "spatialPreview",
     "spatialComparison",
     "spatialScopeSelection",

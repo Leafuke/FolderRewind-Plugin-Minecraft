@@ -66,8 +66,11 @@ public sealed partial class MinecraftSavesPlugin : IBackupArtifactTransformerCap
         {
             await using var view = await OpenFileViewAsync(new(request.Config, request.Folder, request.VersionId,
                 request.RootArtifactId, request.ArtifactsTopologicallySorted, request.ArtifactRead), context);
+            long materializedBytes = 0;
             foreach (var file in view.Files)
             {
+                materializedBytes = checked(materializedBytes + file.Length);
+                if (materializedBytes > request.MaximumOutputBytes) throw new InvalidDataException("Materialization byte budget exceeded.");
                 await using var source = await view.OpenReadAsync(file.RelativePath, token);
                 await using var output = await request.Workspace.OpenWriteAsync(file.RelativePath, token);
                 await source.CopyToAsync(output, token);
@@ -82,7 +85,8 @@ public sealed partial class MinecraftSavesPlugin : IBackupArtifactTransformerCap
         try
         {
             await CopyInputAsync(request.ArtifactRead, artifact.Content, input, token);
-            WorldFullFormat.Materialize(input, new MaterializationSink(request.Workspace, token), request.Folder.FolderId.ToString("D"), token);
+            WorldFullFormat.Materialize(input, new MaterializationSink(request.Workspace, token), request.Folder.FolderId.ToString("D"), token,
+                new SemanticArchiveReadLimits(request.MaximumOutputBytes));
             return new(OperationOutcome.Success, []);
         }
         finally { if (Directory.Exists(root)) Directory.Delete(root, true); }

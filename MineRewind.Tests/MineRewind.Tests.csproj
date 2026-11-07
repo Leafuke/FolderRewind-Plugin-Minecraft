@@ -17,6 +17,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\MineRewind\MineRewind.csproj" />
+    <ProjectReference Include="..\tools\MineRewind.Pack\MineRewind.Pack.csproj" />
   </ItemGroup>
 
   <ItemGroup>

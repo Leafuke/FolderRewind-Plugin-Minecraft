@@ -4,15 +4,21 @@ using System.Text;
 
 namespace MineRewind.World.Semantic;
 
+public sealed record SemanticArchiveReadLimits(long MaximumBytes)
+{
+    public static SemanticArchiveReadLimits UnrestrictedBytes { get; } = new(long.MaxValue);
+}
+
 public static class ScratchArchive
 {
-    public static ScratchCompletion Validate(ISemanticScratch scratch, CancellationToken token = default)
+    public static ScratchCompletion Validate(ISemanticScratch scratch, CancellationToken token = default, SemanticArchiveReadLimits? limits = null)
     {
         using var input = scratch.OpenRead("complete.json");
         if (input.Length > 65536) throw new InvalidDataException("Oversized completion record.");
         var completed = JsonSerializer.Deserialize<ScratchCompletion>(input, SemanticJson.Options) ?? throw new InvalidDataException();
         if (completed.SchemaVersion != 1 || string.IsNullOrWhiteSpace(completed.SourceId)) throw new InvalidDataException("Unsupported scratch.");
-        if (completed.Summary.Files < 0 || completed.Summary.Files > SemanticPaths.MaximumInventoryEntries)
+        if (completed.Summary is null || completed.Summary.Files < 0 || completed.Summary.Files > SemanticPaths.MaximumInventoryEntries
+            || completed.Summary.Bytes < 0 || completed.Summary.Bytes > (limits ?? SemanticArchiveReadLimits.UnrestrictedBytes).MaximumBytes)
             throw new InvalidDataException("Scratch exceeds the P1 metadata budget.");
         foreach (var (path, hash) in new[] { ("files.jsonl", completed.FilesHash), ("regions.jsonl", completed.RegionsHash), ("diagnostics.jsonl", completed.DiagnosticsHash) })
             if (WorldCapture.HashFile(scratch, path, token) != hash) throw new InvalidDataException("Scratch manifest hash mismatch: " + path);
@@ -45,31 +51,49 @@ public static class ScratchArchive
         }
     }
 
-    public static void Reconstruct(ISemanticScratch scratch, ISemanticScratch destination, CancellationToken token = default)
-        => CopyArchive(scratch, destination, token);
+    public static void Reconstruct(ISemanticScratch scratch, ISemanticScratch destination, CancellationToken token = default, SemanticArchiveReadLimits? limits = null)
+        => CopyArchive(scratch, destination, token, limits);
 
-    public static void VerifyIntegrity(ISemanticScratch scratch, CancellationToken token = default)
-        => CopyArchive(scratch, null, token);
+    public static void VerifyIntegrity(ISemanticScratch scratch, CancellationToken token = default, SemanticArchiveReadLimits? limits = null)
+        => CopyArchive(scratch, null, token, limits);
 
-    private static void CopyArchive(ISemanticScratch scratch, ISemanticScratch? destination, CancellationToken token)
+    private static void CopyArchive(ISemanticScratch scratch, ISemanticScratch? destination, CancellationToken token, SemanticArchiveReadLimits? limits)
     {
-        var completion = Validate(scratch, token);
+        var completion = Validate(scratch, token, limits);
         var paths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        long totalBytes = 0; string? previousPath = null;
+        long totalBytes = 0, pathCharacters = 0; string? previousPath = null;
         foreach (var file in ReadLines<StoredFile>(scratch, "files.jsonl", token))
         {
+            token.ThrowIfCancellationRequested();
+            if (paths.Count >= completion.Summary.Files || paths.Count >= SemanticPaths.MaximumInventoryEntries
+                || file.RelativePath is null || file.Segments is null || !Digest(file.Sha256))
+                throw new InvalidDataException("File manifest exceeds its declared inventory or has missing fields.");
+            pathCharacters = checked(pathCharacters + file.RelativePath.Length);
+            if (pathCharacters > SemanticPaths.MaximumInventoryPathCharacters)
+                throw new InvalidDataException("File manifest path budget exceeded.");
             if (!paths.Add(SemanticPaths.Normalize(file.RelativePath)) || file.Length < 0
                 || previousPath is not null && StringComparer.Ordinal.Compare(previousPath, file.RelativePath) >= 0)
                 throw new InvalidDataException("Invalid file manifest.");
             previousPath = file.RelativePath; totalBytes = checked(totalBytes + file.Length);
+            if (totalBytes > completion.Summary.Bytes || totalBytes > (limits ?? SemanticArchiveReadLimits.UnrestrictedBytes).MaximumBytes)
+                throw new InvalidDataException("File manifest byte budget exceeded.");
             if (file.Segments.Count > 4096) throw new InvalidDataException("Too many region segments.");
             var objectLengths = new Dictionary<string, long>(StringComparer.Ordinal);
+            long declaredCursor = 0;
             foreach (var segment in file.Segments)
             {
+                if (segment is null || segment.ObjectPath is null || !Digest(segment.Sha256))
+                    throw new InvalidDataException("Invalid segment fields.");
+                SemanticPaths.Normalize(segment.ObjectPath);
+                if (!segment.ObjectPath.StartsWith("objects/", StringComparison.Ordinal)) throw new InvalidDataException("Invalid pack location.");
                 objectLengths.TryGetValue(segment.ObjectPath, out var end);
                 if (segment.ObjectOffset != end || segment.Length < 0) throw new InvalidDataException("Invalid object coverage.");
                 objectLengths[segment.ObjectPath] = checked(end + segment.Length);
+                if (segment.FileOffset != declaredCursor || segment.Length > file.Length - declaredCursor)
+                    throw new InvalidDataException("Invalid segment coverage.");
+                declaredCursor = checked(declaredCursor + segment.Length);
             }
+            if (declaredCursor != file.Length || objectLengths.Count > 2) throw new InvalidDataException("Invalid file coverage or pack quota.");
             long cursor = 0;
             using var output = destination?.Create(file.RelativePath) ?? Stream.Null;
             using var fileHash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
@@ -116,6 +140,8 @@ public static class ScratchArchive
         token.ThrowIfCancellationRequested();
         // The caller publishes its own result marker outside the reconstructed world.
     }
+
+    private static bool Digest(string? value) => value is { Length: 64 } && value.All(Uri.IsHexDigit);
 
     public static VerificationResult VerifySource(IReadOnlyWorldSource source, ISemanticScratch scratch, CancellationToken token = default)
     {

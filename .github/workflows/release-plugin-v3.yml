@@ -38,11 +38,11 @@ jobs:
       - name: Build
         run: dotnet build FolderRewind-Plugin-Minecraft.slnx --no-restore -c Release -p:Platform=x64
       - name: Test
-        run: dotnet test MineRewind.Tests/MineRewind.Tests.csproj --no-restore --no-build -c Release -p:Platform=x64 --logger trx --results-directory artifacts/test-results
+        run: dotnet test MineRewind.Tests/MineRewind.Tests.csproj --no-restore --no-build -c Release -p:Platform=x64 --filter "TestCategory!=PerformanceBenchmark" --logger trx --results-directory artifacts/test-results
       - name: Test World
-        run: dotnet test MineRewind.World.Tests/MineRewind.World.Tests.csproj --no-restore --no-build -c Release --logger trx --results-directory artifacts/test-results
+        run: dotnet test MineRewind.World.Tests/MineRewind.World.Tests.csproj --no-restore --no-build -c Release --filter "TestCategory!=PerformanceBenchmark" --logger trx --results-directory artifacts/test-results
       - name: Pack .frplugin
-        run: dotnet msbuild MineRewind/MineRewind.csproj /t:PackFrPlugin /p:Configuration=Release /p:Version=${{ env.PLUGIN_VERSION }}
+        run: dotnet msbuild MineRewind/MineRewind.csproj /t:PackFrPlugin /p:Configuration=Release
       - name: Reject bundled Abstractions
         shell: pwsh
         run: |

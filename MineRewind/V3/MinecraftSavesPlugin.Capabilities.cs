@@ -120,10 +120,16 @@ public sealed partial class MinecraftSavesPlugin
     {
         EnsureActivated();
         ValidateKind(request.Config.Kind);
-        if (ResolveWorldPath(request.Folder.Path) is null)
-            return ValueTask.FromResult(new FilePolicyResult([], [], []));
-        return ValueTask.FromResult(new FilePolicyResult([], [], [])
-        { TypedRequiredExclusions = MinecraftWorldFilePolicy.BackupExclusions });
+        var observation = MinecraftWorldPathResolver.Observe(request.Folder.Path, context.OperationCancellation);
+        var exclusions = observation.Worlds.SelectMany(world =>
+        {
+            var relative = Path.GetRelativePath(Path.GetFullPath(request.Folder.Path), world.Path).Replace('\\', '/');
+            var prefix = relative == "." ? "" : relative + "/**/";
+            return MinecraftWorldFilePolicy.BackupExclusions.Select(rule => rule with { Pattern = prefix + rule.Pattern });
+        }).Distinct().ToArray();
+        return ValueTask.FromResult(new FilePolicyResult([], [], observation.Kind == World.WorldObservationKind.WorldEvidenceUnresolved
+            ? [Diagnostic("minerewind.world_identity_unresolved", DiagnosticSeverity.Warning, "FilePolicy")] : [])
+        { TypedRequiredExclusions = exclusions });
     }
 
     public ValueTask<BackupScopeResult> ResolveAsync(
@@ -150,13 +156,20 @@ public sealed partial class MinecraftSavesPlugin
             },
             StringComparer.OrdinalIgnoreCase);
         var sourceRoot = Path.GetFullPath(request.Folder.Path);
+        var observation = MinecraftWorldPathResolver.Observe(sourceRoot, context.OperationCancellation);
+        if (observation.Kind == World.WorldObservationKind.WorldEvidenceUnresolved)
+            return ValueTask.FromResult(new BackupScopeResult(OperationReadiness.Blocked, [],
+                [Diagnostic("minerewind.scope_world_unresolved", DiagnosticSeverity.Error, "BackupScope")]));
         if (parameters.TryGetValue(MinecraftSpatialScope.Parameter, out var selectionJson) && !string.IsNullOrWhiteSpace(selectionJson))
         {
             var selection = JsonSerializer.Deserialize<SpatialScopeSelection[]>(selectionJson) ?? throw new InvalidDataException("Invalid spatial scope selection.");
             var result = MinecraftSpatialScope.Resolve(sourceRoot, selection, SelectedRegionsScopeId, context.OperationCancellation);
             return ValueTask.FromResult(new BackupScopeResult(OperationReadiness.Ready, result.IncludePatterns, result.Diagnostics));
         }
-        var worldPath = ResolveWorldPath(sourceRoot);
+        if (observation.Worlds.Count > 1)
+            return ValueTask.FromResult(new BackupScopeResult(OperationReadiness.Blocked, [],
+                [Diagnostic("minerewind.scope_world_unresolved", DiagnosticSeverity.Error, "BackupScope")]));
+        var worldPath = observation.Worlds.SingleOrDefault()?.Path;
         if (worldPath is null) return ValueTask.FromResult(new BackupScopeResult(OperationReadiness.Ready, ["**"], []));
         var errorCode = string.Empty;
         if (!MinecraftRegionBackupScope.TryBuild(sourceRoot, worldPath, parameters, out var patterns, out errorCode))
