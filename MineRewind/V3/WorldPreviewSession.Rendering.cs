@@ -16,9 +16,9 @@ internal sealed partial class WorldPreviewSession
         public long RetryAt { get; } = retryAt;
         public bool Retry => Thumbnail.State is ChunkReadState.Unavailable or ChunkReadState.Changing && Attempts < 3;
     }
-    private sealed class TileWork(TileKey key, IEnumerable<RegionKey> regions)
+    private sealed class TileWork(TileKey key, IEnumerable<RegionKey> regions) : IDisposable
     {
-        public readonly object Gate = new();
+        public readonly SemaphoreSlim Gate = new(1, 1);
         public byte[] Pixels { get; } = new byte[key.Units < 16 ? 256 * 256 * 4 : 0];
         private readonly IEnumerator<RegionKey> _regions = regions.GetEnumerator();
         private bool _hasRegion;
@@ -44,10 +44,14 @@ internal sealed partial class WorldPreviewSession
             return _hasRegion;
         }
         public void AdvanceRegion() { _hasRegion = false; RegionSlot = 0; }
+        public void Dispose() { _regions.Dispose(); Gate.Dispose(); }
     }
 
+    private sealed record CompletedTileKey(PreviewTileIdentity Tile);
+    private sealed record CompletedTile(long SampleRevision, SpatialPreviewTile Tile);
     private SpatialPreviewTile RenderProgressive(SpatialPreviewTileRequest request, CancellationToken token)
     {
+        token.ThrowIfCancellationRequested();
         if (!double.IsFinite(request.OriginX) || !double.IsFinite(request.OriginY)
             || Math.Abs(request.OriginX) > 31_100_000 || Math.Abs(request.OriginY) > 31_100_000
             || request.UnitsPerPixel is < 1 or > 4096 || !IsPowerOfTwo(request.UnitsPerPixel)
@@ -58,20 +62,32 @@ internal sealed partial class WorldPreviewSession
         var key = new TileKey(request.Source.Generation, NormalizeWorldRoot(world.WorldRoot), dimension.Id, Math.Clamp(request.MaximumHeight ?? 2047, -2048, 2047),
             (int)request.OriginX, (int)request.OriginY, (int)request.UnitsPerPixel, ParseMode(request.ViewModeId), request.ShowStatusOverlay);
         TileWork work;
+        PreviewWorkScheduler<TileWork>.Job job;
+        var identity = PreviewTileIdentity.Of(request);
+        var bytes = 1024L + (key.Units >= 16 ? 65536L * 4 * 3 : 256L * 256 * 4 + 256L * key.Units / 16 * (256L * key.Units / 16));
         lock (_sync)
         {
             ObjectDisposedException.ThrowIf(_closed, this);
-            work = _cache.Get<TileWork>(key)!;
-            if (work is null)
-            {
-                work = new(key, dimension.Regions.Keys);
-                _cache.Put(key, work, work.Bytes, 2);
-            }
+            job = _scheduler.Require(request);
+            if (_cache.Get<CompletedTile>(new CompletedTileKey(identity)) is { } done && done.SampleRevision == _sampleRevision)
+                return done.Tile;
+            if (!_scheduler.Fits(bytes)) return new(256, 256, new byte[256 * 256 * 4],
+                [new("preview.budget", DiagnosticSeverity.Warning, "SpatialPreview", MinecraftSavesPlugin.PluginIdentity,
+                    Text("The tile exceeds the preview work budget.", "此瓦片超出预览工作预算。").Translations)])
+                { IsFinal = true, ContentState = SpatialPreviewContentState.Unknown };
+            if (!_scheduler.TryBorrow(job, bytes, () => new(key, dimension.Regions.Keys)))
+                return new(256, 256, new byte[256 * 256 * 4], []) { IsFinal = false, ContentState = SpatialPreviewContentState.Unknown };
+            work = job.Work!;
         }
+        using var linked = CancellationTokenSource.CreateLinkedTokenSource(token, _lifetime.Token, job.Cancellation.Token);
+        token = linked.Token;
+        var finished = false;
+        var entered = false;
+        SpatialPreviewTile? completedTile = null;
         // Tile work itself is shared: overlapping requests advance the same cursor, never duplicate raster state.
-        while (!Monitor.TryEnter(work.Gate, 25)) token.ThrowIfCancellationRequested();
         try
         {
+            work.Gate.Wait(token); entered = true;
             token.ThrowIfCancellationRequested();
             var watch = Stopwatch.StartNew();
             var headerCount = 0;
@@ -150,22 +166,33 @@ internal sealed partial class WorldPreviewSession
             }
             var states = work.States.Where(s => s != 0).Select(s => (ChunkReadState)((s & 15) - 1))
                 .Concat(work.HeaderErrors).Distinct().Where(s => s is not (ChunkReadState.Present or ChunkReadState.Absent));
-            lock (_sync)
-            {
-                ObjectDisposedException.ThrowIf(_closed, this);
-                // The raster survives sample eviction, so a large tile converges within a bounded cache.
-                if (final && key.Units >= 16) _cache.Remove(key);
-                else _cache.Put(key, work, work.Bytes, final ? 1 : 2);
-            }
             var statistics = Statistics(key, work);
             var content = !final ? SpatialPreviewContentState.Unknown
                 : statistics.Readable > 0 || statistics.Pending > 0 ? SpatialPreviewContentState.HasData
                 : statistics.NoVisibleSurface > 0 ? SpatialPreviewContentState.NoVisibleSurface
                 : statistics.Failed > 0 || statistics.Unsupported > 0 ? SpatialPreviewContentState.Unknown : SpatialPreviewContentState.NoData;
-            return new(256, 256, Raster(key, work), states.Select(Diagnostic).ToArray())
+            var tile = new SpatialPreviewTile(256, 256, Raster(key, work), states.Select(Diagnostic).ToArray())
                 { IsFinal = final, ContentState = content, Statistics = statistics };
+            lock (_sync)
+            {
+                token.ThrowIfCancellationRequested();
+                ObjectDisposedException.ThrowIf(_closed, this);
+                finished = final;
+                if (final && key.Units >= 16) completedTile = tile;
+            }
+            return tile;
         }
-        finally { Monitor.Exit(work.Gate); }
+        finally
+        {
+            if (entered) work.Gate.Release();
+            lock (_sync)
+            {
+                // Immutable returned rasters belong to the caller; retained buffers remain in the ledger.
+                _scheduler.Return(job, finished, cacheWork: key.Units < 16);
+                if (!_closed && !job.Removed && completedTile is not null)
+                    _cache.Put(new CompletedTileKey(identity), new CompletedTile(_sampleRevision, completedTile), 512 + completedTile.BgraPremultiplied.Length);
+            }
+        }
     }
 
     private void DrawRegion(WorldDescriptor world, DimensionDescriptor dimension, TileKey key, TileWork work, RegionKey region, CancellationToken token)
@@ -185,13 +212,15 @@ internal sealed partial class WorldPreviewSession
         {
             work.HeaderErrors.Add(ex is EndOfStreamException or InvalidDataException ? ChunkReadState.Corrupt : ChunkReadState.Unavailable);
             if (key.Units < 16) return; // Near view retries individual chunks instead of freezing the overview error.
-            work.CoarseCounts[5] += 1024;
-            for (var slot = 0; slot < 1024; slot++) Accumulate(work, key, region.X * 512 + slot % 32 * 16, region.Z * 512 + slot / 32 * 16, 0xFFAA5656);
+            for (var slot = 0; slot < 1024; slot++)
+                if (Intersects(key, region, slot))
+                { work.CoarseCounts[5]++; Accumulate(work, key, region.X * 512 + slot % 32 * 16, region.Z * 512 + slot / 32 * 16, 0xFFAA5656); }
             return;
         }
         for (var slot = work.RegionSlot; slot < 1024; slot++)
         {
             token.ThrowIfCancellationRequested();
+            if (!Intersects(key, region, slot)) { work.RegionSlot = slot + 1; continue; }
             if (BinaryPrimitives.ReadUInt32BigEndian(header.Header.AsSpan(slot * 4, 4)) == 0)
             {
                 if (key.Units >= 16)
@@ -226,6 +255,11 @@ internal sealed partial class WorldPreviewSession
             work.RegionSlot = slot + 1;
         }
         if (key.Units < 16) work.HeaderErrors.Clear();
+    }
+    private static bool Intersects(TileKey key, RegionKey region, int slot)
+    {
+        var x = region.X * 512d + slot % 32 * 16; var z = region.Z * 512d + slot / 32 * 16;
+        return x < key.X + 256d * key.Units && z < key.Z + 256d * key.Units && x + 16 > key.X && z + 16 > key.Z;
     }
     private static void Accumulate(TileWork work, TileKey key, int bx, int bz, uint color)
     {

@@ -4,11 +4,11 @@ internal static class ModrinthLocations
 {
     public static void DiscoverKnown(MinecraftDiscoveryContext context, Action<MinecraftLocation> add)
     {
-        var roaming = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
+        var roaming = context.EnvironmentInputs.Folder(Environment.SpecialFolder.ApplicationData);
         if (!string.IsNullOrEmpty(roaming))
             foreach (var name in new[] { "ModrinthApp", "com.modrinth.theseus" })
                 DiscoverRoot(Path.Combine(roaming, name), context, add);
-        var configured = MinecraftDiscoveryContext.Normalize(Environment.GetEnvironmentVariable("THESEUS_CONFIG_DIR"));
+        var configured = MinecraftDiscoveryContext.Normalize(context.EnvironmentInputs.Variable("THESEUS_CONFIG_DIR"));
         if (configured is not null) DiscoverRoot(configured, context, add);
     }
 

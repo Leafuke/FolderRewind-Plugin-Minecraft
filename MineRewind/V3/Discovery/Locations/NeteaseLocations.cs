@@ -1,4 +1,3 @@
-using Microsoft.Win32;
 using System.Globalization;
 
 namespace MineRewind.Discovery.Locations;
@@ -12,8 +11,7 @@ internal static class NeteaseLocations
             try
             {
                 context.Check();
-                using var key = Registry.CurrentUser.OpenSubKey(@"Software\Netease\MCLauncher", writable: false);
-                var download = key?.GetValue("DownloadPath") as string;
+                var download = context.EnvironmentInputs.RegistryValue(@"Software\Netease\MCLauncher", "DownloadPath");
                 var root = MinecraftDiscoveryContext.Normalize(download);
                 if (root is not null)
                     add(new(Path.Combine(root, "Game", ".minecraft"), MinecraftLocationKind.JavaGameRoot,
@@ -22,7 +20,7 @@ internal static class NeteaseLocations
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or System.Security.SecurityException)
             { context.Warn("minerewind.discovery_registry_unreadable", "netease", @"HKCU\Software\Netease\MCLauncher"); }
         }
-        var roaming = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
+        var roaming = context.EnvironmentInputs.Folder(Environment.SpecialFolder.ApplicationData);
         if (!string.IsNullOrEmpty(roaming))
             add(new(Path.Combine(roaming, "MinecraftPE_Netease", "minecraftWorlds"),
                 MinecraftLocationKind.WorldsDirectory, MinecraftEdition.Bedrock, Name("NetEase Bedrock", "网易 Bedrock"), "netease"));

@@ -6,11 +6,11 @@ internal static class HmclLocations
 {
     public static void DiscoverKnown(MinecraftDiscoveryContext context, Action<MinecraftLocation> add)
     {
-        var roaming = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
+        var roaming = context.EnvironmentInputs.Folder(Environment.SpecialFolder.ApplicationData);
         if (!string.IsNullOrEmpty(roaming)) ReadHome(Path.Combine(roaming, ".hmcl"), null, context, add);
-        var home = MinecraftDiscoveryContext.Normalize(Environment.GetEnvironmentVariable("HMCL_USER_HOME"));
+        var home = MinecraftDiscoveryContext.Normalize(context.EnvironmentInputs.Variable("HMCL_USER_HOME"));
         if (home is not null) ReadHome(home, null, context, add);
-        var local = MinecraftDiscoveryContext.Normalize(Environment.GetEnvironmentVariable("HMCL_LOCAL_HOME"));
+        var local = MinecraftDiscoveryContext.Normalize(context.EnvironmentInputs.Variable("HMCL_LOCAL_HOME"));
         if (local is not null) ReadHome(local, null, context, add);
     }
 

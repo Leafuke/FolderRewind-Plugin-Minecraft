@@ -71,7 +71,7 @@ public sealed partial class V3VerticalSliceTests
         var source = new SpatialPreviewSource(config, folder, Guid.NewGuid()) { CacheBudgetBytes = 1024 * 1024 };
         var request = new SpatialPreviewTileRequest(source, "minecraft:overworld", origin, origin, units, 7) { ShowStatusOverlay = true };
         var session = new WorldPreviewSession(1024 * 1024); session.Describe(source, default);
-        var first = session.Render(request, default);
+        var first = RenderPreview(session, request, default);
         Assert.IsFalse(first.IsFinal, "More than 64 region headers must require another call.");
         Assert.IsLessThanOrEqualTo(1024L * 1024, session.CacheBytes);
         var peak = session.CacheBytes;
@@ -79,7 +79,7 @@ public sealed partial class V3VerticalSliceTests
         var passes = 1;
         for (; passes < 64 && !result.IsFinal; passes++)
         {
-            result = session.Render(request, default);
+            result = RenderPreview(session, request, default);
             peak = Math.Max(peak, session.CacheBytes);
             Assert.IsLessThanOrEqualTo(1024L * 1024, session.CacheBytes);
         }

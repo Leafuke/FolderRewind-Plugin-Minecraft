@@ -25,6 +25,10 @@ public static class WorldObserver
         { "region", "entities", "poi", "dimensions", "DIM-1", "DIM1", "playerdata", "players", "advancements", "stats", "datapacks", "data" };
 
     public static WorldObservation Observe(string source, CancellationToken token = default)
+        => ObserveCore(source, token, null);
+    internal static WorldObservation ObserveForDisplay(string source, CancellationToken token, WorldScanBudget budget)
+        => ObserveCore(source, token, budget);
+    private static WorldObservation ObserveCore(string source, CancellationToken token, WorldScanBudget? budget)
     {
         var worlds = new List<ObservedWorld>();
         var issues = new List<WorldObservationIssue>();
@@ -86,6 +90,7 @@ public static class WorldObserver
                 foreach (var entry in Directory.EnumerateFileSystemEntries(item.Path))
                 {
                     token.ThrowIfCancellationRequested();
+                    budget?.Count(root, entry, token, item.Depth + 1);
                     if (++entries > 100_000) { Issue(item.Path, "observation_budget"); pending.Clear(); break; }
                     var flags = File.GetAttributes(entry);
                     if ((flags & FileAttributes.Directory) == 0) continue;
@@ -95,6 +100,7 @@ public static class WorldObserver
                     pending.Push((entry, item.Depth + 1));
                 }
             }
+            catch (WorldScanLimitException) { Issue(item.Path, "observation_budget"); pending.Clear(); }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException)
             { Issue(item.Path, "world_observation_failed", ex); }
         }

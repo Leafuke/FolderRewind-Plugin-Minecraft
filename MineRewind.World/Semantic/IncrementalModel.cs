@@ -10,6 +10,20 @@ public sealed record WorldStateFile(string Path, long Length, string Sha256,
     // File-scoped deduplication means intervals never alias across different files.
     // This compact per-pack summary avoids reading every unchanged recipe for accounting.
     public IReadOnlyDictionary<Guid, long>? ReferencedBytesByPack { get; init; }
+    public WorldSemanticSummary? SemanticSummary { get; init; }
+}
+/// <summary>Diagnostic cache only. Never authorizes restore, omission, deletion or integrity acceptance.</summary>
+public sealed record WorldSemanticSummary(int ClassifierVersion, int OpaqueRegions, int CorruptChunks,
+    int UnsupportedChunks, int MissingExternalFiles, int UnclassifiedRegions)
+{
+    [System.Text.Json.Serialization.JsonIgnore]
+    public bool HasWarnings => !IsValid || OpaqueRegions > 0 || CorruptChunks > 0 || UnsupportedChunks > 0 || MissingExternalFiles > 0 || UnclassifiedRegions > 0;
+    [System.Text.Json.Serialization.JsonIgnore]
+    public bool IsValid => ClassifierVersion == 1 && OpaqueRegions is >= 0 and <= 1 && UnclassifiedRegions is >= 0 and <= 1
+        && CorruptChunks is >= 0 and <= 1024 && UnsupportedChunks is >= 0 and <= 1024 && MissingExternalFiles is >= 0 and <= 1024;
+    internal static WorldSemanticSummary From(RegionEntry? index) => index is null ? new(1, 0, 0, 0, 0, 1)
+        : new(1, index.State == SemanticState.Present ? 0 : 1, index.Chunks.Count(c => c.State == SemanticState.Corrupt),
+            index.Chunks.Count(c => c.State == SemanticState.Unsupported), index.Chunks.Count(c => c.Diagnostic == "missing_external_file"), 0);
 }
 public sealed record WorldIncrementalState(int Version, string SourceId, string BoundaryFingerprint,
     IReadOnlyList<WorldStateFile> Files, IReadOnlyList<string> DeletedFiles, IReadOnlyList<string> DeletedChunks,
@@ -17,6 +31,8 @@ public sealed record WorldIncrementalState(int Version, string SourceId, string 
 {
     public long ReferencedObjectBytes { get; init; }
     public long PinnedPackBytes { get; init; }
+    public int SemanticClassifierVersion { get; init; }
+    public string? WorldRootsFingerprint { get; init; }
     public bool CompactionRecommended => PinnedPackBytes > 2m * ReferencedObjectBytes;
 }
 

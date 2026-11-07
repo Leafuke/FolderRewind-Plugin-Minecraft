@@ -12,6 +12,7 @@ internal sealed class MinecraftLayoutScanner(MinecraftDiscoveryContext context)
         context.Check();
         var root = MinecraftDiscoveryContext.Normalize(location.Path);
         if (root is null || !Directory.Exists(root)) return;
+        if (context.SkipLinkedPath(root, location.Source)) return;
         switch (location.Kind)
         {
             case MinecraftLocationKind.WorldDirectory:
@@ -38,6 +39,7 @@ internal sealed class MinecraftLayoutScanner(MinecraftDiscoveryContext context)
     public void ScanUserRoot(string root)
     {
         context.Check();
+        if (context.SkipLinkedPath(root, "user")) return;
         if (File.Exists(System.IO.Path.Combine(root, "level.dat")))
         {
             Scan(new(root, MinecraftLocationKind.WorldDirectory, GuessEdition(root), null, "user"));
@@ -74,6 +76,7 @@ internal sealed class MinecraftLayoutScanner(MinecraftDiscoveryContext context)
     private void AddWorld(string instanceRoot, string name, string world, MinecraftLocation location)
     {
         context.Check();
+        if (context.SkipLinkedPath(System.IO.Path.Combine(world, "level.dat"), location.Source)) return;
         if (!File.Exists(System.IO.Path.Combine(world, "level.dat"))) return;
         instanceRoot = MinecraftDiscoveryContext.Normalize(instanceRoot)!;
         if (string.IsNullOrWhiteSpace(name)) name = InstanceName(instanceRoot);

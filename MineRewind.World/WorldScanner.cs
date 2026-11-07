@@ -2,7 +2,9 @@ namespace MineRewind.World;
 
 public static class WorldScanner
 {
-    public static WorldDescriptor Scan(string sourceRoot, string worldRoot, CancellationToken token = default)
+    public static WorldDescriptor Scan(string sourceRoot, string worldRoot, CancellationToken token = default, bool rejectLinks = true)
+        => Scan(sourceRoot, worldRoot, token, rejectLinks, new WorldScanBudget());
+    internal static WorldDescriptor Scan(string sourceRoot, string worldRoot, CancellationToken token, bool rejectLinks, WorldScanBudget budget)
     {
         sourceRoot = Path.GetFullPath(sourceRoot);
         worldRoot = WorldPaths.RequireContained(sourceRoot, worldRoot);
@@ -11,7 +13,13 @@ public static class WorldScanner
         {
             if (!new[] { "region", "entities", "poi" }.Any(component => Directory.Exists(Path.Combine(path, component)))) return;
             try { path = WorldPaths.RequireContained(sourceRoot, path); }
-            catch (IOException) { return; } // Never traverse a sibling outside this source or a linked dimension.
+            catch (IOException)
+            {
+                var relative = Path.GetRelativePath(sourceRoot, path);
+                if (!Path.IsPathRooted(relative) && relative != ".." && !relative.StartsWith(".." + Path.DirectorySeparatorChar, StringComparison.Ordinal))
+                { if (rejectLinks) throw; budget.MarkIncomplete(); }
+                return; // Never traverse a sibling outside this source.
+            }
             if (!candidates.TryGetValue(id, out var paths)) candidates[id] = paths = new(StringComparer.OrdinalIgnoreCase);
             paths.Add(path);
         }
@@ -25,11 +33,11 @@ public static class WorldScanner
         var dimensionsRoot = Path.Combine(worldRoot, "dimensions");
         if (Directory.Exists(dimensionsRoot))
         {
-            WorldPaths.RequireContained(sourceRoot, dimensionsRoot);
-            foreach (var ns in Directory.EnumerateDirectories(dimensionsRoot))
+            // Entries enforces containment and applies the strict/display link policy to this directory too.
+            foreach (var ns in budget.Entries(sourceRoot, dimensionsRoot, token, rejectLinks))
             {
                 token.ThrowIfCancellationRequested();
-                if ((File.GetAttributes(ns) & FileAttributes.ReparsePoint) != 0) continue;
+                if (!Directory.Exists(ns)) continue;
                 var pending = new Stack<(string Path, int Depth)>(); pending.Push((ns, 0));
                 while (pending.TryPop(out var item))
                 {
@@ -37,10 +45,12 @@ public static class WorldScanner
                     if (item.Depth > 16) throw new IOException("Dimension layout exceeds the depth limit.");
                     if (item.Depth > 0)
                         Add(Path.GetFileName(ns) + ":" + Path.GetRelativePath(ns, item.Path).Replace('\\', '/'), item.Path);
-                    foreach (var child in Directory.EnumerateDirectories(item.Path))
+                    foreach (var child in budget.Entries(sourceRoot, item.Path, token, rejectLinks, item.Depth + 1))
                     {
+                        if (!Directory.Exists(child)) continue;
                         if (Path.GetFileName(child) is "region" or "entities" or "poi" or "data") continue;
-                        if ((File.GetAttributes(child) & FileAttributes.ReparsePoint) == 0) pending.Push((child, item.Depth + 1));
+                        if (item.Depth + 1 > 16) throw new WorldScanLimitException("Dimension layout exceeds the depth limit.");
+                        pending.Push((child, item.Depth + 1));
                     }
                 }
             }
@@ -51,16 +61,14 @@ public static class WorldScanner
             if (pair.Value.Count != 1) throw new IOException("Ambiguous dimension layout: " + pair.Key);
             var root = pair.Value.Single();
             var regionRoot = Path.Combine(root, "region");
-            if (Directory.Exists(regionRoot)) regionRoot = WorldPaths.RequireContained(sourceRoot, regionRoot);
             var regions = new Dictionary<RegionKey, string>();
-            foreach (var file in Directory.Exists(regionRoot) ? Directory.EnumerateFiles(regionRoot, "r.*.*.mca") : [])
+            foreach (var file in Directory.Exists(regionRoot) ? budget.Entries(sourceRoot, regionRoot, token, rejectLinks) : [])
             {
                 token.ThrowIfCancellationRequested();
-                if ((File.GetAttributes(file) & FileAttributes.ReparsePoint) != 0) continue;
-                if (WorldPaths.TryRegionName(file, out var key)) regions.Add(key, file);
+                if (!Directory.Exists(file) && WorldPaths.TryRegionName(file, out var key)) regions.Add(key, file);
             }
             result.Add(new(pair.Key, root, regions));
         }
-        return new(sourceRoot, worldRoot, result.AsReadOnly());
+        return new(sourceRoot, worldRoot, result.AsReadOnly()) { IsIncomplete = budget.Incomplete };
     }
 }

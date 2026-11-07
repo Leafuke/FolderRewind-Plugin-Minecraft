@@ -1,5 +1,4 @@
 using System.Buffers.Binary;
-using System.IO.Compression;
 using System.Text.Json;
 using fNbt;
 
@@ -20,9 +19,11 @@ public static class WorldNavigation
         for (var i = 0; i < 4; i++) BinaryPrimitives.WriteInt32BigEndian(bytes[(i * 4)..], value.Value[i]);
         return new Guid(bytes, bigEndian: true).ToString("D");
     }
-    public static IReadOnlyList<WorldNavigationTarget> Read(WorldDescriptor world, CancellationToken token)
+    public static IReadOnlyList<WorldNavigationTarget> Read(WorldDescriptor world, CancellationToken token, Action<string>? incomplete = null)
     {
-        var names = ReadNames(world);
+        token.ThrowIfCancellationRequested();
+        var budget = new WorldScanBudget();
+        var names = ReadNames(world, token);
         var targets = new Dictionary<string, WorldNavigationTarget>(StringComparer.Ordinal);
         var data = TryRead(Path.Combine(world.WorldRoot, "level.dat"))?["Data"] as NbtCompound;
         var single = DecodeUuid(data?["singleplayer_uuid"] as NbtIntArray);
@@ -42,18 +43,20 @@ public static class WorldNavigation
             try
             {
                 WorldPaths.RequireContained(world.SourceRoot, directory);
-                foreach (var file in Directory.EnumerateFiles(directory, "*.dat"))
+                foreach (var file in budget.Entries(world.SourceRoot, directory, token, rejectLinks: false))
                 {
                     token.ThrowIfCancellationRequested();
-                    if (++scanned > 4094) break;
+                    if (Directory.Exists(file) || !file.EndsWith(".dat", StringComparison.OrdinalIgnoreCase)) continue;
+                    if (++scanned > 4094) { incomplete?.Invoke("players"); break; }
                     if (!Guid.TryParse(Path.GetFileNameWithoutExtension(file), out var id)) continue;
                     var key = id.ToString("D");
                     if (targets.ContainsKey(key)) continue; // Embedded singleplayer state is authoritative.
                     if (TryRead(file) is { } player) AddPlayer(key, player, key == single);
                 }
             }
-            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { incomplete?.Invoke("scan"); }
         }
+        if (budget.Incomplete) incomplete?.Invoke("scan");
         if (data?.Get<NbtInt>("SpawnX") is { } sx && data.Get<NbtInt>("SpawnZ") is { } sz)
             targets["spawn"] = new("spawn", null, "minecraft:overworld", sx.Value, sz.Value, false, true);
         // Newer level.dat layouts use a structured global spawn record.
@@ -86,30 +89,16 @@ public static class WorldNavigation
                 if (!File.Exists(path)) return null;
                 WorldPaths.RequireContained(world.SourceRoot, path);
                 using var file = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
-                if (file.Length > 16 * 1024 * 1024) return null;
-                var first = file.ReadByte(); var second = file.ReadByte(); file.Position = 0;
-                using Stream decoded = first == 0x1f && second == 0x8b ? new GZipStream(file, CompressionMode.Decompress)
-                    : first == 0x78 ? new ZLibStream(file, CompressionMode.Decompress) : new MemoryStream(ReadBounded(file, token));
-                var bytes = ReadBounded(decoded, token);
-                using var input = new MemoryStream(bytes);
-                var reader = new NbtReader(input);
-                while (reader.ReadToFollowing())
-                {
-                    token.ThrowIfCancellationRequested();
-                    if (reader.Depth > 64 || reader.TagsRead > 100_000 || (reader.HasLength && (reader.TagLength < 0 || reader.TagLength > 1_048_576))) return null;
-                }
-                input.Position = 0;
-                var nbt = new NbtFile();
-                // The bounded prepass validates the whole stream; only navigation fields become objects.
-                nbt.LoadFromStream(input, NbtCompression.None, tag => tag.Name is null or "" or "Data" or "Player"
-                    or "Pos" or "Dimension" or "UUID" or "singleplayer_uuid" or "SpawnX" or "SpawnZ"
-                    or "spawn" or "pos" or "dimension" or "bukkit" or "lastKnownName");
+                var nbt = BoundedNbtReader.Read(file, NbtReadLimits.Display, token,
+                    tag => tag.Name is null or "" or "Data" or "Player" or "Pos" or "Dimension" or "UUID"
+                        or "singleplayer_uuid" or "SpawnX" or "SpawnZ" or "spawn" or "pos" or "dimension" or "bukkit" or "lastKnownName");
                 return nbt.RootTag;
             }
-            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or NbtFormatException or InvalidCastException or ArgumentException) { return null; }
+            catch (Exception ex) when (ex is IOException or InvalidDataException or UnauthorizedAccessException or NbtFormatException or InvalidCastException or ArgumentException)
+            { incomplete?.Invoke("nbt"); return null; }
         }
     }
-    private static Dictionary<string, string> ReadNames(WorldDescriptor world)
+    private static Dictionary<string, string> ReadNames(WorldDescriptor world, CancellationToken token)
     {
         var names = new Dictionary<string, string>(StringComparer.Ordinal);
         var path = Path.Combine(world.SourceRoot, "usercache.json");
@@ -122,24 +111,15 @@ public static class WorldNavigation
             using var json = JsonDocument.Parse(stream, new JsonDocumentOptions { MaxDepth = 8 });
             if (json.RootElement.ValueKind != JsonValueKind.Array) return names;
             foreach (var entry in json.RootElement.EnumerateArray().Take(4096))
+            {
+                token.ThrowIfCancellationRequested();
                 if (entry.ValueKind == JsonValueKind.Object && entry.TryGetProperty("uuid", out var id) && id.ValueKind == JsonValueKind.String
                     && Guid.TryParse(id.GetString(), out var uuid) && entry.TryGetProperty("name", out var name)
                     && name.ValueKind == JsonValueKind.String && name.GetString() is { Length: > 0 and <= 128 } text)
                     names[uuid.ToString("D")] = text;
+            }
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException) { }
         return names;
-    }
-    private static byte[] ReadBounded(Stream input, CancellationToken token)
-    {
-        using var output = new MemoryStream(); var buffer = new byte[8192];
-        int count;
-        while ((count = input.Read(buffer)) != 0)
-        {
-            token.ThrowIfCancellationRequested();
-            if (output.Length + count > 16 * 1024 * 1024) throw new InvalidDataException("World metadata exceeds preview limits.");
-            output.Write(buffer, 0, count);
-        }
-        return output.ToArray();
     }
 }

@@ -7,12 +7,14 @@ public sealed partial class MinecraftSavesPlugin : IBackupArtifactTransformerCap
 {
     public ArtifactTransformerId TransformerId { get; } = new(MineRewindPluginId, "minecraft-world-full");
     public RestoreStrategyId RestoreStrategyId { get; } = new(MineRewindPluginId, "minecraft-world-materializer");
+    public ValueTask<IArtifactFileView> OpenFileViewAsync(ArtifactFileViewRequest request, PluginInvocationContext context)
+        => MinecraftIncrementalArtifactService.OpenFileViewAsync(request, context);
     private const long FullQuota = 16L * 1024 * 1024 * 1024;
 
     public async ValueTask<ArtifactTransformResult> TransformAsync(ArtifactTransformRequest request, PluginInvocationContext context)
     {
         if (request.IncrementalInput is not null)
-            return await TransformIncrementalAsync(request, context);
+            return await MinecraftIncrementalArtifactService.TransformAsync(request, context, RestoreStrategyId);
         if (request.Config.Kind != MinecraftKind || request.Primary.CoreCaptureMode != CoreCaptureMode.Full
             || request.Primary.Completeness != ArtifactCompleteness.Complete)
             throw new InvalidOperationException("Minecraft Full representation requires Java Full/Complete capture.");

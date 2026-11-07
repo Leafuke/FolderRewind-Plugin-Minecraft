@@ -8,9 +8,9 @@ internal sealed record MinecraftDiscoveryScan(IReadOnlyList<MinecraftDiscoveredI
 
 internal static class MinecraftDiscoveryService
 {
-    public static MinecraftDiscoveryScan Discover(DiscoveryRequest request, CancellationToken cancellationToken)
+    public static MinecraftDiscoveryScan Discover(DiscoveryRequest request, CancellationToken cancellationToken, MinecraftDiscoveryEnvironment? environment = null)
     {
-        var context = new MinecraftDiscoveryContext(cancellationToken);
+        var context = new MinecraftDiscoveryContext(cancellationToken, environment);
         var scanner = new MinecraftLayoutScanner(context);
         try
         {
@@ -24,6 +24,7 @@ internal static class MinecraftDiscoveryService
                     continue;
                 }
                 if (!Directory.Exists(root)) continue;
+                context.RegisterRoot(root);
                 Run("user", root, () => scanner.ScanUserRoot(root));
                 if (File.Exists(Path.Combine(root, "level.dat"))) continue;
                 Run("hmcl", root, () => HmclLocations.DiscoverRoot(root, context, scanner.Scan));

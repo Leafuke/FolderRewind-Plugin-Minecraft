@@ -4,9 +4,9 @@ internal static class PrismLocations
 {
     public static void DiscoverKnown(MinecraftDiscoveryContext context, Action<MinecraftLocation> add)
     {
-        var roaming = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
+        var roaming = context.EnvironmentInputs.Folder(Environment.SpecialFolder.ApplicationData);
         if (!string.IsNullOrEmpty(roaming)) DiscoverRoot(Path.Combine(roaming, "PrismLauncher"), context, add);
-        var user = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+        var user = context.EnvironmentInputs.Folder(Environment.SpecialFolder.UserProfile);
         if (!string.IsNullOrEmpty(user)) DiscoverRoot(Path.Combine(user, "scoop", "persist", "prismlauncher"), context, add);
     }
 

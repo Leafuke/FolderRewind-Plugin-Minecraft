@@ -23,7 +23,10 @@ public static class Coordinates
 public enum ChunkComponentKind { Terrain, Entities, Poi }
 public enum SurfaceViewMode { Surface, Cave, Slice }
 public enum ChunkReadState { Present, Absent, Corrupt, UnsupportedVersion, UnsupportedCompression, Changing, Unavailable }
-public sealed record WorldDescriptor(string SourceRoot, string WorldRoot, IReadOnlyList<DimensionDescriptor> Dimensions);
+public sealed record WorldDescriptor(string SourceRoot, string WorldRoot, IReadOnlyList<DimensionDescriptor> Dimensions)
+{
+    public bool IsIncomplete { get; init; }
+}
 public sealed record DimensionDescriptor(string Id, string Root, IReadOnlyDictionary<RegionKey, string> Regions);
 public sealed record SurfaceColumn(string BlockName, int Height, uint Argb,
     string Biome = "minecraft:plains", bool MissingColor = false, int? WaterBottomHeight = null, uint? WaterBottomColor = null);

@@ -6,7 +6,12 @@ namespace MineRewind.World;
 public static class WorldLocator
 {
     public static string? TryResolveWorldPath(string? configuredRootPath)
+        => Resolve(configuredRootPath, default, null);
+    internal static string? ResolveForDisplay(string? configuredRootPath, CancellationToken token, WorldScanBudget budget)
+        => Resolve(configuredRootPath, token, budget);
+    private static string? Resolve(string? configuredRootPath, CancellationToken token, WorldScanBudget? budget)
     {
+        token.ThrowIfCancellationRequested();
         if (string.IsNullOrWhiteSpace(configuredRootPath) || !Directory.Exists(configuredRootPath)) return null;
         try
         {
@@ -16,7 +21,8 @@ public static class WorldLocator
             var properties = Path.Combine(root, "server.properties");
             if (File.Exists(properties))
             {
-                if (!TryReadLevelName(properties, out var levelName)) return null;
+                if (budget is not null && new FileInfo(properties).Length > 65536) { budget.MarkIncomplete(); return null; }
+                if (!TryReadLevelName(properties, out var levelName, token, budget)) return null;
                 if (!string.IsNullOrWhiteSpace(levelName))
                 {
                     var configured = TryResolveChild(root, levelName);
@@ -28,21 +34,27 @@ public static class WorldLocator
             if (HasLevelDat(defaultWorld)) return Path.GetFullPath(defaultWorld);
 
             // 客户端 saves 目录只有一个世界时仍可作为配置源，多个世界则必须由 Discovery 分拆。
-            var children = Directory.EnumerateDirectories(root).Where(HasLevelDat).Take(2).ToArray();
+            var entries = budget is null ? Directory.EnumerateDirectories(root)
+                : budget.Entries(root, root, token, rejectLinks: false).Where(Directory.Exists);
+            var children = entries.Where(HasLevelDat).Take(2).ToArray();
             return children.Length == 1 ? Path.GetFullPath(children[0]) : null;
         }
-        catch { return null; }
+        catch (OperationCanceledException) when (token.IsCancellationRequested) { throw; }
+        catch { budget?.MarkIncomplete(); return null; }
     }
 
     private static bool HasLevelDat(string path) => File.Exists(Path.Combine(path, "level.dat"));
 
-    private static bool TryReadLevelName(string path, out string? levelName)
+    private static bool TryReadLevelName(string path, out string? levelName, CancellationToken token, WorldScanBudget? budget)
     {
         levelName = null;
         try
         {
-            foreach (var rawLine in File.ReadLines(path))
+            // A bounded byte snapshot prevents a growing file or a single huge line bypassing the quota.
+            var lines = budget is not null ? ReadProperties(path, token) : File.ReadLines(path);
+            foreach (var rawLine in lines)
             {
+                token.ThrowIfCancellationRequested();
                 var line = rawLine.Trim();
                 if (line.Length == 0 || line.StartsWith('#') || line.StartsWith('!')) continue;
                 var separator = line.IndexOf('=');
@@ -53,7 +65,21 @@ public static class WorldLocator
             }
             return true;
         }
-        catch { return false; }
+        catch (OperationCanceledException) when (token.IsCancellationRequested) { throw; }
+        catch { budget?.MarkIncomplete(); return false; }
+    }
+    internal static IEnumerable<string> ReadProperties(string path, CancellationToken token)
+    {
+        using var input = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+        var bytes = new byte[65537]; var used = 0;
+        while (used < bytes.Length)
+        {
+            token.ThrowIfCancellationRequested();
+            var read = input.Read(bytes, used, bytes.Length - used); if (read == 0) break; used += read;
+        }
+        if (used > 65536) throw new WorldScanLimitException("Server properties exceeds the display read budget.");
+        using var text = new StreamReader(new MemoryStream(bytes, 0, used), detectEncodingFromByteOrderMarks: true);
+        while (text.ReadLine() is { } line) { token.ThrowIfCancellationRequested(); yield return line; }
     }
 
     private static string? TryResolveChild(string root, string relativePath)

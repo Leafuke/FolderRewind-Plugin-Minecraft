@@ -40,6 +40,11 @@ public static class WorldIncrementalFormat
             throw new InvalidDataException("Incremental directory quota or path collision.");
         var worlds = allPaths.Where(p => Path.GetFileName(p) == "level.dat")
             .Select(p => p.Contains('/') ? p[..p.LastIndexOf('/')] : "").OrderByDescending(p => p.Length).ToArray();
+        var rootsFingerprint = RootsFingerprint(worlds);
+        var previousRoots = baseline?.WorldRootsFingerprint ?? RootsFingerprint(prior.Keys.Where(p => Path.GetFileName(p) == "level.dat")
+            .Select(p => p.Contains('/') ? p[..p.LastIndexOf('/')] : ""));
+        var classificationChanged = baseline is not null && (rootsFingerprint != previousRoots
+            || baseline.SemanticClassifierVersion is not (0 or 1));
         var source = new OverlaySource(changedSource, inventory, prior, deleted.ToHashSet(StringComparer.Ordinal), reader, token);
         var deletedChunks = new List<string>(); long newBytes = 0;
 
@@ -88,7 +93,8 @@ public static class WorldIncrementalFormat
             var recipe = new WorldFileRecipe(1, encoding, info.Length, segments);
             var recipeRef = Write(writer, recipe, segments.Select(s => s.Content.ArtifactId).Distinct().ToArray(), token);
             var indexRef = index is null ? null : Write(writer, index, [], token);
-            current[path] = new(path, info.Length, hash, recipeRef, indexRef);
+            current[path] = new(path, info.Length, hash, recipeRef, indexRef)
+            { SemanticSummary = path.EndsWith(".mca", StringComparison.OrdinalIgnoreCase) ? WorldSemanticSummary.From(index) : null };
 
             void Residual(long start, long end)
             {
@@ -124,7 +130,30 @@ public static class WorldIncrementalFormat
             var issues = chunks.Where(c => c.Diagnostic is not null).Select(c => "slot:" + c.Slot + ":" + c.Diagnostic).ToArray();
             var state = chunks.FirstOrDefault(c => c.State is not (SemanticState.Present or SemanticState.Absent))?.State ?? SemanticState.Present;
             var refreshed = oldIndex with { Chunks = chunks, State = state, Diagnostics = issues };
-            current[owner!] = file with { Index = Write(writer, refreshed, [], token), ReferencedBytesByPack = null };
+            current[owner!] = file with { Index = Write(writer, refreshed, [], token), ReferencedBytesByPack = null,
+                SemanticSummary = WorldSemanticSummary.From(refreshed) };
+        }
+
+        // Legacy roots pay for index hydration once. Normal unchanged captures only aggregate fixed-size summaries.
+        var summaryReader = new CombinedObjects(reader, writer);
+        foreach (var path in current.Keys.Where(p => p.EndsWith(".mca", StringComparison.OrdinalIgnoreCase)).ToArray())
+        {
+            token.ThrowIfCancellationRequested();
+            var file = current[path];
+            if (file.SemanticSummary?.IsValid == true && (!classificationChanged || updates.Contains(path))) continue;
+            var index = file.Index is null ? null : Read<RegionEntry>(summaryReader, file.Index, token);
+            var classified = WorldCapture.TryAddress(path, worlds, out var address);
+            var rebuild = classified && (index is null || index.Address != address || baseline?.SemanticClassifierVersion is not (null or 0 or 1));
+            var indexRef = file.Index;
+            if (rebuild)
+            {
+                using var bytes = source.OpenRead(path);
+                index = RegionCodec.Analyze(source, new(path, file.Length, DateTime.UnixEpoch), bytes, address!, allPaths, token).Entry with { FileHash = file.Sha256 };
+                indexRef = Write(writer, index, [], token);
+            }
+            else if (!classified) { index = null; indexRef = null; }
+            current[path] = file with { Index = indexRef, SemanticSummary = WorldSemanticSummary.From(index),
+                ReferencedBytesByPack = indexRef == file.Index ? file.ReferencedBytesByPack : null };
         }
 
         // Keep this transaction's payloads; copy only inherited objects, never recapture them.
@@ -184,7 +213,8 @@ public static class WorldIncrementalFormat
         captureStage?.SetTag("new.data.bytes", newBytes);
         return new(1, sourceId, boundary, current.Values.OrderBy(f => f.Path, StringComparer.Ordinal).ToArray(),
             deleted.Order(StringComparer.Ordinal).ToArray(), deletedChunks, checkpoint, newBytes, updates.Count)
-        { ReferencedObjectBytes = referencedBytes, PinnedPackBytes = pinnedBytes };
+        { ReferencedObjectBytes = referencedBytes, PinnedPackBytes = pinnedBytes,
+          SemanticClassifierVersion = 1, WorldRootsFingerprint = rootsFingerprint };
 
         ChunkEntry RefreshExternal(ChunkEntry chunk)
         {
@@ -198,6 +228,9 @@ public static class WorldIncrementalFormat
             catch (EndOfStreamException) { return chunk with { State = SemanticState.Corrupt, ExternalStorageHash = rawHash, PayloadHash = null, Diagnostic = "truncated_payload" }; }
         }
     }
+
+    private static string RootsFingerprint(IEnumerable<string> worlds) => Convert.ToHexString(SHA256.HashData(
+        JsonSerializer.SerializeToUtf8Bytes(worlds.Order(StringComparer.Ordinal).ToArray())));
 
     private static IReadOnlyDictionary<Guid, long> SummarizeReferences(WorldStateFile file, IWorldObjectReader reader, CancellationToken token)
     {

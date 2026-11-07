@@ -4,7 +4,7 @@ internal static class PclCeLocations
 {
     public static void DiscoverKnown(MinecraftDiscoveryContext context, Action<MinecraftLocation> add)
     {
-        var roaming = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
+        var roaming = context.EnvironmentInputs.Folder(Environment.SpecialFolder.ApplicationData);
         if (string.IsNullOrEmpty(roaming)) return;
         DiscoverRoot(Path.Combine(roaming, "PCLCE"), context, add);
         ReadConfig(Path.Combine(roaming, ".PCLCE", "Config.json"), context, add);

@@ -9,6 +9,7 @@ namespace MineRewind;
 public sealed partial class MinecraftSavesPlugin :
     IFolderRewindPlugin,
     IFixedSpatialPreviewCapability,
+    ISpatialPreviewDemandCapability,
     IDiscoveryCapability,
     IDiscoveryDefinitionCatalog,
     IBackupConsistencyCapability,

@@ -1,4 +1,4 @@
-﻿using System.Buffers.Binary;
+using System.Buffers.Binary;
 using System.Globalization;
 using FolderRewind.Plugin.Abstractions;
 using MineRewind.World;
@@ -8,18 +8,65 @@ namespace MineRewind;
 /// <summary>UI-free adapter. Cached surfaces are expendable preview data, never backup or merge authority.</summary>
 internal sealed partial class WorldPreviewSession
 {
-    private readonly object _sync = new();
+    private readonly Lock _sync = new();
     private readonly PreviewBudgetCache _cache;
-    public WorldPreviewSession(long cacheLimit = 128L * 1024 * 1024) => _cache = new(cacheLimit);
+    private readonly PreviewWorkScheduler<TileWork> _scheduler;
+    private readonly CancellationTokenSource _lifetime = new();
+    private readonly TaskCompletionSource _drained = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    private int _calls;
+    private long _sampleRevision;
+    public WorldPreviewSession(long cacheLimit = 128L * 1024 * 1024)
+    { _cache = new(cacheLimit); _scheduler = new(cacheLimit, _cache); }
     private readonly Dictionary<WorldKey, WorldDescriptor> _worlds = [];
     private readonly Dictionary<CacheKey, TaskCompletionSource<ChunkSurface>> _inflight = [];
     private bool _closed;
+    private bool _cleaned;
     private sealed record WorldKey(Guid Generation, string Source, string? WorldId, bool Partial);
     private sealed record CacheKey(Guid Generation, string WorldRoot, string Dimension, ChunkKey Chunk, int Height, SurfaceViewMode Mode = SurfaceViewMode.Surface);
     private sealed record RawKey(CacheKey Key);
-    internal long CacheBytes { get { lock (_sync) return _cache.Bytes; } }
+    internal long CacheBytes { get { lock (_sync) return _cache.Bytes + _scheduler.RetainedBytes; } }
     internal long DecodedChunks;
-    public void Clear() { lock (_sync) { _cache.Clear(); _worlds.Clear(); _closed = true; } }
+    internal int ActiveCalls { get { lock (_sync) return _calls; } }
+    private sealed class Call(WorldPreviewSession owner, CancellationTokenSource cancellation) : IDisposable
+    {
+        internal CancellationToken Token => cancellation.Token;
+        public void Dispose()
+        {
+            cancellation.Dispose();
+            lock (owner._sync) { owner._calls--; owner.FinishClose(); }
+        }
+    }
+    private Call Enter(CancellationToken token)
+    {
+        lock (_sync)
+        {
+            ObjectDisposedException.ThrowIf(_closed, this);
+            token.ThrowIfCancellationRequested();
+            var cancellation = CancellationTokenSource.CreateLinkedTokenSource(token, _lifetime.Token);
+            _calls++; return new(this, cancellation);
+        }
+    }
+    private void FinishClose()
+    {
+        if (_cleaned && _calls == 0 && !_drained.Task.IsCompleted) { _lifetime.Dispose(); _drained.TrySetResult(); }
+    }
+    public void Clear()
+    {
+        lock (_sync)
+        {
+            if (_closed) return;
+            _closed = true;
+        }
+        // Cancellation callbacks must never run while the session's state lock is held.
+        _lifetime.Cancel();
+        lock (_sync) { _scheduler.Close(); _cache.Clear(); _worlds.Clear(); _cleaned = true; FinishClose(); }
+    }
+    internal Task CloseAsync() { Clear(); return _drained.Task; }
+    public void UpdateDemand(SpatialPreviewDemand demand, CancellationToken token)
+    {
+        token.ThrowIfCancellationRequested();
+        lock (_sync) { ObjectDisposedException.ThrowIf(_closed, this); _scheduler.Update(demand); }
+    }
 
     private sealed class WorldResolutionException(bool ambiguous) : IOException
     {
@@ -27,12 +74,14 @@ internal sealed partial class WorldPreviewSession
     }
     public SpatialPreviewDescription Describe(SpatialPreviewSource source, CancellationToken token)
     {
-        var roots = SpatialWorldCatalog.Worlds(SpatialWorldCatalog.Inventory(SpatialWorldCatalog.Root(source), token));
+        using var call = Enter(token); token = call.Token;
+        var budget = new WorldScanBudget();
+        var roots = SpatialWorldCatalog.Worlds(SpatialWorldCatalog.Inventory(SpatialWorldCatalog.Root(source), token, source.FixedInput is not null, out var incomplete, budget));
         var worlds = roots.Select(w => new SpatialWorld(w.Length == 0 ? "." : w, Text(w.Length == 0 ? Path.GetFileName(source.Folder.Path) : w, w.Length == 0 ? Path.GetFileName(source.Folder.Path) : w))).ToArray();
         if (source.WorldId is { } requested && !worlds.Any(w => w.Id == requested))
             return new([], Text("X", "X"), Text("Z", "Z"), []) { Worlds = worlds };
         WorldDescriptor world;
-        try { world = GetWorld(source, token); }
+        try { world = GetWorld(source, token, budget); }
         catch (WorldResolutionException ex)
         {
             var reason = ex.Ambiguous ? Text("Multiple world directories found. This partial backup cannot be previewed unambiguously.", "找到多个候选世界目录，无法唯一识别这份部分备份。")
@@ -61,7 +110,7 @@ internal sealed partial class WorldPreviewSession
                 DefaultViewModeId = d.Id == "minecraft:the_nether" ? "cave" : "surface"
             };
         }).ToArray();
-        return new(layers, Text("X", "X"), Text("Z", "Z"), [])
+        return new(layers, Text("X", "X"), Text("Z", "Z"), incomplete || world.IsIncomplete ? [IncompleteDiagnostic()] : [])
         { Worlds = worlds, LayerLabel = Text("Dimension", "维度"), NavigationLabel = Text("Locate player", "定位玩家"), CellLabel = Text("Chunk", "区块"),
             DistanceUnit = Text("blocks", "方块"), SupportsStatusOverlay = true,
             Legend = [new("readable", Text("Read (green)", "已读（绿色）"), 0xFF5B9874),
@@ -75,22 +124,25 @@ internal sealed partial class WorldPreviewSession
 
     public SpatialPreviewNavigation Navigation(SpatialPreviewSource source, CancellationToken token)
     {
+        using var call = Enter(token); token = call.Token;
         var world = GetWorld(source, token);
-        var targets = WorldNavigation.Read(world, token);
+        var incomplete = world.IsIncomplete;
+        var targets = WorldNavigation.Read(world, token, _ => incomplete = true);
         var values = targets.Select(t => new SpatialPreviewTarget(t.Id,
             t.Spawn ? Text("World", "世界") : Text("Saved players", "玩家上次保存位置"),
             t.Spawn ? Text("World spawn", "世界出生点") : t.SinglePlayer ? Text("Singleplayer — last saved", "当前玩家 · 上次保存位置") : Text(t.Name ?? t.Id, t.Name ?? t.Id),
             t.Dimension, t.X, t.Z) { SuggestedHeight = t.Height }).ToArray();
         var single = targets.FirstOrDefault(t => t.SinglePlayer && world.Dimensions.Any(d => d.Id == t.Dimension));
         return new(values, single?.Id ?? targets.FirstOrDefault(t => t.Spawn && world.Dimensions.Any(d => d.Id == t.Dimension))?.Id)
-        { QuickTargetId = single?.Id };
+        { QuickTargetId = single?.Id, Diagnostics = incomplete ? [IncompleteDiagnostic()] : [] };
     }
 
     public SpatialPreviewTile Render(SpatialPreviewTileRequest request, CancellationToken token)
-        => RenderProgressive(request, token);
+    { using var call = Enter(token); return RenderProgressive(request, call.Token); }
 
     public SpatialPreviewPoint Inspect(SpatialPreviewPointRequest request, CancellationToken token)
     {
+        using var call = Enter(token); token = call.Token;
         if (!double.IsFinite(request.X) || !double.IsFinite(request.Y) || Math.Abs(request.X) > 30_000_512 || Math.Abs(request.Y) > 30_000_512)
             throw new ArgumentException("Point is outside world bounds.");
         var world = GetWorld(request.Source, token);
@@ -119,21 +171,22 @@ internal sealed partial class WorldPreviewSession
         return new(fields.AsReadOnly(), []);
     }
 
-    private WorldDescriptor GetWorld(SpatialPreviewSource source, CancellationToken token)
+    private WorldDescriptor GetWorld(SpatialPreviewSource source, CancellationToken token, WorldScanBudget? scanBudget = null)
     {
         var path = SpatialWorldCatalog.Root(source);
         var key = new WorldKey(source.Generation, NormalizeWorldRoot(path), source.WorldId, source.IsPartial);
         lock (_sync) { ObjectDisposedException.ThrowIf(_closed, this); if (_worlds.TryGetValue(key, out var cached)) return cached; }
         var resolution = source.WorldId is { } worldId ? (SpatialWorldCatalog.PathFor(path, worldId), false)
-            : source.IsPartial ? PreviewWorldLocator.Resolve(path, token) : (WorldLocator.TryResolveWorldPath(path), false);
+            : source.IsPartial ? PreviewWorldLocator.Resolve(path, token, scanBudget ??= new WorldScanBudget())
+            : (WorldLocator.ResolveForDisplay(path, token, scanBudget ??= new WorldScanBudget()), false);
         var root = resolution.Item1;
         if (root is null && source.WorldId is null)
         {
-            var first = SpatialWorldCatalog.Worlds(SpatialWorldCatalog.Inventory(path, token)).FirstOrDefault();
+            var first = SpatialWorldCatalog.Worlds(SpatialWorldCatalog.Inventory(path, token, source.FixedInput is not null, out _, scanBudget)).FirstOrDefault();
             if (first is not null) root = SpatialWorldCatalog.PathFor(path, first.Length == 0 ? "." : first);
         }
         if (root is null) throw new WorldResolutionException(resolution.Item2);
-        var world = WorldScanner.Scan(path, root, token);
+        var world = WorldScanner.Scan(path, root, token, source.FixedInput is not null, scanBudget ?? new WorldScanBudget());
         lock (_sync)
         {
             ObjectDisposedException.ThrowIf(_closed, this);
@@ -168,6 +221,7 @@ internal sealed partial class WorldPreviewSession
             AnvilRegionIndex? index;
             lock (_sync) index = _cache.Get<AnvilRegionIndex>(new HeaderKey(path));
             var value = SurfaceReader.Read(key, AnvilReader.Read(world.SourceRoot, path, key, token, index), height, token, mode);
+            Interlocked.Increment(ref _sampleRevision);
             lock (_sync)
             {
                 ObjectDisposedException.ThrowIf(_closed, this);
@@ -218,6 +272,8 @@ internal sealed partial class WorldPreviewSession
     };
     private static PluginDiagnostic Diagnostic(ChunkReadState state) => new("preview." + state, state == ChunkReadState.Corrupt ? DiagnosticSeverity.Error : DiagnosticSeverity.Warning, "SpatialPreview",
         MinecraftSavesPlugin.PluginIdentity, new Dictionary<string, string> { ["en-US"] = StateText(state).Default, ["zh-CN"] = StateText(state).Translations["zh-CN"] });
+    private static PluginDiagnostic IncompleteDiagnostic() => new("preview.incomplete", DiagnosticSeverity.Warning, "SpatialPreview",
+        MinecraftSavesPlugin.PluginIdentity, Text("Some linked or unreadable entries were skipped; this preview is incomplete.", "已跳过部分链接或无法读取的目录项，预览信息不完整。").Translations);
     private static FolderMetadataField Field(string key, string en, string zh, string value) => new(key, Text(en, zh), Text(value, value));
     private static LocalizedText Text(string en, string zh) => new(en, new Dictionary<string, string> { ["en-US"] = en, ["zh-CN"] = zh });
 }
@@ -227,12 +283,14 @@ internal sealed class WorldPreviewProvider
 {
     private readonly object _gate = new();
     private readonly Dictionary<Guid, WorldPreviewSession> _sessions = [];
+    private readonly Dictionary<Guid, Task> _closing = [];
     public SpatialPreviewDescription Describe(SpatialPreviewSource source, CancellationToken token)
     {
         WorldPreviewSession session;
         lock (_gate)
         {
             token.ThrowIfCancellationRequested();
+            ObjectDisposedException.ThrowIf(_closing.ContainsKey(source.Generation), this);
             if (!_sessions.TryGetValue(source.Generation, out session!))
                 _sessions.Add(source.Generation, session = new(Math.Clamp(source.CacheBudgetBytes, 1024 * 1024, 128L * 1024 * 1024)));
         }
@@ -245,13 +303,18 @@ internal sealed class WorldPreviewProvider
     }
     public SpatialPreviewNavigation Navigation(SpatialPreviewSource source, CancellationToken token) => Get(source).Navigation(source, token);
     public SpatialPreviewTile Render(SpatialPreviewTileRequest request, CancellationToken token) => Get(request.Source).Render(request, token);
+    public void UpdateDemand(SpatialPreviewDemand demand, CancellationToken token) => Get(demand.Source).UpdateDemand(demand, token);
     public SpatialPreviewPoint Inspect(SpatialPreviewPointRequest request, CancellationToken token) => Get(request.Source).Inspect(request, token);
-    public void Close(Guid generation)
+    public Task CloseAsync(Guid generation)
     {
-        lock (_gate) if (_sessions.Remove(generation, out var session)) session.Clear();
+        lock (_gate)
+        {
+            if (_closing.TryGetValue(generation, out var closing)) return closing;
+            return _closing[generation] = _sessions.Remove(generation, out var session) ? session.CloseAsync() : Task.CompletedTask;
+        }
     }
     public void Clear()
     {
-        lock (_gate) { foreach (var session in _sessions.Values) session.Clear(); _sessions.Clear(); }
+        lock (_gate) { foreach (var session in _sessions.Values) session.Clear(); _sessions.Clear(); _closing.Clear(); }
     }
 }

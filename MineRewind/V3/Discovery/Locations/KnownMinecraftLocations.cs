@@ -4,8 +4,8 @@ internal static class KnownMinecraftLocations
 {
     public static void Discover(MinecraftDiscoveryContext context, Action<MinecraftLocation> add)
     {
-        var roaming = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
-        var local = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
+        var roaming = context.EnvironmentInputs.Folder(Environment.SpecialFolder.ApplicationData);
+        var local = context.EnvironmentInputs.Folder(Environment.SpecialFolder.LocalApplicationData);
         if (!string.IsNullOrEmpty(roaming))
         {
             add(new(Path.Combine(roaming, ".minecraft"), MinecraftLocationKind.JavaGameRoot,

@@ -181,7 +181,7 @@ internal static class NbtPlayerPreservation
     private static async Task<NbtFile> ReadAsync(IVersionMetadataSourceView view, string path, CancellationToken token)
     {
         await using var input = await view.OpenReadAsync(path, token).ConfigureAwait(false);
-        var file = new NbtFile(); file.LoadFromStream(input, NbtCompression.AutoDetect); return file;
+        return World.BoundedNbtReader.Read(input, World.NbtReadLimits.Preservation, token);
     }
     private static NbtCompound RequireData(NbtFile file) => file.RootTag["Data"] as NbtCompound
         ?? throw new InvalidDataException("World level.dat has no Data compound.");

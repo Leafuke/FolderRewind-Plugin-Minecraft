@@ -28,7 +28,7 @@ public sealed partial class V3VerticalSliceTests
     {
         for (var i = 0; i < 1024; i++)
         {
-            var tile = session.Render(request, CancellationToken.None);
+            var tile = RenderPreview(session, request, CancellationToken.None);
             if (tile.IsFinal) return tile;
         }
         throw new AssertFailedException("Preview did not converge.");
@@ -42,7 +42,7 @@ public sealed partial class V3VerticalSliceTests
         var source = new SpatialPreviewSource(config, folder, Guid.NewGuid());
         var session = new WorldPreviewSession(); session.Describe(source, default);
         var request = new SpatialPreviewTileRequest(source, "minecraft:overworld", 0, 0, 1, 7);
-        var first = session.Render(request, default);
+        var first = RenderPreview(session, request, default);
         Assert.IsFalse(first.IsFinal);
         Assert.IsLessThanOrEqualTo(64L, session.DecodedChunks);
         var tile = CompletePreview(session, request);
@@ -50,7 +50,7 @@ public sealed partial class V3VerticalSliceTests
         Assert.AreEqual(BlockColors.For("minecraft:stone"), BinaryPrimitives.ReadUInt32LittleEndian(tile.BgraPremultiplied.Span.Slice(16 * 4)));
         Assert.IsLessThanOrEqualTo(128L * 1024 * 1024, session.CacheBytes);
         session.Clear(); Assert.AreEqual(0L, session.CacheBytes);
-        Assert.ThrowsExactly<ObjectDisposedException>(() => session.Render(request, default));
+        Assert.ThrowsExactly<ObjectDisposedException>(() => RenderPreview(session, request, default));
     }
     [TestMethod]
     public void FarOverviewDoesNotDecodeAndReusesAvailableTerrain()
@@ -81,7 +81,7 @@ public sealed partial class V3VerticalSliceTests
         var request = new SpatialPreviewTileRequest(source, "minecraft:overworld", 0, 0, 1, 7);
         using (var locked = new FileStream(path, FileMode.Open, FileAccess.ReadWrite, FileShare.None))
         {
-            var partial = session.Render(request, default);
+            var partial = RenderPreview(session, request, default);
             Assert.IsFalse(partial.IsFinal);
             Assert.IsFalse(partial.Diagnostics.Any(d => d.Code == "preview.Corrupt"));
         }
@@ -101,7 +101,7 @@ public sealed partial class V3VerticalSliceTests
         await Task.WhenAll(Enumerable.Range(0, 16).Select(_ => Task.Run(() => session.Inspect(new(source, "minecraft:overworld", 0, 0, 7), default))));
         Assert.AreEqual(1L, session.DecodedChunks);
         using var canceled = new CancellationTokenSource(); canceled.Cancel();
-        Assert.ThrowsExactly<OperationCanceledException>(() => session.Render(new(source, "minecraft:overworld", 0, 0, 1, 7), canceled.Token));
+        Assert.ThrowsExactly<OperationCanceledException>(() => RenderPreview(session, new(source, "minecraft:overworld", 0, 0, 1, 7), canceled.Token));
     }
     [TestMethod]
     public void AreaMipRetainsNarrowFeaturesAndTransparentCoverage()
@@ -124,11 +124,11 @@ public sealed partial class V3VerticalSliceTests
         var session = new WorldPreviewSession(1024 * 1024); session.Describe(source, default);
         var request = new SpatialPreviewTileRequest(source, "minecraft:overworld", 0, 0, 8, 7);
         var timer = System.Diagnostics.Stopwatch.StartNew();
-        var first = session.Render(request, default); var firstMs = timer.ElapsedMilliseconds;
+        var first = RenderPreview(session, request, default); var firstMs = timer.ElapsedMilliseconds;
         Assert.IsFalse(first.IsFinal);
         var final = CompletePreview(session, request); var totalMs = timer.ElapsedMilliseconds;
         var decoded = session.DecodedChunks; timer.Restart();
-        var warm = session.Render(request, default);
+        var warm = RenderPreview(session, request, default);
         Assert.IsTrue(warm.IsFinal);
         Assert.AreEqual(decoded, session.DecodedChunks);
         CollectionAssert.AreEqual(final.BgraPremultiplied.ToArray(), warm.BgraPremultiplied.ToArray());

@@ -6,9 +6,12 @@ using MineRewind.World.Semantic;
 
 namespace MineRewind;
 
-public sealed partial class MinecraftSavesPlugin
+internal static class MinecraftIncrementalArtifactService
 {
-    private async ValueTask<ArtifactTransformResult> TransformIncrementalAsync(ArtifactTransformRequest request, PluginInvocationContext context)
+    private static readonly OwnerId MineRewindOwnerId = new(MinecraftSavesPlugin.PluginIdentity);
+    private static readonly ConfigKindRef MinecraftKind = new(MineRewindOwnerId, MinecraftSavesPlugin.MinecraftKindIdentity);
+    private const long FullQuota = 16L * 1024 * 1024 * 1024;
+    internal static async ValueTask<ArtifactTransformResult> TransformAsync(ArtifactTransformRequest request, PluginInvocationContext context, RestoreStrategyId strategy)
     {
         var capture = request.IncrementalInput!; var token = context.OperationCancellation;
         if (request.Config.Kind != MinecraftKind || capture.DetectionPolicy != "size-mtime-v1"
@@ -27,23 +30,55 @@ public sealed partial class MinecraftSavesPlugin
                 baseline = await LoadStateAsync(baseRoot, request.ReadableArtifacts, request.ArtifactRead, request.Folder.FolderId, token);
             if (capture.Kind == ArtifactCaptureInputKind.ChangesOnly && baseline is null)
                 throw new InvalidDataException("Incremental capture has no fixed semantic baseline.");
-            using var writer = new ArtifactPacks(request.Staging, RestoreStrategyId, request.Primary.CoreCaptureMode, work + "-packs");
+            using var writer = new ArtifactPacks(request.Staging, strategy, request.Primary.CoreCaptureMode, work + "-packs");
             var state = WorldIncrementalFormat.Capture(source, baseline, reader, writer,
                 request.Folder.FolderId.ToString("D"), capture.BoundaryFingerprint, capture.AddedFiles,
                 capture.ModifiedFiles, capture.DeletedFiles, capture.Checkpoint, token);
             writer.Seal();
+            using var encodedState = new BoundedStateStream();
+            JsonSerializer.Serialize(encodedState, state, SemanticJson.Options);
+            encodedState.Position = 0;
             var root = await request.Staging.CreateArtifactAsync(token);
             await using (var output = await request.Staging.OpenWriteAsync(root.Staging, WorldIncrementalFormat.RootPath, token))
-                await JsonSerializer.SerializeAsync(output, state, SemanticJson.Options, token);
+                await encodedState.CopyToAsync(output, token);
             var dependencies = state.Files.SelectMany(f => f.Index is null ? new[] { f.Recipe.ArtifactId } : new[] { f.Recipe.ArtifactId, f.Index.ArtifactId })
                 .Distinct().Select(id => new ArtifactId(id)).ToArray();
-            var nodes = writer.ReachableNodes(dependencies).Append(new(root.ArtifactId, root.Staging, IncrementalFormat, 1, RestoreStrategyId,
+            var nodes = writer.ReachableNodes(dependencies).Append(new(root.ArtifactId, root.Staging, IncrementalFormat, 1, strategy,
                 ArtifactCompleteness.Complete, request.Primary.CoreCaptureMode, dependencies)).ToArray();
             // Packs are batch-owned; no per-chunk Artifact and no previous-state-root dependency.
-            return new(OperationOutcome.Success, new(request.ExpectedGraphRevision, nodes, root.ArtifactId), [])
+            var diagnostics = CollectDiagnostics(state);
+            return new(diagnostics.Count == 0 ? OperationOutcome.Success : OperationOutcome.SuccessWithWarnings,
+                new(request.ExpectedGraphRevision, nodes, root.ArtifactId), diagnostics)
             { RequiresFullVerification = state.Checkpoint };
         }
         finally { if (Directory.Exists(work)) Directory.Delete(work, true); }
+    }
+
+    internal static IReadOnlyList<PluginDiagnostic> CollectDiagnostics(WorldIncrementalState state)
+    {
+        var summaries = state.Files.Where(f => f.Path.EndsWith(".mca", StringComparison.OrdinalIgnoreCase))
+            .Select(f => f.SemanticSummary is { IsValid: true } valid ? valid : null).ToArray();
+        if (summaries.All(s => s is not null && !s.HasWarnings)) return [];
+        var args = new Dictionary<string, string>
+        {
+            ["en-US"] = "Raw world bytes were preserved, but some regions cannot be fully interpreted. Check missing external chunks and unsupported or damaged data.",
+            ["zh-CN"] = "已保留世界原始字节，但部分区域无法完整解析。请检查缺失的外部区块以及不支持或损坏的数据。",
+            ["opaqueRegions"] = summaries.Sum(s => s?.OpaqueRegions ?? 0).ToString(System.Globalization.CultureInfo.InvariantCulture),
+            ["corruptChunks"] = summaries.Sum(s => s?.CorruptChunks ?? 0).ToString(System.Globalization.CultureInfo.InvariantCulture),
+            ["unsupportedChunks"] = summaries.Sum(s => s?.UnsupportedChunks ?? 0).ToString(System.Globalization.CultureInfo.InvariantCulture),
+            ["missingExternalFiles"] = summaries.Sum(s => s?.MissingExternalFiles ?? 0).ToString(System.Globalization.CultureInfo.InvariantCulture),
+            ["unclassifiedRegions"] = summaries.Sum(s => s?.UnclassifiedRegions ?? 1).ToString(System.Globalization.CultureInfo.InvariantCulture)
+        };
+        args["message"] = args["en-US"];
+        return [new("minerewind.incremental.semantic_coverage_limited", DiagnosticSeverity.Warning,
+            "ArtifactTransform", MinecraftSavesPlugin.PluginIdentity, args)];
+    }
+    private sealed class BoundedStateStream : MemoryStream
+    {
+        private void Check(int count) { if (Position + count > 64L * 1024 * 1024) throw new InvalidDataException("State directory quota exceeded."); }
+        public override void Write(byte[] buffer, int offset, int count) { Check(count); base.Write(buffer, offset, count); }
+        public override void Write(ReadOnlySpan<byte> buffer) { Check(buffer.Length); base.Write(buffer); }
+        public override void WriteByte(byte value) { Check(1); base.WriteByte(value); }
     }
 
     private static ArtifactFormatRef IncrementalFormat => new(MineRewindOwnerId, WorldIncrementalFormat.Format);
@@ -66,7 +101,7 @@ public sealed partial class MinecraftSavesPlugin
         }
     }
 
-    public async ValueTask<IArtifactFileView> OpenFileViewAsync(ArtifactFileViewRequest request, PluginInvocationContext context)
+    internal static async ValueTask<IArtifactFileView> OpenFileViewAsync(ArtifactFileViewRequest request, PluginInvocationContext context)
     {
         var state = await LoadStateAsync(request.RootArtifactId, request.ArtifactsTopologicallySorted,
             request.ArtifactRead, request.Folder.FolderId, context.OperationCancellation);

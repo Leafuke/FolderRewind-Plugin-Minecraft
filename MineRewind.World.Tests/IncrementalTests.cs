@@ -7,7 +7,7 @@ using MineRewind.World.Semantic;
 namespace MineRewind.World.Tests;
 
 [TestClass]
-public sealed class IncrementalTests
+public sealed partial class IncrementalTests
 {
     private static byte[] Nbt(int value) => [10, 0, 0, 3, 0, 1, 118, 0, 0, 0, (byte)value, 0];
     private static byte[] Region(int value = 1, bool external = false)

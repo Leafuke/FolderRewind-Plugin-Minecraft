@@ -7,27 +7,14 @@ internal static class SpatialWorldCatalog
 {
     internal static string Root(SpatialPreviewSource source) => Path.GetFullPath(source.FixedInput?.RootPath ?? source.Folder.Path);
     internal static string[] Inventory(string root, CancellationToken token)
+        => Inventory(root, token, true, out _);
+    internal static string[] Inventory(string root, CancellationToken token, bool rejectLinks, out bool incomplete, WorldScanBudget? scanBudget = null)
     {
         var result = new List<string>();
-        var pending = new Stack<(string Path, int Depth)>(); pending.Push((root, 0));
-        while (pending.TryPop(out var item))
-        {
-            token.ThrowIfCancellationRequested();
-            WorldPaths.RequireContained(root, item.Path);
-            if (item.Depth > 64) throw new IOException("Spatial input exceeds the directory depth budget.");
-            foreach (var entry in Directory.EnumerateFileSystemEntries(item.Path))
-            {
-                token.ThrowIfCancellationRequested();
-                var attributes = File.GetAttributes(entry);
-                if ((attributes & FileAttributes.ReparsePoint) != 0) throw new IOException("Spatial input contains a linked path.");
-                if ((attributes & FileAttributes.Directory) != 0) pending.Push((entry, item.Depth + 1));
-                else
-                {
-                    if (result.Count >= 100_000) throw new IOException("Spatial input exceeds the file budget.");
-                    result.Add(Path.GetRelativePath(root, entry).Replace('\\', '/'));
-                }
-            }
-        }
+        var budget = scanBudget ?? new WorldScanBudget();
+        foreach (var entry in budget.Files(root, root, token, rejectLinks))
+            result.Add(Path.GetRelativePath(root, entry).Replace('\\', '/'));
+        incomplete = budget.Incomplete;
         return result.Order(StringComparer.Ordinal).ToArray();
     }
     internal static string[] Worlds(IEnumerable<string> paths)

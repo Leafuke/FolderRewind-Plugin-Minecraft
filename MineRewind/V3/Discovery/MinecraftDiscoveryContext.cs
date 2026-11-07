@@ -1,4 +1,3 @@
-using System.Diagnostics;
 using System.Text;
 using System.Text.Json;
 using FolderRewind.Plugin.Abstractions;
@@ -25,18 +24,44 @@ internal sealed class MinecraftDiscoveryBudgetException(string reason) : Excepti
     public string Reason { get; } = reason;
 }
 
-internal sealed class MinecraftDiscoveryContext(CancellationToken cancellationToken)
+internal sealed class MinecraftDiscoveryContext(CancellationToken cancellationToken, MinecraftDiscoveryEnvironment? environment = null)
 {
     public const int TextLimit = 1024 * 1024;
     public const int InstanceLimit = 500;
-    private readonly Stopwatch _elapsed = Stopwatch.StartNew();
+    internal MinecraftDiscoveryEnvironment EnvironmentInputs { get; } = environment ?? MinecraftDiscoveryEnvironment.System;
+    private readonly long _started = (environment ?? MinecraftDiscoveryEnvironment.System).Clock.GetTimestamp();
+    private readonly World.WorldScanBudget _budget = new((environment ?? MinecraftDiscoveryEnvironment.System).MaximumEntries,
+        (environment ?? MinecraftDiscoveryEnvironment.System).MaximumPathCharacters);
+    private readonly List<string> _scanRoots = [];
     public List<PluginDiagnostic> Diagnostics { get; } = [];
+    internal void RegisterRoot(string root) { if (!_scanRoots.Contains(root, StringComparer.OrdinalIgnoreCase)) _scanRoots.Add(root); }
+    internal bool SkipLinkedPath(string path, string source)
+    {
+        var anchor = _scanRoots.Where(root => path.Equals(root, StringComparison.OrdinalIgnoreCase)
+            || path.StartsWith(root.TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase))
+            .OrderByDescending(root => root.Length).FirstOrDefault();
+        for (var current = path; current is not null; current = Directory.GetParent(current)?.FullName)
+        {
+            Check();
+            try
+            {
+                if ((File.GetAttributes(current) & FileAttributes.ReparsePoint) != 0)
+                { Warn("minerewind.discovery_link_skipped", source, current); return true; }
+            }
+            catch (FileNotFoundException) { }
+            catch (DirectoryNotFoundException) { }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            { Warn("minerewind.discovery_directory_unreadable", source, current); return true; }
+            if (current.Equals(anchor, StringComparison.OrdinalIgnoreCase)) break;
+        }
+        return false;
+    }
 
     public void Check()
     {
         cancellationToken.ThrowIfCancellationRequested();
         // Finish before the Host's 30-second deadline so completed candidates can be returned.
-        if (_elapsed.Elapsed >= TimeSpan.FromSeconds(29)) throw new MinecraftDiscoveryBudgetException("time");
+        if (EnvironmentInputs.Clock.GetElapsedTime(_started) >= TimeSpan.FromSeconds(29)) throw new MinecraftDiscoveryBudgetException("time");
     }
 
     public void Warn(string code, string source, string path)
@@ -56,9 +81,18 @@ internal sealed class MinecraftDiscoveryContext(CancellationToken cancellationTo
     public IEnumerable<string> Directories(string path, string source)
     {
         Check();
-        if (!Directory.Exists(path)) yield break;
+        if (SkipLinkedPath(path, source)) yield break;
+        var scanRoot = _scanRoots.FirstOrDefault(root => path.Equals(root, StringComparison.OrdinalIgnoreCase)
+            || path.StartsWith(root.TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase));
+        if (scanRoot is null) { scanRoot = path; _scanRoots.Add(path); }
         IEnumerator<string> iterator;
-        try { iterator = Directory.EnumerateDirectories(path).GetEnumerator(); }
+        try
+        {
+            if ((File.GetAttributes(path) & FileAttributes.Directory) == 0) yield break;
+            iterator = EnvironmentInputs.Entries(path).GetEnumerator();
+        }
+        catch (FileNotFoundException) { yield break; }
+        catch (DirectoryNotFoundException) { yield break; }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
             Warn("minerewind.discovery_directory_unreadable", source, path);
@@ -77,7 +111,16 @@ internal sealed class MinecraftDiscoveryContext(CancellationToken cancellationTo
                     yield break;
                 }
                 if (!next) yield break;
-                yield return iterator.Current;
+                var entry = iterator.Current;
+                try { _budget.Count(scanRoot, entry, cancellationToken, Path.GetRelativePath(scanRoot, entry).Count(c => c is '/' or '\\') + 1); }
+                catch (World.WorldScanLimitException) { throw new MinecraftDiscoveryBudgetException("entries"); }
+                FileAttributes attributes;
+                try { attributes = File.GetAttributes(entry); }
+                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+                { Warn("minerewind.discovery_directory_unreadable", source, entry); continue; }
+                if ((attributes & FileAttributes.ReparsePoint) != 0)
+                { Warn("minerewind.discovery_link_skipped", source, entry); continue; }
+                if ((attributes & FileAttributes.Directory) != 0) yield return entry;
             }
         }
     }
@@ -85,7 +128,7 @@ internal sealed class MinecraftDiscoveryContext(CancellationToken cancellationTo
     public string? ReadText(string path, string source)
     {
         Check();
-        if (!File.Exists(path)) return null;
+        if (SkipLinkedPath(path, source)) return null;
         try
         {
             using var stream = new FileStream(path, FileMode.Open, FileAccess.Read,
@@ -113,6 +156,8 @@ internal sealed class MinecraftDiscoveryContext(CancellationToken cancellationTo
                 detectEncodingFromByteOrderMarks: true);
             return reader.ReadToEnd();
         }
+        catch (FileNotFoundException) { return null; }
+        catch (DirectoryNotFoundException) { return null; }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
             Warn("minerewind.discovery_config_unreadable", source, path);
