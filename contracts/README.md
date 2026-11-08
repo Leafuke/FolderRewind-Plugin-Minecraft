@@ -1,6 +1,6 @@
 # Public Host contract
 
-MineRewind 1.10.0 pins the published `FolderRewind.Plugin.Abstractions 3.17.0` package and requires Plugin API 3.17. Assembly identity remains `3.0.0.0`.
+MineRewind 1.10.2 targets `FolderRewind.Plugin.Abstractions 3.18.0` / Plugin API 3.18. Assembly identity remains `3.0.0.0`. The committed provenance remains the last frozen public SDK (3.17) until the public release workflow exports 3.18; therefore default builds deliberately fail this integration gate in the meantime.
 
 `NuGet.Config` restores from NuGet.org only. `feed/` retains the exact public nupkg as a provenance verification input, not as a local restore source. `source-manifest.json` records the Host source commit, clean-checkout source digest, public package URL, package SHA-256 and contract DLL SHA-256. `tools/Verify-Contract.ps1` verifies the pinned copy before CI restore.
 
@@ -9,3 +9,9 @@ After testing and publishing a new API candidate, run Host `scripts/release/Expo
 Build and test both adapter and World suites using an empty cache and NuGet.org. The plugin has no Host project/source references. The frplugin carries `contract-source.json`, never the Abstractions DLL. Packaging uses isolated staging and rejects an inventory that differs from the approved payload.
 
 See the [maintainer release workflow](https://folderrewind.top/en/docs/architecture/releasing) for candidate publication, public restore, plugin packaging and Host integration. Local preview exports are development inputs and do not establish a public SDK release.
+
+An isolated local acceptance build may explicitly set `ContractProvenance` to an absolute `*.candidate.json` file and `AllowDevelopmentContract=true`, after restoring through a private candidate feed and cache. Its provenance must say `development-candidate` and point at the exact local nupkg. The compile gate checks the actual resolved `ReferencePath`, not just the declared package property. The packer independently verifies both package and DLL hashes, assembly/product versions, API, portable entry architecture and the complete fixed inventory. It rejects development provenance without the explicit switch and validates everything before replacing a package.
+
+The [read and incremental state specification](minecraft-read-and-state-v1.md) defines bounded NBT/scanning profiles, metadata cancellation, and optional diagnostic summaries for the existing v1 format. Preview providers implement the API 3.18 demand contract; no legacy preview invocation path is retained.
+
+The [layout facts specification](../docs/architecture/world-layout-facts.md) defines shared path grammar, Source boundaries and purpose-specific recognition, including selected-dimension root resolution without file enumeration. The [Full v1 specification](../docs/architecture/minecraft-world-full-v1.md) defines legacy read-only compatibility, write retirement and materialization space lifetimes. The independent `global.json` pins .NET 10.0.402 with `latestPatch`; `tools/Build-Plugin.ps1` is the common local/CI build, test and exact package validation entry. Development arguments remain explicit and are never enabled by the release workflow.

@@ -2,7 +2,9 @@
 
 为 [FolderRewind](https://github.com/Leafuke/FolderRewind) 提供 Minecraft 存档备份增强功能，重点覆盖热备份、热还原、自动发现世界存档，以及从现有配置识别 `.minecraft` 实例并创建配置。
 
-当前源码版本为 **1.10.0**，要求 Host 支持 **Plugin API 3.17**，配套 FolderRewind 1.10.0。构建从 NuGet.org 精确恢复已公开的 `FolderRewind.Plugin.Abstractions 3.17.0`，程序集身份保持 `3.0.0.0`。插件与主程序是否正式发布，以各自 GitHub Release 的公开记录为准。
+当前源码版本为 **1.10.2**，要求 Host 支持 **Plugin API 3.18 / Abstractions 3.18.0**，程序集身份保持 `3.0.0.0`。源码版本不表示 SDK 或插件已公开发布；正式构建须先通过 Host 发布流程冻结公开包与来源摘要。SDK 尚未公开时，只能显式使用隔离候选 feed 和 `development-candidate` 来源清单完成本地验收，不能把它当作 NuGet.org 恢复验证。
+
+有效的布局、格式、读取与构建约束见 [工程规范索引](docs/README.md)。
 
 世界预览支持地表、洞穴与切片、26.2/26.3 格式、Java LZ4Block 和部分历史世界识别。历史读取由 Host 物化临时目录后交给同一个 provider。公开 SDK 的精确来源及哈希见 `contracts/source-manifest.json`；`contracts/feed` 保留验证副本，普通构建不依赖 Host 源码。维护者操作见[插件、SDK 与主程序发布流程](https://folderrewind.top/docs/architecture/releasing)。
 
@@ -177,7 +179,9 @@ dotnet test MineRewind.World.Tests/MineRewind.World.Tests.csproj -c Release --no
 ### 打包为插件
 
 ```powershell
-dotnet msbuild MineRewind/MineRewind.csproj /t:PackFrPlugin /p:Configuration=Release /p:Version=1.10.0
+dotnet msbuild MineRewind/MineRewind.csproj /t:PackFrPlugin /p:Configuration=Release
 ```
 
-输出为 `artifacts/MineRewind-1.10.0.frplugin` 与同名 `.sha256`。打包器使用固定载荷清单，生成可移植托管入口，包含私有依赖、设置模式及公开契约来源；不捆绑 `FolderRewind.Plugin.Abstractions.dll`。
+输出为 `artifacts/MineRewind-1.10.2.frplugin` 与同名 `.sha256`。Manifest 是产品版本权威，不匹配的版本覆盖直接失败。编译前校验实际解析的 SDK DLL 身份、精确版本和 SHA-256；打包同时校验完整产品版本、入口架构、API、固定载荷和来源包，禁止捆绑 `FolderRewind.Plugin.Abstractions.dll`。校验失败不会覆盖已有有效包。
+
+隔离候选构建必须使用独立 NuGet 配置与包缓存，并显式设置 `ContractProvenance=<绝对路径/*.candidate.json>` 和 `AllowDevelopmentContract=true`。该模式不会更新源码 Manifest、正式来源清单或 NuGet.org 恢复路径。正式来源清单冻结前，默认构建与 CI 门禁会拒绝新版本。
