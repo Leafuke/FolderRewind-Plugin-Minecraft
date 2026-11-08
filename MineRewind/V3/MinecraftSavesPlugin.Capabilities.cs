@@ -178,7 +178,7 @@ public sealed partial class MinecraftSavesPlugin
                 OperationReadiness.Blocked,
                 Array.Empty<string>(),
                 [Diagnostic(
-                    worldPath is null ? "minerewind.scope_world_missing" : $"minerewind.scope_{errorCode}",
+                    $"minerewind.scope_{errorCode}",
                     DiagnosticSeverity.Error,
                     "BackupScope")]));
         }

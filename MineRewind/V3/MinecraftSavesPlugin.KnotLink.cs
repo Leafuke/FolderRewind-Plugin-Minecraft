@@ -349,10 +349,6 @@ public sealed partial class MinecraftSavesPlugin
         return Success(message);
     }
 
-    private static bool TryBoolean(IReadOnlyDictionary<string, string> values, string key)
-        => TryGetValue(values, key, out var value)
-           && value.Trim().ToLowerInvariant() is "true" or "1" or "yes" or "y" or "on";
-
     private static bool TryGetValue(
         IReadOnlyDictionary<string, string> values,
         string key,
@@ -378,44 +374,6 @@ public sealed partial class MinecraftSavesPlugin
             parts.Length > 0 && int.TryParse(parts[0], out var major) ? major : 0,
             parts.Length > 1 && int.TryParse(parts[1], out var minor) ? minor : 0,
             parts.Length > 2 && int.TryParse(parts[2], out var patch) ? patch : 0);
-    }
-
-    private static void QueueHostOperation(
-        PluginInvocationContext context,
-        string operationName,
-        Func<CancellationToken, ValueTask<OperationOutcome>> request,
-        Action? completed = null)
-    {
-        _ = Task.Run(async () =>
-        {
-            try
-            {
-                var outcome = await request(context.PluginLifetime).ConfigureAwait(false);
-                if (!IsSuccessful(outcome))
-                {
-                    context.HostServices.Logger.Log(
-                        DiagnosticSeverity.Warning,
-                        $"{operationName} completed with outcome {outcome}.");
-                }
-            }
-            catch (OperationCanceledException) when (context.PluginLifetime.IsCancellationRequested)
-            {
-                context.HostServices.Logger.Log(
-                    DiagnosticSeverity.Warning,
-                    $"{operationName} was canceled because the plugin session is stopping.");
-            }
-            catch (Exception ex)
-            {
-                context.HostServices.Logger.Log(
-                    DiagnosticSeverity.Error,
-                    $"{operationName} failed after it was accepted.",
-                    ex);
-            }
-            finally
-            {
-                completed?.Invoke();
-            }
-        }, CancellationToken.None);
     }
 
     private static PluginCommandResult Result(OperationOutcome outcome, string message)

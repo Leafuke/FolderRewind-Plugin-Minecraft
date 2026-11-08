@@ -39,8 +39,6 @@ public sealed class AnvilRegionIndex(byte[] header, long length, DateTime writeT
 public static class AnvilReader
 {
     public const int MaximumChunkBytes = 16 * 1024 * 1024;
-    public static byte[] ReadIndex(string sourceRoot, string path)
-        => ReadRegionIndex(sourceRoot, path).Header;
     public static AnvilRegionIndex ReadRegionIndex(string sourceRoot, string path)
     {
         using var stream = Open(sourceRoot, path);
