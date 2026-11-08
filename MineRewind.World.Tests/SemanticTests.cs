@@ -58,26 +58,16 @@ public sealed partial class SemanticTests
     }
 
     [TestMethod]
-    [DataRow(1, false)]
-    [DataRow(2, true)]
-    [DataRow(3, true)]
-    [DataRow(99, false)]
-    public void PersistentFullFormatIsIndependentOfProbeScratch(int compression, bool external)
+    public void LegacyFullReadsIndependentSegmentedAndExternalBytesWithoutProbeScratch()
     {
-        var source = Dir("input"); Region(source, compression: compression, external: external);
-        File.WriteAllBytes(Path.Combine(source, "region", "r.0.0.mca"), []);
-        File.WriteAllText(Path.Combine(source, "level.dat"), "literal passthrough");
-        var expected = Oracle(source);
-        var scratch = Capture(source);
+        var (artifact, expected) = MineRewind.TestSupport.LegacyFullFixture.Create("source-1");
         var exported = new DirectorySemanticScratch(Path.Combine(_root, "export"), true);
-        foreach (var path in WorldFullFormat.PrepareExport(scratch, default))
+        foreach (var (path, bytes) in artifact)
         {
-            using var input = scratch.OpenRead(path); using var output = exported.Create(path); input.CopyTo(output);
+            using var output = exported.Create(path); output.Write(bytes);
         }
         Assert.IsFalse(exported.Exists("complete.json"));
-        Assert.IsFalse(Directory.Exists(Path.Combine(exported.Root, "regions")));
-        Assert.IsGreaterThanOrEqualTo(1, WorldFullFormat.ReadManifest(exported).OpaqueRegions);
-        Directory.Delete(source, true); Directory.Delete(scratch.Root, true);
+        Assert.AreEqual(4, WorldFullFormat.ReadManifest(exported).Files);
         var restored = new DirectorySemanticScratch(Path.Combine(_root, "output"), true);
         WorldFullFormat.Materialize(exported, restored, "source-1", default);
         var actual = Oracle(restored.Root);

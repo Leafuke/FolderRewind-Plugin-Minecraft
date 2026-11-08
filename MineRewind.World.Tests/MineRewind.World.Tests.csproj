@@ -7,6 +7,7 @@
     <IsTestProject>true</IsTestProject>
   </PropertyGroup>
   <ItemGroup>
+    <Compile Include="../test-support/LegacyFullFixture.cs" Link="Support/LegacyFullFixture.cs" />
     <PackageReference Include="Microsoft.NET.Test.Sdk" Version="18.0.1" />
     <PackageReference Include="MSTest.TestAdapter" Version="4.0.2" />
     <PackageReference Include="MSTest.TestFramework" Version="4.0.2" />

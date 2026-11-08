@@ -21,6 +21,7 @@
   </ItemGroup>
 
   <ItemGroup>
+    <Compile Include="..\test-support\LegacyFullFixture.cs" Link="Support\LegacyFullFixture.cs" />
     <None Include="..\MineRewind\manifest.json" Link="manifest.json" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 </Project>

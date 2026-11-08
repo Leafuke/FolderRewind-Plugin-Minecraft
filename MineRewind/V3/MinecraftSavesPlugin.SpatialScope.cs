@@ -25,25 +25,31 @@ internal static class MinecraftSpatialScope
         if (selections.Count is < 1 or > 128) throw new InvalidDataException("Select between 1 and 128 regions of interest.");
         var rules = new HashSet<string>(StringComparer.OrdinalIgnoreCase); var effective = new List<SpatialScopeSelection>();
         var selected = new HashSet<(string World, string Layer, int X, int Z)>();
-        var worlds = new Dictionary<string, WorldDescriptor>(StringComparer.Ordinal);
+        var worlds = new Dictionary<string, DimensionRootsFacts>(StringComparer.Ordinal);
+        foreach (var group in selections.GroupBy(selection => selection.WorldId, StringComparer.Ordinal))
+        {
+            token.ThrowIfCancellationRequested();
+            // The layout reader binds explicit Source aliases and rejects links below them.
+            var path = group.Key == "." ? root : Path.Combine(root,
+                MineRewind.World.Semantic.SemanticPaths.Normalize(group.Key).Replace('/', Path.DirectorySeparatorChar));
+            worlds.Add(group.Key, WorldLayoutReader.ResolveDimensionRoots(root, path,
+                group.Select(selection => selection.LayerId).Distinct(StringComparer.Ordinal).ToArray(), token));
+            foreach (var item in Essentials)
+            {
+                Add(Path.Combine(path, item));
+                if (!Path.HasExtension(item)) Add(Path.Combine(path, item, "**"));
+            }
+        }
         foreach (var selection in selections)
         {
             token.ThrowIfCancellationRequested();
             var b = selection.Bounds;
             if (new[] { b.MinX, b.MinY, b.MaxX, b.MaxY }.Any(v => !double.IsFinite(v) || Math.Abs(v) > 30_000_512)
                 || b.MinX >= b.MaxX || b.MinY >= b.MaxY) throw new InvalidDataException("Invalid selection coordinates.");
-            if (!worlds.TryGetValue(selection.WorldId, out var world))
-            {
-                var path = SpatialWorldCatalog.PathFor(root, selection.WorldId);
-                worlds.Add(selection.WorldId, world = WorldScanner.Scan(root, path, token));
-                foreach (var item in Essentials)
-                {
-                    Add(Path.Combine(path, item));
-                    if (!Path.HasExtension(item)) Add(Path.Combine(path, item, "**"));
-                }
-            }
-            var dimension = world.Dimensions.SingleOrDefault(d => d.Id == selection.LayerId)
-                ?? throw new InvalidDataException("Selected dimension is no longer available.");
+            var dimensions = worlds[selection.WorldId].Dimensions.Where(d => d.Id == selection.LayerId && d.ComponentDirectories.Count > 0).ToArray();
+            if (dimensions.Length == 0) throw new InvalidDataException("Selected dimension is no longer available.");
+            if (dimensions.Length != 1) throw new IOException("Ambiguous dimension layout: " + selection.LayerId);
+            var dimensionRoot = Path.Combine(root, dimensions[0].RelativeRoot.Replace('/', Path.DirectorySeparatorChar));
             var minX = (int)Math.Floor(b.MinX / 512); var minZ = (int)Math.Floor(b.MinY / 512);
             var maxX = (int)Math.Ceiling(b.MaxX / 512) - 1; var maxZ = (int)Math.Ceiling(b.MaxY / 512) - 1;
             if ((long)(maxX - minX + 1) * (maxZ - minZ + 1) > 4096) throw new InvalidDataException("Region selection budget exceeded.");
@@ -51,10 +57,10 @@ internal static class MinecraftSpatialScope
             {
                 if (!selected.Add((selection.WorldId, selection.LayerId, x, z))) continue;
                 if (selected.Count > 4096) throw new InvalidDataException("Region selection budget exceeded.");
-                foreach (var component in new[] { "region", "entities", "poi" }) Add(Path.Combine(dimension.Root, component, $"r.{x}.{z}.mca"));
+                foreach (var component in MinecraftPathGrammar.Components) Add(Path.Combine(dimensionRoot, component, $"r.{x}.{z}.mca"));
             }
-            Add(Path.Combine(dimension.Root, "data", "**"));
-            foreach (var component in new[] { "region", "entities", "poi" }) Add(Path.Combine(dimension.Root, component, "c.*.*.mcc"));
+            Add(Path.Combine(dimensionRoot, "data", "**"));
+            foreach (var component in MinecraftPathGrammar.Components) Add(Path.Combine(dimensionRoot, component, "c.*.*.mcc"));
             effective.Add(selection with { Bounds = new(minX * 512d, minZ * 512d, (maxX + 1d) * 512, (maxZ + 1d) * 512) });
         }
         if (rules.Count > 256) throw new InvalidDataException("Selection exceeds the Host's 256 scope-pattern budget; reduce the selection.");

@@ -12,22 +12,6 @@ public static class WorldFullFormat
     public const string FormatId = "com.folderrewind.minerewind/minecraft-world-full";
     public const string ManifestPath = "world-full.json";
 
-    public static IReadOnlyList<string> PrepareExport(ISemanticScratch scratch, CancellationToken token)
-    {
-        var completed = ScratchArchive.Validate(scratch, token);
-        ScratchArchive.VerifyIntegrity(scratch, token);
-        var files = new HashSet<string>(StringComparer.Ordinal) { ManifestPath, "files.jsonl", "regions.jsonl", "diagnostics.jsonl" };
-        foreach (var file in ScratchArchive.ReadLines<StoredFile>(scratch, "files.jsonl", token))
-            foreach (var segment in file.Segments) files.Add(segment.ObjectPath);
-        if (files.Count > 100_000) throw new IOException("Full artifact file quota exceeded.");
-        var s = completed.Summary;
-        using var output = scratch.Create(ManifestPath);
-        JsonSerializer.Serialize(output, new WorldFullManifest(FormatId, 1, completed.SourceId,
-            completed.FilesHash, completed.RegionsHash, completed.DiagnosticsHash, s.Files, s.Bytes,
-            s.Regions, s.OpaqueRegions, s.MissingExternalFiles, s.UnclassifiedRegions), SemanticJson.Options);
-        return files.Order(StringComparer.Ordinal).ToArray();
-    }
-
     public static WorldFullManifest ReadManifest(ISemanticScratch storage)
     {
         using var input = storage.OpenRead(ManifestPath);

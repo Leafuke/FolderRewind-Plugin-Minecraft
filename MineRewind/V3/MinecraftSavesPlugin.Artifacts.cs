@@ -15,55 +15,12 @@ public sealed partial class MinecraftSavesPlugin : IBackupArtifactTransformerCap
     {
         if (request.IncrementalInput is not null)
             return await MinecraftIncrementalArtifactService.TransformAsync(request, context, RestoreStrategyId);
-        if (request.Config.Kind != MinecraftKind || request.Primary.CoreCaptureMode != CoreCaptureMode.Full
-            || request.Primary.Completeness != ArtifactCompleteness.Complete)
-            throw new InvalidOperationException("Minecraft Full representation requires Java Full/Complete capture.");
-        var token = context.OperationCancellation;
-        var parent = await context.HostServices.TemporaryStorage.CreateDirectoryAsync(token);
-        var root = Path.Combine(parent, "full-" + Guid.NewGuid().ToString("N"));
-        Directory.CreateDirectory(root);
-        Exception? failure = null;
-        try
-        {
-            var inventory = await request.ArtifactRead.ListFilesAsync(request.Primary.Content, token);
-            var regionCount = inventory.Count(f => f.RelativePath.EndsWith(".mca", StringComparison.OrdinalIgnoreCase));
-            // A region emits at most payload + residual objects. Non-region files emit one raw object.
-            // Reserve conservative index/JSON overhead before doing the expensive lossless pass.
-            var estimatedFiles = checked((long)inventory.Count + regionCount + 4);
-            var estimatedBytes = checked(inventory.Sum(f => f.Length) + regionCount * 1024L * 1024 + inventory.Count * 4096L);
-            if (inventory.Any(f => f.Length < 0) || estimatedFiles > 100_000 || estimatedBytes > FullQuota)
-                throw new IOException("Estimated Full representation exceeds the staging budget.");
-            var source = new ArtifactWorldSource(request.ArtifactRead, request.Primary.Content, inventory, token);
-            if (!inventory.Any(f => f.RelativePath == "level.dat" || f.RelativePath.EndsWith("/level.dat", StringComparison.Ordinal)))
-                throw new InvalidDataException("No Java world exists in the captured boundary.");
-            var scratch = new BudgetedSemanticScratch(new DirectorySemanticScratch(Path.Combine(root, "scratch"), true), estimatedBytes);
-            request.Progress.Report(new(0.2, "capture", "Encoding lossless world representation"));
-            ScratchCompletion captured; IReadOnlyList<string> files;
-            using (await context.HostServices.TemporaryStorage.ReserveAsync(root, estimatedBytes, token))
-            {
-                captured = WorldCapture.CaptureVerified(source, scratch, request.Folder.FolderId.ToString("D"), token);
-                files = WorldFullFormat.PrepareExport(scratch, token);
-            }
-            // Scratch is now occupied disk space. Staging reserves its own outstanding writes.
-            var allocation = await request.Staging.CreateArtifactAsync(token);
-            foreach (var file in files)
-            {
-                token.ThrowIfCancellationRequested();
-                using var input = scratch.OpenRead(file);
-                await using var output = await request.Staging.OpenWriteAsync(allocation.Staging, file, token);
-                await input.CopyToAsync(output, token);
-            }
-            request.Progress.Report(new(1, "sealed", "Lossless world representation prepared"));
-            var diagnostics = captured.Summary.FullyComparable ? Array.Empty<PluginDiagnostic>() :
-                new[] { new PluginDiagnostic("minerewind.full.semantic_coverage_limited", DiagnosticSeverity.Warning, "ArtifactTransform",
-                    PluginIdentity, new Dictionary<string, string> { ["opaqueRegions"] = captured.Summary.OpaqueRegions.ToString(System.Globalization.CultureInfo.InvariantCulture) }) };
-            return new(diagnostics.Length == 0 ? OperationOutcome.Success : OperationOutcome.SuccessWithWarnings,
-                new(request.ExpectedGraphRevision,
-                    [new(allocation.ArtifactId, allocation.Staging, new(MineRewindOwnerId, "minecraft-world-full"), 1,
-                        RestoreStrategyId, ArtifactCompleteness.Complete, CoreCaptureMode.Full, [])], allocation.ArtifactId), diagnostics);
-        }
-        catch (Exception error) { failure = error; throw; }
-        finally { DeleteTemporaryArtifactWork(root, failure); }
+        // The transformer identity is shared with incremental-v1 and remains stable. Only the
+        // legacy write protocol is retired; its materializer below continues to read v1 bytes.
+        return new(OperationOutcome.Blocked, null,
+            [Diagnostic("minerewind.incremental_input_required", DiagnosticSeverity.Error, "ArtifactTransform",
+                ("en-US", "Legacy Full creation is retired. Semantic backups require incremental capture input."),
+                ("zh-CN", "旧 Full 格式已停止生成，语义备份需要增量捕获上下文。"))]);
     }
 
     public async ValueTask<RestoreMaterializationResult> MaterializeAsync(RestoreMaterializationRequest request, PluginInvocationContext context)

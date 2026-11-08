@@ -1,7 +1,6 @@
 using System.Diagnostics;
 using System.Text;
 using System.Text.Json;
-using System.Security.Cryptography;
 
 namespace MineRewind.World.Semantic;
 
@@ -9,16 +8,6 @@ public static class WorldCapture
 {
     public static ScratchCompletion Capture(IReadOnlyWorldSource source, ISemanticScratch scratch,
         string sourceId, CancellationToken token = default)
-        => CaptureCore(source, scratch, sourceId, verifiedInventory: false, token);
-
-    /// <summary>The caller owns read protection for the complete inventory until this call ends.
-    /// Every copied file is independently checked against its declared SHA-256.</summary>
-    public static ScratchCompletion CaptureVerified(IReadOnlyWorldSource source, ISemanticScratch scratch,
-        string sourceId, CancellationToken token = default)
-        => CaptureCore(source, scratch, sourceId, verifiedInventory: true, token);
-
-    private static ScratchCompletion CaptureCore(IReadOnlyWorldSource source, ISemanticScratch scratch,
-        string sourceId, bool verifiedInventory, CancellationToken token)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(sourceId);
         if (scratch.Exists("complete.json")) throw new IOException("Scratch already completed.");
@@ -28,8 +17,6 @@ public static class WorldCapture
             || sourceInventory.Sum(f => (long)f.RelativePath.Length) > SemanticPaths.MaximumInventoryPathCharacters)
             throw new IOException("Offline inventory exceeds the P1 metadata budget.");
         var inventory = sourceInventory.OrderBy(f => f.RelativePath, StringComparer.Ordinal).ToArray();
-        if (verifiedInventory && inventory.Any(f => f.Length < 0 || f.Sha256 is not { Length: 64 } || !f.Sha256.All(Uri.IsHexDigit)))
-            throw new IOException("Verified capture requires a length and SHA-256 for every input file.");
         var paths = inventory.Select(f => SemanticPaths.Normalize(f.RelativePath)).ToHashSet(StringComparer.Ordinal);
         if (paths.Count != inventory.Length || paths.Distinct(StringComparer.OrdinalIgnoreCase).Count() != paths.Count)
             throw new InvalidDataException("Duplicate source paths.");
@@ -52,11 +39,10 @@ public static class WorldCapture
                 var info = inventory[number];
                 using var input = source.OpenRead(info.RelativePath);
                 if (!input.CanSeek || input.Length != info.Length) throw new IOException("Source changed or is not seekable: " + info.RelativePath);
-                var originalHash = verifiedInventory ? info.Sha256!.ToUpperInvariant() : SemanticStreams.Hash(input, token);
+                var originalHash = SemanticStreams.Hash(input, token);
                 input.Position = 0;
                 if (info.Sha256 is { } expected && !StringComparer.OrdinalIgnoreCase.Equals(originalHash, expected))
                     throw new IOException("Captured input hash differs from the Host inventory: " + info.RelativePath);
-                using var copiedHash = verifiedInventory ? IncrementalHash.CreateHash(HashAlgorithmName.SHA256) : null;
                 long copiedBytes = 0;
                 RegionAnalysis? analysis = null;
                 if (regionAddresses.TryGetValue(info.RelativePath, out var address))
@@ -90,16 +76,8 @@ public static class WorldCapture
                     using var raw = scratch.Create(prefix + "/raw.bin");
                     Store(0, input.Length, raw, prefix + "/raw.bin");
                 }
-                if (verifiedInventory)
-                {
-                    if (copiedBytes != info.Length || input.Length != info.Length || originalHash != Convert.ToHexString(copiedHash!.GetHashAndReset()))
-                        throw new IOException("Captured input hash/length differs from the Host inventory: " + info.RelativePath);
-                }
-                else
-                {
-                    input.Position = 0;
-                    if (originalHash != SemanticStreams.Hash(input, token)) throw new IOException("Changing input: " + info.RelativePath);
-                }
+                input.Position = 0;
+                if (originalHash != SemanticStreams.Hash(input, token)) throw new IOException("Changing input: " + info.RelativePath);
                 Write(filesWriter, new StoredFile(info.RelativePath, input.Length, originalHash, encoding, segments));
                 rawHashes.Add(info.RelativePath, originalHash); bytes = checked(bytes + input.Length);
                 if (analysis is not null)
@@ -134,7 +112,7 @@ public static class WorldCapture
                     if (length == 0 && info.Length != 0) return;
                     if (offset != copiedBytes) throw new InvalidDataException("Capture segments do not exactly cover the input.");
                     input.Position = offset; var outputOffset = output.Position;
-                    var hash = SemanticStreams.Copy(input, output, length, token, copiedHash);
+                    var hash = SemanticStreams.Copy(input, output, length, token);
                     if (analyzedHash is not null && analyzedHash != hash) throw new IOException("Analyzed region payload changed before capture.");
                     copiedBytes = checked(copiedBytes + length);
                     segments.Add(new(offset, length, name, outputOffset, hash));
@@ -159,12 +137,9 @@ public static class WorldCapture
             }
 
         // Recheck bytes and inventory after all dependencies have been read. This is not a game snapshot.
-        if (!verifiedInventory)
-        {
-            var verification = ScratchArchive.VerifySource(source, scratch, token);
-            if (!verification.Success || !inventory.SequenceEqual(source.GetInventory(token).OrderBy(f => f.RelativePath, StringComparer.Ordinal)))
-                throw new IOException("Changing source view: " + string.Join(", ", verification.Errors.Take(8)));
-        }
+        var verification = ScratchArchive.VerifySource(source, scratch, token);
+        if (!verification.Success || !inventory.SequenceEqual(source.GetInventory(token).OrderBy(f => f.RelativePath, StringComparer.Ordinal)))
+            throw new IOException("Changing source view: " + string.Join(", ", verification.Errors.Take(8)));
         var orphan = inventory.Count(f => f.RelativePath.EndsWith(".mcc", StringComparison.OrdinalIgnoreCase) && !referencedExternal.Contains(f.RelativePath));
         var summary = new CaptureSummary(inventory.Length, regions.Count, bytes, present, comparable, opaque,
             missing, orphan, unclassified, RegionCodec.BufferBudget, timer.Elapsed.TotalSeconds);

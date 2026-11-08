@@ -26,20 +26,23 @@ internal static class MinecraftRegionBackupScope
         string worldPath,
         IReadOnlyDictionary<string, string> parameters,
         out IReadOnlyList<string> rules,
-        out string errorCode)
+        out string errorCode,
+        CancellationToken token = default)
     {
+        token.ThrowIfCancellationRequested();
         rules = Array.Empty<string>();
         errorCode = string.Empty;
         if (!TryNormalizeContainedPath(sourceRoot, worldPath, out var source, out var world))
             return Fail("world_outside_source", out errorCode);
         if (!TryGetDimensions(parameters, out var dimensions, out errorCode)) return false;
         if (!TryGetRegionCoordinates(parameters, out var coordinates, out errorCode)) return false;
-        if (!TryResolveDimensionRoots(source, world, dimensions, out var roots, out errorCode)) return false;
+        if (!TryResolveDimensionRoots(source, world, dimensions, out var roots, out errorCode, token)) return false;
 
         var result = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         foreach (var essential in EssentialRules) AddRule(result, source, world, essential);
         foreach (var dimension in dimensions)
         {
+            token.ThrowIfCancellationRequested();
             var dimensionRoot = roots[dimension].Path;
             AddRule(result, source, dimensionRoot, "data");
             foreach (var (regionX, regionZ) in coordinates)
@@ -177,17 +180,19 @@ internal static class MinecraftRegionBackupScope
         string world,
         IReadOnlyList<MinecraftDimension> dimensions,
         out IReadOnlyDictionary<MinecraftDimension, DimensionRoot> roots,
-        out string errorCode)
+        out string errorCode,
+        CancellationToken token)
     {
         var result = new Dictionary<MinecraftDimension, DimensionRoot>();
-        WorldLayoutFacts facts;
-        try { facts = WorldLayoutReader.Read(source, world); }
+        DimensionRootsFacts facts;
+        string Id(MinecraftDimension dimension) => dimension switch { MinecraftDimension.Overworld => MinecraftPathGrammar.Overworld,
+            MinecraftDimension.Nether => MinecraftPathGrammar.Nether, _ => MinecraftPathGrammar.End };
+        try { facts = WorldLayoutReader.ResolveDimensionRoots(source, world, dimensions.Select(Id).ToArray(), token); }
         catch (Exception error) when (error is IOException or UnauthorizedAccessException)
         { roots = result; return Fail("dimension_layout_unavailable", out errorCode); }
         foreach (var dimension in dimensions)
         {
-            var id = dimension switch { MinecraftDimension.Overworld => MinecraftPathGrammar.Overworld,
-                MinecraftDimension.Nether => MinecraftPathGrammar.Nether, _ => MinecraftPathGrammar.End };
+            var id = Id(dimension);
             var candidates = facts.Dimensions.Where(d => d.Id == id)
                 .Select(d => new DimensionRoot(Path.GetFullPath(Path.Combine(source, d.RelativeRoot)),
                     d.Family == WorldLayoutFamily.Namespaced ? LayoutFamily.Post26 : LayoutFamily.Legacy)).ToArray();

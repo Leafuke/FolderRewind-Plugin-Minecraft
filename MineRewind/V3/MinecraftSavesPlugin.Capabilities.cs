@@ -172,7 +172,7 @@ public sealed partial class MinecraftSavesPlugin
         var worldPath = observation.Worlds.SingleOrDefault()?.Path;
         if (worldPath is null) return ValueTask.FromResult(new BackupScopeResult(OperationReadiness.Ready, ["**"], []));
         var errorCode = string.Empty;
-        if (!MinecraftRegionBackupScope.TryBuild(sourceRoot, worldPath, parameters, out var patterns, out errorCode))
+        if (!MinecraftRegionBackupScope.TryBuild(sourceRoot, worldPath, parameters, out var patterns, out errorCode, context.OperationCancellation))
         {
             return ValueTask.FromResult(new BackupScopeResult(
                 OperationReadiness.Blocked,

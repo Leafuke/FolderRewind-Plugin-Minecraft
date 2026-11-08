@@ -7,6 +7,11 @@ public sealed record WorldLayoutIssue(string Code, string RelativePath, string? 
 public sealed record WorldRegionFile(ChunkComponentKind Component, RegionKey Region, string RelativePath);
 public sealed record DimensionLayoutFacts(string Id, string RelativeRoot, WorldLayoutFamily Family,
     IReadOnlyDictionary<ChunkComponentKind, string> ComponentDirectories, IReadOnlyList<WorldRegionFile> RegionFiles);
+/// <summary>Root resolution deliberately contains no file inventory or claims about region availability.</summary>
+public sealed record DimensionRootFacts(string Id, string RelativeRoot, WorldLayoutFamily Family,
+    IReadOnlyDictionary<ChunkComponentKind, string> ComponentDirectories);
+public sealed record DimensionRootsFacts(string WorldId, IReadOnlyList<DimensionRootFacts> Dimensions,
+    IReadOnlyList<WorldLayoutIssue> Issues);
 /// <summary>All paths and identities are Source-relative, whether observed on disk or from a fixed inventory.</summary>
 public sealed record WorldLayoutFacts(string WorldId, IReadOnlyList<DimensionLayoutFacts> Dimensions,
     IReadOnlyList<WorldLayoutIssue> Issues, bool IsComplete)
@@ -17,33 +22,59 @@ public sealed record WorldLayoutFacts(string WorldId, IReadOnlyList<DimensionLay
 /// <summary>Bounded layout facts. Callers retain their distinct complete/partial/scope acceptance policy.</summary>
 public static class WorldLayoutReader
 {
+    /// <summary>Resolve only the requested identities. No component contents or unrelated dimensions are traversed.</summary>
+    public static DimensionRootsFacts ResolveDimensionRoots(string sourceRoot, string worldRoot,
+        IReadOnlyCollection<string> dimensionIds, CancellationToken token = default)
+    {
+        token.ThrowIfCancellationRequested();
+        if (dimensionIds.Count is < 1 or > 128) throw new InvalidDataException("Dimension selection budget exceeded.");
+        var ids = dimensionIds.Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal).ToArray();
+        // Validate every identity before accessing the filesystem, including a later invalid selection.
+        foreach (var id in ids) _ = NamespacedPath(id);
+        (sourceRoot, worldRoot) = BindRoots(sourceRoot, worldRoot);
+        var roots = new List<DimensionRootFacts>(); var issues = new List<WorldLayoutIssue>();
+        foreach (var id in ids)
+        {
+            foreach (var (path, family) in DimensionCandidates(worldRoot, id))
+            {
+                token.ThrowIfCancellationRequested();
+                var relative = Path.GetRelativePath(sourceRoot, path).Replace('\\', '/');
+                if (Path.IsPathRooted(relative) || relative == ".." || relative.StartsWith("../", StringComparison.Ordinal))
+                {
+                    if (Directory.Exists(path)) issues.Add(new("dimension_outside_source", relative, id));
+                    continue;
+                }
+                if (!IsDirectory(path)) continue;
+                WorldPaths.RequireContained(sourceRoot, path);
+                var components = new Dictionary<ChunkComponentKind, string>();
+                for (var index = 0; index < MinecraftPathGrammar.Components.Count; index++)
+                {
+                    token.ThrowIfCancellationRequested();
+                    var directory = Path.Combine(path, MinecraftPathGrammar.Components[index]);
+                    if (!IsDirectory(directory)) continue;
+                    WorldPaths.RequireContained(sourceRoot, directory);
+                    components.Add((ChunkComponentKind)index, Path.GetRelativePath(sourceRoot, directory).Replace('\\', '/'));
+                }
+                if (!roots.Any(root => root.Id == id && root.RelativeRoot.Equals(relative, StringComparison.OrdinalIgnoreCase)))
+                    roots.Add(new(id, relative, family, new ReadOnlyDictionary<ChunkComponentKind, string>(components)));
+            }
+        }
+        foreach (var group in roots.GroupBy(root => root.Id, StringComparer.Ordinal).Where(group => group.Count() > 1))
+            issues.Add(new("dimension_layout_ambiguous", Path.GetRelativePath(sourceRoot, worldRoot).Replace('\\', '/'), group.Key));
+        return new(Path.GetRelativePath(sourceRoot, worldRoot).Replace('\\', '/'), roots.AsReadOnly(), issues.AsReadOnly());
+    }
+
     public static WorldLayoutFacts Read(string sourceRoot, string worldRoot, bool rejectLinks = true, CancellationToken token = default)
         => Read(sourceRoot, worldRoot, rejectLinks, new WorldScanBudget(), token);
 
     internal static WorldLayoutFacts Read(string sourceRoot, string worldRoot, bool rejectLinks, WorldScanBudget budget, CancellationToken token)
     {
-        sourceRoot = Path.GetFullPath(sourceRoot);
-        // An explicitly selected Source alias is authorized by the Host binding. Resolve only
-        // that root; links discovered below it remain forbidden. Returned paths stay Source-relative.
-        if ((File.GetAttributes(sourceRoot) & FileAttributes.ReparsePoint) != 0)
-        {
-            var relativeWorld = Path.GetRelativePath(sourceRoot, Path.GetFullPath(worldRoot));
-            if (Path.IsPathRooted(relativeWorld) || relativeWorld == ".." || relativeWorld.StartsWith(".." + Path.DirectorySeparatorChar, StringComparison.Ordinal))
-                throw new IOException("World path is outside the configured source.");
-            sourceRoot = new DirectoryInfo(sourceRoot).ResolveLinkTarget(returnFinalTarget: true)?.FullName
-                ?? throw new IOException("Configured Source alias cannot be resolved.");
-            worldRoot = Path.GetFullPath(Path.Combine(sourceRoot, relativeWorld));
-        }
-        worldRoot = WorldPaths.RequireContained(sourceRoot, worldRoot);
+        (sourceRoot, worldRoot) = BindRoots(sourceRoot, worldRoot);
         var candidates = new Dictionary<(string Id, string Path), WorldLayoutFamily>();
         var issues = new List<WorldLayoutIssue>();
-        var namespacedOverworld = Path.Combine(worldRoot, "dimensions", "minecraft", "overworld");
-        if (HasComponents(worldRoot) || !Directory.Exists(namespacedOverworld)) Add(MinecraftPathGrammar.Overworld, worldRoot, WorldLayoutFamily.Legacy);
-        Add(MinecraftPathGrammar.Nether, Path.Combine(worldRoot, "DIM-1"), WorldLayoutFamily.Legacy);
-        Add(MinecraftPathGrammar.End, Path.Combine(worldRoot, "DIM1"), WorldLayoutFamily.Legacy);
-        var parent = Path.GetDirectoryName(worldRoot)!; var name = Path.GetFileName(worldRoot);
-        Add(MinecraftPathGrammar.Nether, Path.Combine(parent, name + "_nether", "DIM-1"), WorldLayoutFamily.Legacy);
-        Add(MinecraftPathGrammar.End, Path.Combine(parent, name + "_the_end", "DIM1"), WorldLayoutFamily.Legacy);
+        foreach (var id in new[] { MinecraftPathGrammar.Overworld, MinecraftPathGrammar.Nether, MinecraftPathGrammar.End })
+            foreach (var (path, family) in DimensionCandidates(worldRoot, id))
+                if (family == WorldLayoutFamily.Legacy) Add(id, path, family);
         var dimensions = Path.Combine(worldRoot, "dimensions");
         if (Directory.Exists(dimensions))
         {
@@ -117,6 +148,58 @@ public static class WorldLayoutReader
             catch (IOException) when (!rejectLinks) { budget.MarkIncomplete(); issues.Add(new("linked_dimension", relative, id)); return; }
             if (!candidates.Keys.Any(key => key.Id == id && key.Path.Equals(path, StringComparison.OrdinalIgnoreCase))) candidates.Add((id, path), family);
         }
+    }
+
+    private static (string Source, string World) BindRoots(string sourceRoot, string worldRoot)
+    {
+        sourceRoot = Path.TrimEndingDirectorySeparator(Path.GetFullPath(sourceRoot));
+        // Resolve only an explicit Source alias. Discovered child links never grant authority.
+        if ((File.GetAttributes(sourceRoot) & FileAttributes.ReparsePoint) != 0)
+        {
+            var relativeWorld = Path.GetRelativePath(sourceRoot, Path.GetFullPath(worldRoot));
+            if (Path.IsPathRooted(relativeWorld) || relativeWorld == ".." || relativeWorld.StartsWith(".." + Path.DirectorySeparatorChar, StringComparison.Ordinal))
+                throw new IOException("World path is outside the configured source.");
+            sourceRoot = new DirectoryInfo(sourceRoot).ResolveLinkTarget(returnFinalTarget: true)?.FullName
+                ?? throw new IOException("Configured Source alias cannot be resolved.");
+            worldRoot = Path.GetFullPath(Path.Combine(sourceRoot, relativeWorld));
+        }
+        return (sourceRoot, WorldPaths.RequireContained(sourceRoot, worldRoot));
+    }
+
+    private static IEnumerable<(string Path, WorldLayoutFamily Family)> DimensionCandidates(string world, string id)
+    {
+        var namespaced = Path.Combine(world, NamespacedPath(id).Replace('/', Path.DirectorySeparatorChar));
+        if (id == MinecraftPathGrammar.Overworld)
+        {
+            if (HasComponents(world) || !Directory.Exists(namespaced)) yield return (world, WorldLayoutFamily.Legacy);
+        }
+        else if (id is MinecraftPathGrammar.Nether or MinecraftPathGrammar.End)
+        {
+            var nether = id == MinecraftPathGrammar.Nether;
+            var child = nether ? "DIM-1" : "DIM1";
+            yield return (Path.Combine(world, child), WorldLayoutFamily.Legacy);
+            if (Path.GetDirectoryName(world) is { } parent)
+                yield return (Path.Combine(parent, Path.GetFileName(world) + (nether ? "_nether" : "_the_end"), child), WorldLayoutFamily.Legacy);
+        }
+        yield return (namespaced, WorldLayoutFamily.Namespaced);
+    }
+
+    private static string NamespacedPath(string id)
+    {
+        var separator = id?.IndexOf(':') ?? -1;
+        if (separator <= 0 || separator == id!.Length - 1)
+            throw new InvalidDataException("Invalid dimension identity.");
+        var relative = Semantic.SemanticPaths.Normalize("dimensions/" + id[..separator] + "/" + id[(separator + 1)..]);
+        if (!MinecraftPathGrammar.TryDimension(relative, out var parsed, out _) || parsed != id)
+            throw new InvalidDataException("Invalid dimension identity.");
+        return relative;
+    }
+
+    private static bool IsDirectory(string path)
+    {
+        try { return (File.GetAttributes(path) & FileAttributes.Directory) != 0; }
+        catch (FileNotFoundException) { return false; }
+        catch (DirectoryNotFoundException) { return false; }
     }
 
     public static IReadOnlyList<WorldLayoutFacts> FromInventory(IEnumerable<string> relativePaths)
