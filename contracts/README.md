@@ -1,6 +1,6 @@
 # Public Host contract
 
-MineRewind 1.10.2 targets `FolderRewind.Plugin.Abstractions 3.18.0` / Plugin API 3.18. Assembly identity remains `3.0.0.0`. The committed provenance remains the last frozen public SDK (3.17) until the public release workflow exports 3.18; therefore default builds deliberately fail this integration gate in the meantime.
+MineRewind 1.10.2 targets the published `FolderRewind.Plugin.Abstractions 3.18.0` / Plugin API 3.18. Assembly identity remains `3.0.0.0`. The public package and its exact source, package and assembly hashes are frozen in `source-manifest.json`; default builds verify this provenance and restore from NuGet.org.
 
 `NuGet.Config` restores from NuGet.org only. `feed/` retains the exact public nupkg as a provenance verification input, not as a local restore source. `source-manifest.json` records the Host source commit, clean-checkout source digest, public package URL, package SHA-256 and contract DLL SHA-256. `tools/Verify-Contract.ps1` verifies the pinned copy before CI restore.
 

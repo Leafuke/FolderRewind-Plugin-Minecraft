@@ -2,7 +2,7 @@
 
 为 [FolderRewind](https://github.com/Leafuke/FolderRewind) 提供 Minecraft 存档备份增强功能，重点覆盖热备份、热还原、自动发现世界存档，以及从现有配置识别 `.minecraft` 实例并创建配置。
 
-当前源码版本为 **1.10.2**，要求 Host 支持 **Plugin API 3.18 / Abstractions 3.18.0**，程序集身份保持 `3.0.0.0`。源码版本不表示 SDK 或插件已公开发布；正式构建须先通过 Host 发布流程冻结公开包与来源摘要。SDK 尚未公开时，只能显式使用隔离候选 feed 和 `development-candidate` 来源清单完成本地验收，不能把它当作 NuGet.org 恢复验证。
+当前源码版本为 **1.10.2**，要求 Host 支持 **Plugin API 3.18 / Abstractions 3.18.0**，程序集身份保持 `3.0.0.0`。SDK 3.18.0 已在 NuGet.org 公开发布，正式构建使用已冻结的公开包与来源摘要，校验记录见 `contracts/source-manifest.json`。源码版本不表示插件已公开发布。
 
 有效的布局、格式、读取与构建约束见 [工程规范索引](docs/README.md)。
 
