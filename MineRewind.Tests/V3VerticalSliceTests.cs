@@ -99,19 +99,19 @@ public sealed partial class V3VerticalSliceTests
         var (config, folder) = Snapshots(world.WorldPath);
 
         var lease = await fixture.Plugin.AcquireAsync(
-            new BackupConsistencyRequest(config, folder, ConsistencyIntent.Prefer),
+            new BackupConsistencyRequest(config, folder, ConsistencyIntent.Prefer) { CoordinationOnly = true },
             fixture.Invocation);
 
         var snapshotPath = lease.SourcePath;
-        Assert.AreNotEqual(world.WorldPath, snapshotPath);
-        Assert.IsTrue(lease.IsStableSourceView);
+        Assert.AreEqual(world.WorldPath, snapshotPath);
+        Assert.IsFalse(lease.IsStableSourceView);
         Assert.IsTrue(File.Exists(Path.Combine(snapshotPath, "level.dat")));
         CollectionAssert.AreEqual(
             new[] { "handshake", "handshake_ack", "pre_hot_backup" },
             fixture.Services.KnotLink.Events.Select(value => value.Name).ToArray());
         Assert.IsEmpty(lease.Diagnostics);
         await lease.DisposeAsync();
-        Assert.IsFalse(Directory.Exists(snapshotPath));
+        Assert.IsTrue(Directory.Exists(snapshotPath));
     }
 
     [TestMethod]
@@ -155,7 +155,7 @@ public sealed partial class V3VerticalSliceTests
         var (config, folder) = Snapshots(world.WorldPath);
 
         await using var lease = await fixture.Plugin.AcquireAsync(
-            new BackupConsistencyRequest(config, folder, ConsistencyIntent.Prefer),
+            new BackupConsistencyRequest(config, folder, ConsistencyIntent.Prefer) { CoordinationOnly = true },
             fixture.Invocation);
 
         Assert.IsTrue(lease.Diagnostics.Any(value =>

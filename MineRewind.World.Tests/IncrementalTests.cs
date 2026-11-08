@@ -37,6 +37,30 @@ public sealed partial class IncrementalTests
     }
 
     [TestMethod]
+    public void DeletingChunkSlotsRemainsByteExactAcrossIncrementalAndCheckpoint()
+    {
+        var objects = new Objects();
+        var original = Region();
+        // Add a second independently addressed chunk; leave residual bytes and the tail intact.
+        BinaryPrimitives.WriteUInt32BigEndian(original.AsSpan(4), 0x301);
+        BinaryPrimitives.WriteUInt32BigEndian(original.AsSpan(4100), 45);
+        original.AsSpan(8192, 4096).CopyTo(original.AsSpan(12288, 4096));
+        var first = Capture(new(new() { ["level.dat"] = [1], ["region/r.0.0.mca"] = original }), objects);
+        var expected = original.ToArray();
+        expected.AsSpan(0, 4).Clear(); expected.AsSpan(4096, 4).Clear();
+        var second = Capture(new(new() { ["region/r.0.0.mca"] = expected }), objects, first);
+        CollectionAssert.AreEqual(expected, Restore(second, "region/r.0.0.mca", objects));
+        var index = WorldIncrementalFormat.Read<RegionEntry>(objects, second.Files.Single(f => f.Index is not null).Index!, default);
+        Assert.AreEqual(SemanticState.Absent, index.Chunks[0].State);
+        Assert.AreEqual(SemanticState.Present, index.Chunks[1].State);
+        expected = expected.ToArray();
+        expected.AsSpan(4, 4).Clear(); expected.AsSpan(4100, 4).Clear();
+        var third = Capture(new(new() { ["region/r.0.0.mca"] = expected }), objects, second, checkpoint: true);
+        CollectionAssert.AreEqual(expected, Restore(third, "region/r.0.0.mca", objects));
+        Assert.IsEmpty(third.DeletedChunks);
+    }
+
+    [TestMethod]
     public void SparseRegionChangeInheritsOtherFilesAndStoresOnlyChangedBytes()
     {
         var objects = new Objects(); var original = Region();
@@ -50,7 +74,7 @@ public sealed partial class IncrementalTests
     }
 
     [TestMethod]
-    public void AccountingDoesNotOpenUnchangedRecipesOrPayloads()
+    public void ValidatedInMemoryBaselineDoesNotOpenUnchangedRecipesOrPayloads()
     {
         var objects = new Objects();
         var first = Capture(new(new() { ["region/r.0.0.mca"] = Region(), ["unchanged"] = [4, 5] }), objects);
@@ -58,7 +82,32 @@ public sealed partial class IncrementalTests
         var second = Capture(new(new() { ["new"] = [7] }), objects, first);
         Assert.IsFalse(objects.Reads.Any(inherited.Contains));
         Assert.AreEqual(first.Files[0].Recipe, second.Files.Single(f => f.Path == first.Files[0].Path).Recipe);
-        Assert.IsGreaterThan(0L, second.ReferencedObjectBytes);
+    }
+
+    [TestMethod]
+    public void AlteringValidatedInMemoryReferencesInvalidatesTheWitness()
+    {
+        var objects = new Objects();
+        var first = Capture(new(new() { ["unchanged"] = [4, 5] }), objects);
+        var file = first.Files[0];
+        var changed = first with { Files = [file with { Recipe = file.Recipe with { Offset = -1 } }] };
+        Assert.ThrowsExactly<InvalidDataException>(() => Capture(new(new()), objects, changed));
+        var wrongLength = first with { Files = [file with { Length = 3 }] };
+        Assert.ThrowsExactly<InvalidDataException>(() => Capture(new(new()), objects, wrongLength));
+    }
+
+    [TestMethod]
+    public void DeserializedBaselineValidatesReferencesWithoutTrustingLegacyAccountingFields()
+    {
+        var objects = new Objects();
+        var first = Capture(new(new() { ["unchanged"] = [4, 5] }), objects);
+        var json = System.Text.Json.JsonSerializer.Serialize(first, SemanticJson.Options);
+        var loaded = System.Text.Json.JsonSerializer.Deserialize<WorldIncrementalState>(json, SemanticJson.Options)!;
+        objects.Reads.Clear();
+        Capture(new(new()), objects, loaded);
+        Assert.Contains(first.Files[0].Recipe.ArtifactId, objects.Reads);
+        var invalid = loaded with { Files = [loaded.Files[0] with { Recipe = loaded.Files[0].Recipe with { Offset = -1 } }] };
+        Assert.ThrowsExactly<InvalidDataException>(() => Capture(new(new()), objects, invalid));
     }
 
     [TestMethod]

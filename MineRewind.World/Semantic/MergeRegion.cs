@@ -17,7 +17,7 @@ public sealed record MergeChunkSource(MergeRegionIndex Region, MergeChunk Chunk,
 public static class MergeRegion
 {
     public static bool TryAddress(string path, string[] worlds, out RegionAddress? address)
-        => WorldCapture.TryAddress(path, worlds, out address);
+        => MinecraftPathGrammar.TryRegionAddress(path, worlds, out address);
 
     public static async Task<MergeRegionIndex> ReadAsync(string path, RegionAddress address,
         Func<string, CancellationToken, ValueTask<Stream>> open, IReadOnlySet<string> paths, CancellationToken token,

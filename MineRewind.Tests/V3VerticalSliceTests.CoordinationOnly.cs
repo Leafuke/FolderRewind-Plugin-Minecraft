@@ -5,6 +5,18 @@ namespace MineRewind.Tests;
 public sealed partial class V3VerticalSliceTests
 {
     [TestMethod]
+    [DataRow(ConsistencyIntent.Prefer)]
+    [DataRow(ConsistencyIntent.Require)]
+    public async Task NonCoordinationCaptureIsRejectedBeforeSourceOrTemporaryStorageAccess(ConsistencyIntent intent)
+    {
+        var fixture = Activate();
+        var (config, folder) = Snapshots("nonexistent-source");
+        await Assert.ThrowsExactlyAsync<NotSupportedException>(async () =>
+            await fixture.Plugin.AcquireAsync(new(config, folder, intent), fixture.Invocation));
+        Assert.IsEmpty(fixture.Services.KnotLink.Events);
+    }
+
+    [TestMethod]
     public async Task CoordinationOnlyDoesNotReadOrCopyLockedWorldContent()
     {
         using var world = TemporaryWorld.Create();

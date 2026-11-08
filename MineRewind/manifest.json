@@ -79,7 +79,6 @@
     "backupArtifactTransformer",
     "restoreMaterializer",
     "discovery",
-    "configReconciliation",
     "filePolicy",
     "backupScope",
     "backupConsistency",

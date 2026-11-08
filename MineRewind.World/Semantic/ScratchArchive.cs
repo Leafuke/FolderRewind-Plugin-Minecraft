@@ -21,7 +21,7 @@ public static class ScratchArchive
             || completed.Summary.Bytes < 0 || completed.Summary.Bytes > (limits ?? SemanticArchiveReadLimits.UnrestrictedBytes).MaximumBytes)
             throw new InvalidDataException("Scratch exceeds the P1 metadata budget.");
         foreach (var (path, hash) in new[] { ("files.jsonl", completed.FilesHash), ("regions.jsonl", completed.RegionsHash), ("diagnostics.jsonl", completed.DiagnosticsHash) })
-            if (WorldCapture.HashFile(scratch, path, token) != hash) throw new InvalidDataException("Scratch manifest hash mismatch: " + path);
+            if (SemanticStreams.HashFile(scratch, path, token) != hash) throw new InvalidDataException("Scratch manifest hash mismatch: " + path);
         return completed;
     }
 
@@ -143,18 +143,4 @@ public static class ScratchArchive
 
     private static bool Digest(string? value) => value is { Length: 64 } && value.All(Uri.IsHexDigit);
 
-    public static VerificationResult VerifySource(IReadOnlyWorldSource source, ISemanticScratch scratch, CancellationToken token = default)
-    {
-        var inventory = source.GetInventory(token).ToDictionary(f => f.RelativePath, StringComparer.Ordinal);
-        var errors = new List<string>(); int count = 0; long bytes = 0;
-        foreach (var file in ReadLines<StoredFile>(scratch, "files.jsonl", token))
-        {
-            token.ThrowIfCancellationRequested(); count++; bytes += file.Length;
-            if (!inventory.Remove(file.RelativePath, out var actual)) { errors.Add("missing:" + file.RelativePath); continue; }
-            using var input = source.OpenRead(file.RelativePath);
-            if (actual.Length != file.Length || SemanticStreams.Hash(input, token) != file.Sha256) errors.Add("bytes:" + file.RelativePath);
-        }
-        errors.AddRange(inventory.Keys.Select(p => "extra:" + p));
-        return new(errors.Count == 0, count, bytes, errors);
-    }
 }

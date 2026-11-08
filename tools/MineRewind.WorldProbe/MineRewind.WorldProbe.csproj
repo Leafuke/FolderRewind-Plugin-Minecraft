@@ -6,4 +6,5 @@
     <Nullable>enable</Nullable>
   </PropertyGroup>
   <ItemGroup><ProjectReference Include="../../MineRewind.World/MineRewind.World.csproj" /></ItemGroup>
+  <ItemGroup><ProjectReference Include="../MineRewind.WorldProbe.Support/MineRewind.WorldProbe.Support.csproj" /></ItemGroup>
 </Project>

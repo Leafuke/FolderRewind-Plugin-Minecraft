@@ -46,7 +46,7 @@ public static class WorldIncrementalFormat
         var classificationChanged = baseline is not null && (rootsFingerprint != previousRoots
             || baseline.SemanticClassifierVersion is not (0 or 1));
         var source = new OverlaySource(changedSource, inventory, prior, deleted.ToHashSet(StringComparer.Ordinal), reader, token);
-        var deletedChunks = new List<string>(); long newBytes = 0;
+        long newBytes = 0;
 
         foreach (var path in updates.Order(StringComparer.Ordinal))
         {
@@ -64,17 +64,13 @@ public static class WorldIncrementalFormat
             RegionEntry? oldIndex = old?.Index is null ? null : Read<RegionEntry>(reader, old.Index, token);
             RegionEntry? index = null; IReadOnlyList<PayloadSlice> payloads = [];
             var encoding = "Raw";
-            if (WorldCapture.TryAddress(path, worlds, out var address))
+            if (MinecraftPathGrammar.TryRegionAddress(path, worlds, out var address))
             {
                 var analyzed = RegionCodec.Analyze(source, info, input, address!, allPaths, token, oldIndex);
                 index = analyzed.Entry with { FileHash = hash };
                 if (index.Chunks.Any(c => c.Diagnostic is "payload_unavailable" or "decode_limit")) throw new IOException("Captured payload is unavailable or exceeds the decoding budget.");
                 if (index.State == SemanticState.Present) { encoding = "SegmentedRegion"; payloads = analyzed.Payloads; }
                 else encoding = "OpaqueRegion";
-                if (oldIndex is not null && index.State == SemanticState.Present)
-                    foreach (var chunk in index.Chunks.Where(c => c.State == SemanticState.Absent))
-                        if (oldIndex.Chunks.Any(c => c.Slot == chunk.Slot && c.State == SemanticState.Present))
-                            deletedChunks.Add(path + "#" + chunk.Slot);
             }
             var segments = new List<WorldRecipeSegment>();
             var reusable = encoding == "Raw" ? new Dictionary<string, WorldObjectReference>()
@@ -130,7 +126,7 @@ public static class WorldIncrementalFormat
             var issues = chunks.Where(c => c.Diagnostic is not null).Select(c => "slot:" + c.Slot + ":" + c.Diagnostic).ToArray();
             var state = chunks.FirstOrDefault(c => c.State is not (SemanticState.Present or SemanticState.Absent))?.State ?? SemanticState.Present;
             var refreshed = oldIndex with { Chunks = chunks, State = state, Diagnostics = issues };
-            current[owner!] = file with { Index = Write(writer, refreshed, [], token), ReferencedBytesByPack = null,
+            current[owner!] = file with { Index = Write(writer, refreshed, [], token), ReferenceValidation = null,
                 SemanticSummary = WorldSemanticSummary.From(refreshed) };
         }
 
@@ -142,7 +138,7 @@ public static class WorldIncrementalFormat
             var file = current[path];
             if (file.SemanticSummary?.IsValid == true && (!classificationChanged || updates.Contains(path))) continue;
             var index = file.Index is null ? null : Read<RegionEntry>(summaryReader, file.Index, token);
-            var classified = WorldCapture.TryAddress(path, worlds, out var address);
+            var classified = MinecraftPathGrammar.TryRegionAddress(path, worlds, out var address);
             var rebuild = classified && (index is null || index.Address != address || baseline?.SemanticClassifierVersion is not (null or 0 or 1));
             var indexRef = file.Index;
             if (rebuild)
@@ -153,7 +149,7 @@ public static class WorldIncrementalFormat
             }
             else if (!classified) { index = null; indexRef = null; }
             current[path] = file with { Index = indexRef, SemanticSummary = WorldSemanticSummary.From(index),
-                ReferencedBytesByPack = indexRef == file.Index ? file.ReferencedBytesByPack : null };
+                ReferenceValidation = indexRef == file.Index ? file.ReferenceValidation : null };
         }
 
         // Keep this transaction's payloads; copy only inherited objects, never recapture them.
@@ -179,42 +175,25 @@ public static class WorldIncrementalFormat
                 }
                 var recipeRef = Write(writer, recipe with { Segments = segments }, segments.Select(s => s.Content.ArtifactId).Distinct().ToArray(), token);
                 var indexRef = file.Index is not null ? Write(writer, Read<RegionEntry>(combined, file.Index, token), [], token) : null;
-                current[path] = file with { Recipe = recipeRef, Index = indexRef, ReferencedBytesByPack = null };
+                current[path] = file with { Recipe = recipeRef, Index = indexRef, ReferenceValidation = null };
             }
         }
         if (current.Values.Sum(f => f.Length) > 16L * 1024 * 1024 * 1024) throw new IOException("World byte quota exceeded.");
-        var accountingReader = new CombinedObjects(reader, writer);
-        var referencedPacks = new HashSet<Guid>();
-        long pinnedBytes = 0, referencedBytes = 0;
+        var validationReader = new CombinedObjects(reader, writer);
         foreach (var path in current.Keys.ToArray())
         {
             var file = current[path];
-            var usage = file.ReferencedBytesByPack ?? SummarizeReferences(file, accountingReader, token);
-            current[path] = file with { ReferencedBytesByPack = usage };
-            foreach (var (id, used) in usage)
-            {
-                if (used < 0 || used > accountingReader.GetPackLength(id)) throw new InvalidDataException("Invalid immutable pack usage summary.");
-                referencedBytes = checked(referencedBytes + used); referencedPacks.Add(id);
-            }
+            if (file.HasValidatedReferences) continue;
+            ValidateReferences(file, validationReader, token);
+            current[path] = file with { ReferenceValidation = new(file.Recipe, file.Index, file.Length) };
         }
-        // A shared metadata pack can retain data that no current file references.
-        // Count its entire declared transitive closure, not only the used ranges.
-        var pendingPacks = new Stack<Guid>(referencedPacks); var reachablePacks = new HashSet<Guid>();
-        while (pendingPacks.TryPop(out var id))
-        {
-            token.ThrowIfCancellationRequested();
-            if (!reachablePacks.Add(id)) continue;
-            if (reachablePacks.Count > 4096) throw new IOException("Pack accounting node budget exceeded.");
-            pinnedBytes = checked(pinnedBytes + accountingReader.GetPackLength(id));
-            foreach (var dependency in accountingReader.GetDependencies(id)) pendingPacks.Push(dependency);
-        }
+        ValidatePackClosure(current.Values, validationReader, token);
         captureStage?.SetTag("region.payload.bytes", payloadBytes);
         captureStage?.SetTag("region.residual.bytes", residualBytes);
         captureStage?.SetTag("new.data.bytes", newBytes);
         return new(1, sourceId, boundary, current.Values.OrderBy(f => f.Path, StringComparer.Ordinal).ToArray(),
-            deleted.Order(StringComparer.Ordinal).ToArray(), deletedChunks, checkpoint, newBytes, updates.Count)
-        { ReferencedObjectBytes = referencedBytes, PinnedPackBytes = pinnedBytes,
-          SemanticClassifierVersion = 1, WorldRootsFingerprint = rootsFingerprint };
+            deleted.Order(StringComparer.Ordinal).ToArray(), [], checkpoint, newBytes, updates.Count)
+        { SemanticClassifierVersion = 1, WorldRootsFingerprint = rootsFingerprint };
 
         ChunkEntry RefreshExternal(ChunkEntry chunk)
         {
@@ -232,26 +211,52 @@ public static class WorldIncrementalFormat
     private static string RootsFingerprint(IEnumerable<string> worlds) => Convert.ToHexString(SHA256.HashData(
         JsonSerializer.SerializeToUtf8Bytes(worlds.Order(StringComparer.Ordinal).ToArray())));
 
-    private static IReadOnlyDictionary<Guid, long> SummarizeReferences(WorldStateFile file, IWorldObjectReader reader, CancellationToken token)
+    private static void ValidateReferences(WorldStateFile file, IWorldObjectReader reader, CancellationToken token)
     {
-        var recipe = Read<WorldFileRecipe>(reader, file.Recipe, token);
-        if (recipe.Segments.Count > 1_000_000) throw new IOException("Reference accounting budget exceeded.");
-        var references = recipe.Segments.Select(s => s.Content).Append(file.Recipe);
-        if (file.Index is not null) references = references.Append(file.Index);
-        var usage = new Dictionary<Guid, long>();
-        foreach (var segment in recipe.Segments) reader.ValidateDependency(file.Recipe.ArtifactId, segment.Content.ArtifactId);
-        foreach (var group in references.GroupBy(r => r.ArtifactId))
+        ValidateRange(file.Recipe, reader);
+        if (file.Index is not null) ValidateRange(file.Index, reader);
+        ValidateRecipe(file, Read<WorldFileRecipe>(reader, file.Recipe, token), reader, token);
+    }
+
+    private static void ValidateRange(WorldObjectReference reference, IWorldObjectReader reader)
+    {
+        var length = reader.GetPackLength(reference.ArtifactId);
+        if (reference.Offset < 0 || reference.Length < 0 || reference.Offset > length
+            || reference.Length > length - reference.Offset)
+            throw new InvalidDataException("Reference exceeds pack.");
+    }
+
+    private static void ValidatePackClosure(IEnumerable<WorldStateFile> files, IWorldObjectReader reader, CancellationToken token)
+    {
+        var pending = new Stack<Guid>(files.SelectMany(f => f.Index is null
+            ? new[] { f.Recipe.ArtifactId } : new[] { f.Recipe.ArtifactId, f.Index.ArtifactId }));
+        var visited = new HashSet<Guid>();
+        while (pending.TryPop(out var id))
         {
-            var packLength = reader.GetPackLength(group.Key); long end = 0, bytes = 0;
-            foreach (var reference in group.OrderBy(r => r.Offset))
-            {
-                var next = checked(reference.Offset + reference.Length);
-                if (reference.Offset < 0 || reference.Length < 0 || next > packLength) throw new InvalidDataException("Reference exceeds pack.");
-                bytes = checked(bytes + Math.Max(0, next - Math.Max(end, reference.Offset))); end = Math.Max(end, next);
-            }
-            usage.Add(group.Key, bytes);
+            token.ThrowIfCancellationRequested();
+            if (!visited.Add(id)) continue;
+            if (visited.Count > 4096) throw new IOException("Pack dependency node budget exceeded.");
+            if (reader.GetPackLength(id) < 0) throw new InvalidDataException("Invalid pack length.");
+            foreach (var dependency in reader.GetDependencies(id)) pending.Push(dependency);
         }
-        return usage;
+    }
+
+    private static void ValidateRecipe(WorldStateFile file, WorldFileRecipe recipe, IWorldObjectReader reader, CancellationToken token)
+    {
+        if (recipe.Version != 1 || recipe.Length != file.Length || recipe.Encoding is not ("Raw" or "OpaqueRegion" or "SegmentedRegion")
+            || recipe.Segments.Count > 1_000_000)
+            throw new InvalidDataException("Invalid file recipe.");
+        long end = 0;
+        foreach (var segment in recipe.Segments)
+        {
+            token.ThrowIfCancellationRequested();
+            reader.ValidateDependency(file.Recipe.ArtifactId, segment.Content.ArtifactId);
+            ValidateRange(segment.Content, reader);
+            if (segment.FileOffset != end || segment.Content.Length <= 0 || segment.Content.Length > file.Length - end)
+                throw new InvalidDataException("Recipe coverage is not exact.");
+            end += segment.Content.Length;
+        }
+        if (end != file.Length) throw new InvalidDataException("Recipe coverage differs from file length.");
     }
 
     public static T Read<T>(IWorldObjectReader reader, WorldObjectReference reference, CancellationToken token)
@@ -270,16 +275,7 @@ public static class WorldIncrementalFormat
     public static Stream OpenFile(WorldStateFile file, IWorldObjectReader reader, CancellationToken token)
     {
         var recipe = Read<WorldFileRecipe>(reader, file.Recipe, token);
-        if (recipe.Version != 1 || recipe.Length != file.Length || recipe.Encoding is not ("Raw" or "OpaqueRegion" or "SegmentedRegion"))
-            throw new InvalidDataException("Invalid file recipe.");
-        long end = 0;
-        foreach (var segment in recipe.Segments)
-        {
-            reader.ValidateDependency(file.Recipe.ArtifactId, segment.Content.ArtifactId);
-            if (segment.FileOffset != end || segment.Content.Length <= 0) throw new InvalidDataException("Recipe coverage is not exact.");
-            end = checked(end + segment.Content.Length);
-        }
-        if (end != file.Length) throw new InvalidDataException("Recipe coverage differs from file length.");
+        ValidateRecipe(file, recipe, reader, token);
         return new RecipeStream(recipe, reader, token);
     }
     internal static string HashRange(Stream input, long length, CancellationToken token)

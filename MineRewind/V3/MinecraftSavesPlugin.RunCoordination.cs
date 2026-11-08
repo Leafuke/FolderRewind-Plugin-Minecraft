@@ -190,7 +190,7 @@ public sealed partial class MinecraftSavesPlugin : IBackupRunCoordinationCapabil
             finally { _owner._acquiringRun.Value = previous; }
 
             IConsistencyLease Lease(IReadOnlyList<PluginDiagnostic> diagnostics, bool coordinated = false)
-                => new MinecraftConsistencyLease(request.Folder.Path, diagnostics, null)
+                => new MinecraftConsistencyLease(request.Folder.Path, diagnostics)
                 { CaptureCancellation = coordinated && _request.Intent == ConsistencyIntent.Require ? _captureCancellation.Token : default };
             IConsistencyLease Degrade(string code)
             {

@@ -137,7 +137,7 @@ public static class WorldCapture
             }
 
         // Recheck bytes and inventory after all dependencies have been read. This is not a game snapshot.
-        var verification = ScratchArchive.VerifySource(source, scratch, token);
+        var verification = WorldVerification.VerifySource(source, scratch, token);
         if (!verification.Success || !inventory.SequenceEqual(source.GetInventory(token).OrderBy(f => f.RelativePath, StringComparer.Ordinal)))
             throw new IOException("Changing source view: " + string.Join(", ", verification.Errors.Take(8)));
         var orphan = inventory.Count(f => f.RelativePath.EndsWith(".mcc", StringComparison.OrdinalIgnoreCase) && !referencedExternal.Contains(f.RelativePath));

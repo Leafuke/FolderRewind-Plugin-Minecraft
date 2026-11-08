@@ -13,4 +13,5 @@
   <Project Path="MineRewind/MineRewind.csproj">
     <Platform Solution="*|x64" Project="x64" />
   </Project>
+  <Project Path="tools/MineRewind.WorldProbe.Support/MineRewind.WorldProbe.Support.csproj" />
 </Solution>

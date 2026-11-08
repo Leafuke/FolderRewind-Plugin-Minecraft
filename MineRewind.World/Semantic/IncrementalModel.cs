@@ -7,11 +7,16 @@ public sealed record WorldFileRecipe(int Version, string Encoding, long Length, 
 public sealed record WorldStateFile(string Path, long Length, string Sha256,
     WorldObjectReference Recipe, WorldObjectReference? Index)
 {
-    // File-scoped deduplication means intervals never alias across different files.
-    // This compact per-pack summary avoids reading every unchanged recipe for accounting.
-    public IReadOnlyDictionary<Guid, long>? ReferencedBytesByPack { get; init; }
+    // An in-memory witness only: deserialized roots always validate their recipe references once.
+    [System.Text.Json.Serialization.JsonIgnore]
+    internal WorldReferenceValidation? ReferenceValidation { get; init; }
+    [System.Text.Json.Serialization.JsonIgnore]
+    internal bool HasValidatedReferences => ReferenceValidation is { } proof
+        && proof.Length == Length && proof.Recipe == Recipe && proof.Index == Index;
     public WorldSemanticSummary? SemanticSummary { get; init; }
 }
+internal sealed record WorldReferenceValidation(WorldObjectReference Recipe, WorldObjectReference? Index, long Length);
+
 /// <summary>Diagnostic cache only. Never authorizes restore, omission, deletion or integrity acceptance.</summary>
 public sealed record WorldSemanticSummary(int ClassifierVersion, int OpaqueRegions, int CorruptChunks,
     int UnsupportedChunks, int MissingExternalFiles, int UnclassifiedRegions)
@@ -29,11 +34,8 @@ public sealed record WorldIncrementalState(int Version, string SourceId, string 
     IReadOnlyList<WorldStateFile> Files, IReadOnlyList<string> DeletedFiles, IReadOnlyList<string> DeletedChunks,
     bool Checkpoint, long NewDataBytes, int ChangedFiles)
 {
-    public long ReferencedObjectBytes { get; init; }
-    public long PinnedPackBytes { get; init; }
     public int SemanticClassifierVersion { get; init; }
     public string? WorldRootsFingerprint { get; init; }
-    public bool CompactionRecommended => PinnedPackBytes > 2m * ReferencedObjectBytes;
 }
 
 public interface IWorldObjectReader

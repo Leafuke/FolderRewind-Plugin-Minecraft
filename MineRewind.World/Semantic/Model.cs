@@ -36,8 +36,6 @@ public sealed record CaptureSummary(int Files, int Regions, long Bytes, int Pres
 }
 public sealed record ScratchCompletion(int SchemaVersion, string SourceId, string FilesHash, string RegionsHash,
     string DiagnosticsHash, CaptureSummary Summary);
-public sealed record ProbeDiagnostic(string RelativePath, string Code);
-public sealed record VerificationResult(bool Success, int Files, long Bytes, IReadOnlyList<string> Errors);
 
 public static class SemanticJson
 {

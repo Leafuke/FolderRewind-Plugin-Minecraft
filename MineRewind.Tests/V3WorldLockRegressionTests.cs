@@ -28,13 +28,13 @@ public sealed partial class V3VerticalSliceTests
         var fixture = Activate();
         fixture.Plugin.ProbeWorldLock = path => MinecraftWorldLockProbe.Inspect(path, _ => throw new UnauthorizedAccessException("access evidence"));
         var (config, folder) = Snapshots(world.WorldPath);
-        await using var preferred = await fixture.Plugin.AcquireAsync(new(config, folder, ConsistencyIntent.Prefer), fixture.Invocation);
+        await using var preferred = await fixture.Plugin.AcquireAsync(new(config, folder, ConsistencyIntent.Prefer) { CoordinationOnly = true }, fixture.Invocation);
         var warning = preferred.Diagnostics.Single();
         Assert.AreEqual("minerewind.world_lock_probe_failed", warning.Code);
         Assert.AreEqual(DiagnosticSeverity.Warning, warning.Severity);
         StringAssert.Contains(warning.Arguments["exceptionType"], "UnauthorizedAccessException");
         var failed = await Assert.ThrowsExactlyAsync<IOException>(async () =>
-            await fixture.Plugin.AcquireAsync(new(config, folder, ConsistencyIntent.Require), fixture.Invocation));
+            await fixture.Plugin.AcquireAsync(new(config, folder, ConsistencyIntent.Require) { CoordinationOnly = true }, fixture.Invocation));
         StringAssert.Contains(failed.Message, warning.Code);
         Assert.IsInstanceOfType<UnauthorizedAccessException>(failed.InnerException);
         var calls = 0;
@@ -110,7 +110,7 @@ public sealed partial class V3VerticalSliceTests
             fixture.Services.KnotLink.IsAvailable = false;
             var (config, folder) = Snapshots(world.WorldPath);
             await using var backup = await fixture.Plugin.AcquireAsync(
-                new BackupConsistencyRequest(config, folder, ConsistencyIntent.Require), fixture.Invocation);
+                new BackupConsistencyRequest(config, folder, ConsistencyIntent.Require) { CoordinationOnly = true }, fixture.Invocation);
             Assert.IsEmpty(backup.Diagnostics);
             var calls = 0;
             var restored = await fixture.Plugin.CoordinateAsync(new(config, [folder], "version", Guid.NewGuid(),

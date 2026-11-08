@@ -210,48 +210,6 @@ public sealed partial class MinecraftSavesPlugin
         return MinecraftMetadataService.CaptureAsync(request, context);
     }
 
-    public ValueTask<ConfigChangeProposal?> ProposeAsync(
-        ConfigReconciliationRequest request,
-        PluginInvocationContext context)
-    {
-        EnsureActivated();
-        ValidateKind(request.Config.Kind);
-        var existing = request.Config.Folders
-            .Select(folder => NormalizePath(folder.Path))
-            .Where(path => path is not null)
-            .ToHashSet(StringComparer.OrdinalIgnoreCase);
-        var additions = new List<ConfigChange>();
-        foreach (var folder in request.Config.Folders)
-        {
-            var world = ResolveWorldPath(folder.Path);
-            var saves = world is null ? null : Directory.GetParent(world)?.FullName;
-            if (saves is null || !Directory.Exists(saves)) continue;
-            IEnumerable<string> siblings;
-            try { siblings = Directory.EnumerateDirectories(saves); }
-            catch { continue; }
-            foreach (var sibling in siblings.Where(IsWorld))
-            {
-                var normalized = NormalizePath(sibling);
-                if (normalized is null || !existing.Add(normalized)) continue;
-                additions.Add(new AddFolderChange(new FolderDraft(
-                    sibling,
-                    Path.GetFileName(sibling),
-                    EmptyDraftStates)));
-            }
-        }
-        if (additions.Count == 0) return ValueTask.FromResult<ConfigChangeProposal?>(null);
-        var fingerprint = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(
-            string.Join("\n", additions.OfType<AddFolderChange>().Select(value => value.Folder.Path).Order()))))
-            .ToLowerInvariant();
-        return ValueTask.FromResult<ConfigChangeProposal?>(new ConfigChangeProposal(
-            "minecraft-reconcile-" + fingerprint[..16],
-            request.Config.ConfigId,
-            request.Config.Revision,
-            request.Reason,
-            additions,
-            Array.Empty<PluginDiagnostic>()));
-    }
-
     public ValueTask<PluginCommandResult> ExecuteAsync(
         string command,
         IReadOnlyDictionary<string, string> arguments,
@@ -263,15 +221,6 @@ public sealed partial class MinecraftSavesPlugin
         if (!known)
             return ValueTask.FromResult(CommandFailure("minerewind.knotlink_command_unavailable"));
         return ExecuteInboundKnotLinkAsync(command, arguments, context);
-    }
-
-    private static string? NormalizePath(string path)
-    {
-        try
-        {
-            return Path.GetFullPath(path).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
-        }
-        catch { return null; }
     }
 
 }
