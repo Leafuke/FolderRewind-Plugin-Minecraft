@@ -51,7 +51,7 @@ internal sealed class MinecraftDiscoveryContext(CancellationToken cancellationTo
             catch (FileNotFoundException) { }
             catch (DirectoryNotFoundException) { }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
-            { Warn("minerewind.discovery_directory_unreadable", source, current); return true; }
+            { Warn("minerewind.discovery_directory_unreadable", source, current, ex); return true; }
             if (current.Equals(anchor, StringComparison.OrdinalIgnoreCase)) break;
         }
         return false;
@@ -64,12 +64,16 @@ internal sealed class MinecraftDiscoveryContext(CancellationToken cancellationTo
         if (EnvironmentInputs.Clock.GetElapsedTime(_started) >= TimeSpan.FromSeconds(29)) throw new MinecraftDiscoveryBudgetException("time");
     }
 
-    public void Warn(string code, string source, string path)
-        => Diagnostics.Add(new(code, DiagnosticSeverity.Warning, "Discovery",
-            MinecraftSavesPlugin.PluginIdentity, new Dictionary<string, string>
-            {
-                ["source"] = source, ["path"] = path
-            }));
+    public void Warn(string code, string source, string path, Exception? error = null)
+    {
+        var arguments = new Dictionary<string, string> { ["source"] = source, ["path"] = path };
+        if (error is not null)
+        {
+            arguments["exceptionType"] = error.GetType().FullName ?? "";
+            arguments["hresult"] = "0x" + error.HResult.ToString("X8", System.Globalization.CultureInfo.InvariantCulture);
+        }
+        Diagnostics.Add(new(code, DiagnosticSeverity.Warning, "Discovery", MinecraftSavesPlugin.PluginIdentity, arguments));
+    }
 
     public static string? Normalize(string? path)
     {
@@ -95,7 +99,7 @@ internal sealed class MinecraftDiscoveryContext(CancellationToken cancellationTo
         catch (DirectoryNotFoundException) { yield break; }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
-            Warn("minerewind.discovery_directory_unreadable", source, path);
+            Warn("minerewind.discovery_directory_unreadable", source, path, ex);
             yield break;
         }
         using (iterator)
@@ -107,7 +111,7 @@ internal sealed class MinecraftDiscoveryContext(CancellationToken cancellationTo
                 try { next = iterator.MoveNext(); }
                 catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
                 {
-                    Warn("minerewind.discovery_directory_unreadable", source, path);
+                    Warn("minerewind.discovery_directory_unreadable", source, path, ex);
                     yield break;
                 }
                 if (!next) yield break;
@@ -117,7 +121,7 @@ internal sealed class MinecraftDiscoveryContext(CancellationToken cancellationTo
                 FileAttributes attributes;
                 try { attributes = File.GetAttributes(entry); }
                 catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
-                { Warn("minerewind.discovery_directory_unreadable", source, entry); continue; }
+                { Warn("minerewind.discovery_directory_unreadable", source, entry, ex); continue; }
                 if ((attributes & FileAttributes.ReparsePoint) != 0)
                 { Warn("minerewind.discovery_link_skipped", source, entry); continue; }
                 if ((attributes & FileAttributes.Directory) != 0) yield return entry;
@@ -160,7 +164,7 @@ internal sealed class MinecraftDiscoveryContext(CancellationToken cancellationTo
         catch (DirectoryNotFoundException) { return null; }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
-            Warn("minerewind.discovery_config_unreadable", source, path);
+            Warn("minerewind.discovery_config_unreadable", source, path, ex);
             return null;
         }
     }
@@ -170,9 +174,9 @@ internal sealed class MinecraftDiscoveryContext(CancellationToken cancellationTo
         var text = ReadText(path, source);
         if (text is null) return null;
         try { return JsonDocument.Parse(text, new() { AllowTrailingCommas = true, CommentHandling = JsonCommentHandling.Skip }); }
-        catch (JsonException)
+        catch (JsonException error)
         {
-            Warn("minerewind.discovery_config_invalid", source, path);
+            Warn("minerewind.discovery_config_invalid", source, path, error);
             return null;
         }
     }

@@ -55,7 +55,7 @@ internal static class MinecraftDiscoveryService
             context.Check();
             try { action(); }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException or NotSupportedException)
-            { context.Warn("minerewind.discovery_source_failed", source, path); }
+            { context.Warn("minerewind.discovery_source_failed", source, path, ex); }
         }
     }
 }

@@ -8,6 +8,18 @@ namespace MineRewind.Tests;
 public sealed class DiscoveryFixtureTests
 {
     [TestMethod]
+    public void FailedDiscoveryRetainsSafeExceptionMetadataWithoutConsoleOrMessages()
+    {
+        using var fixture = new DiscoveryFixture();
+        Directory.CreateDirectory(fixture.PathOf("unreadable"));
+        var environment = fixture.Environment with { Entries = _ => throw new IOException("bare-fixture-secret") };
+        var scan = fixture.Scan([fixture.PathOf("unreadable")], environment: environment);
+        var error = scan.Diagnostics.First(d => d.Arguments.GetValueOrDefault("exceptionType") == typeof(IOException).FullName);
+        Assert.IsTrue(error.Arguments["hresult"].StartsWith("0x", StringComparison.Ordinal));
+        Assert.IsFalse(error.Arguments.Values.Any(value => value.Contains("bare-fixture-secret", StringComparison.Ordinal)));
+    }
+
+    [TestMethod]
     public void LauncherFixturesResolveRelativePathsAndMergeSourcesWithoutAmbientReads()
     {
         using var fixture = new DiscoveryFixture();
