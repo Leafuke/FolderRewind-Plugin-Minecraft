@@ -14,20 +14,23 @@ internal static class MinecraftMetadataService
         token.ThrowIfCancellationRequested();
         var source = Path.GetFullPath(request.Folder.Path);
         var budget = scanBudget ?? new WorldScanBudget();
-        var observed = WorldObserver.ObserveForDisplay(source, token, budget);
+        var observed = WorldObserver.ObserveForDisplay(source, budget, token);
         if (observed.Kind == WorldObservationKind.Ordinary) return ValueTask.FromResult(new FolderMetadataResult([], []));
         var fields = new List<FolderMetadataField>();
         var diagnostics = new List<PluginDiagnostic>();
-        var count = 0;
+        var counted = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var roots = observed.Worlds.Select(w => w.Path).ToArray();
         try
         {
-            // One scan, including multi-world sources, rather than double-counting nested roots.
-            foreach (var path in budget.Files(source, source, token, rejectLinks: false))
-                if (roots.Any(root => path.StartsWith(root.TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase))
-                    && WorldPaths.TryRegionName(path, out _)) count++;
+            foreach (var root in roots)
+            {
+                var facts = WorldLayoutReader.Read(source, root, rejectLinks: false, budget, token);
+                foreach (var file in facts.Dimensions.SelectMany(d => d.RegionFiles)) counted.Add(file.RelativePath);
+                if (facts.Issues.Any(i => i.Code == "dimension_layout_ambiguous")) budget.MarkIncomplete();
+            }
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { diagnostics.Add(Warning("scan", "The region count is incomplete.", "区域文件统计未完成。")); }
+        var count = counted.Count;
         var incomplete = budget.Incomplete || !observed.IsComplete || diagnostics.Count > 0;
         if (incomplete && diagnostics.Count == 0) diagnostics.Add(Warning("scan", "Some entries could not be counted.", "部分目录项未能纳入统计。"));
         if (roots.Length == 1)

@@ -13,6 +13,7 @@
     <PluginApiPackageVersion Condition="'$(PluginApiPackageVersion)'==''">3.18.0</PluginApiPackageVersion>
     <ContractProvenance Condition="'$(ContractProvenance)'==''">$(MSBuildProjectDirectory)\..\contracts\source-manifest.json</ContractProvenance>
     <AllowDevelopmentContract Condition="'$(AllowDevelopmentContract)'==''">false</AllowDevelopmentContract>
+    <PluginRestoreConfig Condition="'$(PluginRestoreConfig)'==''">$(MSBuildProjectDirectory)\..\NuGet.Config</PluginRestoreConfig>
   </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="..\MineRewind.World\MineRewind.World.csproj" />
@@ -39,7 +40,7 @@
     <MakeDir Directories="$(PluginPackAppData);$(PluginPackStaging)" />
     <Copy SourceFiles="@(PluginPayload)" DestinationFolder="$(PluginPackStaging)" />
     <Copy SourceFiles="$(ContractProvenance)" DestinationFiles="$(PluginPackStaging)\contract-source.json" />
-    <Exec EnvironmentVariables="APPDATA=$(PluginPackAppData)" Command="dotnet restore &quot;$(MSBuildProjectDirectory)\..\tools\MineRewind.Pack\MineRewind.Pack.csproj&quot; --configfile &quot;$(MSBuildProjectDirectory)\..\NuGet.Config&quot;" />
+    <Exec EnvironmentVariables="APPDATA=$(PluginPackAppData)" Command="dotnet restore &quot;$(MSBuildProjectDirectory)\..\tools\MineRewind.Pack\MineRewind.Pack.csproj&quot; --configfile &quot;$(PluginRestoreConfig)&quot;" />
     <Exec EnvironmentVariables="APPDATA=$(PluginPackAppData)" Command="dotnet run --no-restore -c $(Configuration) --project &quot;$(MSBuildProjectDirectory)\..\tools\MineRewind.Pack\MineRewind.Pack.csproj&quot; -- &quot;$(PluginPackStaging)&quot; &quot;$(FrPluginOutput)&quot; --sdk &quot;@(_ContractReference->'%(FullPath)')&quot; --sdk-package &quot;$(_ContractPackagePath)&quot; --allow-development &quot;$(AllowDevelopmentContract)&quot;" />
     <RemoveDir Directories="$(PluginPackStaging)" />
   </Target>

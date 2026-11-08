@@ -582,7 +582,7 @@ public sealed partial class V3VerticalSliceTests
         services ??= new FakeHostServices();
         var plugin = new V3Plugin();
         var activation = new FakeActivationContext(preservePlayerData);
-        plugin.ActivateAsync(activation, CancellationToken.None).GetAwaiter().GetResult();
+        plugin.ActivateAsync(activation, CancellationToken.None).AsTask().GetAwaiter().GetResult();
         Assert.AreSame(plugin, activation.Capability);
         return new ActivatedFixture(
             plugin,

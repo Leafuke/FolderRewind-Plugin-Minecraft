@@ -25,10 +25,10 @@ public static class WorldObserver
         { "region", "entities", "poi", "dimensions", "DIM-1", "DIM1", "playerdata", "players", "advancements", "stats", "datapacks", "data" };
 
     public static WorldObservation Observe(string source, CancellationToken token = default)
-        => ObserveCore(source, token, null);
-    internal static WorldObservation ObserveForDisplay(string source, CancellationToken token, WorldScanBudget budget)
-        => ObserveCore(source, token, budget);
-    private static WorldObservation ObserveCore(string source, CancellationToken token, WorldScanBudget? budget)
+        => ObserveCore(source, null, token);
+    internal static WorldObservation ObserveForDisplay(string source, WorldScanBudget budget, CancellationToken token)
+        => ObserveCore(source, budget, token);
+    private static WorldObservation ObserveCore(string source, WorldScanBudget? budget, CancellationToken token)
     {
         var worlds = new List<ObservedWorld>();
         var issues = new List<WorldObservationIssue>();
@@ -68,15 +68,11 @@ public static class WorldObserver
                 {
                     var properties = Path.Combine(item.Path, "server.properties");
                     if (new FileInfo(properties).Length > 65536) Issue(properties, "server_properties_budget");
-                    else foreach (var line in File.ReadLines(properties))
+                    else foreach (var line in WorldLocator.ReadProperties(properties, token))
                     {
                         token.ThrowIfCancellationRequested();
-                        var text = line.Trim();
-                        if (text.StartsWith('#') || text.StartsWith('!')) continue;
-                        var separator = text.IndexOf('=');
-                        if (separator < 0 || !text[..separator].Trim().Equals("level-name", StringComparison.OrdinalIgnoreCase)) continue;
-                        var name = text[(separator + 1)..].Trim();
-                        if (name.Length == 0) name = "world";
+                        if (!MinecraftPathGrammar.TryLevelName(line, out var name)) continue;
+                        name ??= "world";
                         var child = Path.GetFullPath(Path.Combine(item.Path, name));
                         var relative = Path.GetRelativePath(root, child);
                         if (Path.IsPathRooted(name) || Path.IsPathRooted(relative) || relative == ".."
@@ -95,7 +91,7 @@ public static class WorldObserver
                     var flags = File.GetAttributes(entry);
                     if ((flags & FileAttributes.Directory) == 0) continue;
                     // Host capture excludes linked entries. Never follow them to infer a world outside the Source.
-                    if ((flags & FileAttributes.ReparsePoint) != 0) continue;
+                    if ((flags & FileAttributes.ReparsePoint) != 0) { budget?.MarkIncomplete(); continue; }
                     if (isWorld && WorldDataDirectories.Contains(Path.GetFileName(entry))) continue;
                     pending.Push((entry, item.Depth + 1));
                 }

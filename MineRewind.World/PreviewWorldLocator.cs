@@ -19,12 +19,8 @@ public static class PreviewWorldLocator
             foreach (var line in WorldLocator.ReadProperties(properties, token))
             {
                 token.ThrowIfCancellationRequested();
-                var value = line.Trim();
-                if (value.StartsWith('#') || value.StartsWith('!')) continue;
-                var separator = value.IndexOf('=');
-                if (separator < 0 || !value[..separator].Trim().Equals("level-name", StringComparison.OrdinalIgnoreCase)) continue;
-                var name = value[(separator + 1)..].Trim();
-                if (name.Length == 0) break;
+                if (!MinecraftPathGrammar.TryLevelName(line, out var name)) continue;
+                if (name is null) break;
                 if (Path.IsPathRooted(name)) return (null, false);
                 var candidate = Path.GetFullPath(Path.Combine(root, name));
                 var relative = Path.GetRelativePath(root, candidate);

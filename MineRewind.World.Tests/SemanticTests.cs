@@ -9,7 +9,7 @@ using MineRewind.World.Semantic;
 namespace MineRewind.World.Tests;
 
 [TestClass]
-public sealed class SemanticTests
+public sealed partial class SemanticTests
 {
     private string _root = null!;
     [TestInitialize] public void Init() => _root = Directory.CreateDirectory(Path.Combine(Path.GetTempPath(), "WorldSemanticTests", Guid.NewGuid().ToString("N"))).FullName;

@@ -20,8 +20,7 @@ internal static class SpatialWorldCatalog
     internal static string[] Worlds(IEnumerable<string> paths)
     {
         var values = paths.ToArray();
-        var worlds = values.Where(p => p == "level.dat" || p.EndsWith("/level.dat", StringComparison.Ordinal))
-            .Select(p => p[..^9].TrimEnd('/')).Distinct(StringComparer.Ordinal).OrderByDescending(p => p.Length).ToArray();
+        var worlds = MinecraftPathGrammar.WorldRoots(values);
         if (worlds.Length == 0 && values.Any(p => MineRewind.World.Semantic.MergeRegion.TryAddress(p, [""], out _))) return [""];
         return worlds;
     }

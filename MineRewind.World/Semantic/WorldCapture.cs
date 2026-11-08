@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Text;
 using System.Text.Json;
+using System.Security.Cryptography;
 
 namespace MineRewind.World.Semantic;
 
@@ -8,6 +9,16 @@ public static class WorldCapture
 {
     public static ScratchCompletion Capture(IReadOnlyWorldSource source, ISemanticScratch scratch,
         string sourceId, CancellationToken token = default)
+        => CaptureCore(source, scratch, sourceId, verifiedInventory: false, token);
+
+    /// <summary>The caller owns read protection for the complete inventory until this call ends.
+    /// Every copied file is independently checked against its declared SHA-256.</summary>
+    public static ScratchCompletion CaptureVerified(IReadOnlyWorldSource source, ISemanticScratch scratch,
+        string sourceId, CancellationToken token = default)
+        => CaptureCore(source, scratch, sourceId, verifiedInventory: true, token);
+
+    private static ScratchCompletion CaptureCore(IReadOnlyWorldSource source, ISemanticScratch scratch,
+        string sourceId, bool verifiedInventory, CancellationToken token)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(sourceId);
         if (scratch.Exists("complete.json")) throw new IOException("Scratch already completed.");
@@ -17,11 +28,15 @@ public static class WorldCapture
             || sourceInventory.Sum(f => (long)f.RelativePath.Length) > SemanticPaths.MaximumInventoryPathCharacters)
             throw new IOException("Offline inventory exceeds the P1 metadata budget.");
         var inventory = sourceInventory.OrderBy(f => f.RelativePath, StringComparer.Ordinal).ToArray();
+        if (verifiedInventory && inventory.Any(f => f.Length < 0 || f.Sha256 is not { Length: 64 } || !f.Sha256.All(Uri.IsHexDigit)))
+            throw new IOException("Verified capture requires a length and SHA-256 for every input file.");
         var paths = inventory.Select(f => SemanticPaths.Normalize(f.RelativePath)).ToHashSet(StringComparer.Ordinal);
         if (paths.Count != inventory.Length || paths.Distinct(StringComparer.OrdinalIgnoreCase).Count() != paths.Count)
             throw new InvalidDataException("Duplicate source paths.");
-        var worlds = inventory.Where(f => f.RelativePath == "level.dat" || f.RelativePath.EndsWith("/level.dat", StringComparison.Ordinal))
-            .Select(f => f.RelativePath[..^9].TrimEnd('/')).OrderByDescending(p => p.Length).ToArray();
+        var regionAddresses = WorldLayoutReader.FromInventory(inventory.Select(f => f.RelativePath))
+            .SelectMany(world => world.Dimensions.SelectMany(dimension => dimension.RegionFiles.Select(file =>
+                (file.RelativePath, Address: new RegionAddress(world.WorldId, dimension.Id, file.Region.X, file.Region.Z, file.Component)))))
+            .ToDictionary(item => item.RelativePath, item => item.Address, StringComparer.Ordinal);
         var regions = new List<(RegionAddress Address, string Manifest)>();
         var externalHashes = new Dictionary<string, string>(StringComparer.Ordinal);
         var referencedExternal = new HashSet<string>(StringComparer.Ordinal);
@@ -37,10 +52,15 @@ public static class WorldCapture
                 var info = inventory[number];
                 using var input = source.OpenRead(info.RelativePath);
                 if (!input.CanSeek || input.Length != info.Length) throw new IOException("Source changed or is not seekable: " + info.RelativePath);
-                var originalHash = SemanticStreams.Hash(input, token); input.Position = 0;
+                var originalHash = verifiedInventory ? info.Sha256!.ToUpperInvariant() : SemanticStreams.Hash(input, token);
+                input.Position = 0;
+                if (info.Sha256 is { } expected && !StringComparer.OrdinalIgnoreCase.Equals(originalHash, expected))
+                    throw new IOException("Captured input hash differs from the Host inventory: " + info.RelativePath);
+                using var copiedHash = verifiedInventory ? IncrementalHash.CreateHash(HashAlgorithmName.SHA256) : null;
+                long copiedBytes = 0;
                 RegionAnalysis? analysis = null;
-                if (TryAddress(info.RelativePath, worlds, out var address))
-                    analysis = RegionCodec.Analyze(source, info, input, address!, paths, token);
+                if (regionAddresses.TryGetValue(info.RelativePath, out var address))
+                    analysis = RegionCodec.Analyze(source, info, input, address, paths, token);
                 else if (info.RelativePath.EndsWith(".mca", StringComparison.OrdinalIgnoreCase))
                 {
                     unclassified++;
@@ -60,7 +80,7 @@ public static class WorldCapture
                         if (slice.Offset < cursor || slice.Length < 0 || slice.Offset + slice.Length > input.Length)
                             throw new InvalidDataException("Overlapping payload slices.");
                         Store(cursor, slice.Offset - cursor, residual, prefix + "/residual.bin");
-                        Store(slice.Offset, slice.Length, payload, prefix + "/payload.bin");
+                        Store(slice.Offset, slice.Length, payload, prefix + "/payload.bin", slice.Sha256);
                         cursor = slice.Offset + slice.Length;
                     }
                     Store(cursor, input.Length - cursor, residual, prefix + "/residual.bin");
@@ -70,10 +90,18 @@ public static class WorldCapture
                     using var raw = scratch.Create(prefix + "/raw.bin");
                     Store(0, input.Length, raw, prefix + "/raw.bin");
                 }
-                input.Position = 0;
-                if (originalHash != SemanticStreams.Hash(input, token)) throw new IOException("Changing input: " + info.RelativePath);
+                if (verifiedInventory)
+                {
+                    if (copiedBytes != info.Length || input.Length != info.Length || originalHash != Convert.ToHexString(copiedHash!.GetHashAndReset()))
+                        throw new IOException("Captured input hash/length differs from the Host inventory: " + info.RelativePath);
+                }
+                else
+                {
+                    input.Position = 0;
+                    if (originalHash != SemanticStreams.Hash(input, token)) throw new IOException("Changing input: " + info.RelativePath);
+                }
                 Write(filesWriter, new StoredFile(info.RelativePath, input.Length, originalHash, encoding, segments));
-                rawHashes.Add(info.RelativePath, originalHash); bytes += input.Length;
+                rawHashes.Add(info.RelativePath, originalHash); bytes = checked(bytes + input.Length);
                 if (analysis is not null)
                 {
                     var entry = analysis.Entry with { FileHash = originalHash };
@@ -101,11 +129,14 @@ public static class WorldCapture
                         Write(diagnosticsWriter, new ProbeDiagnostic(info.RelativePath, diagnostic));
                 }
 
-                void Store(long offset, long length, Stream output, string name)
+                void Store(long offset, long length, Stream output, string name, string? analyzedHash = null)
                 {
                     if (length == 0 && info.Length != 0) return;
+                    if (offset != copiedBytes) throw new InvalidDataException("Capture segments do not exactly cover the input.");
                     input.Position = offset; var outputOffset = output.Position;
-                    var hash = SemanticStreams.Copy(input, output, length, token);
+                    var hash = SemanticStreams.Copy(input, output, length, token, copiedHash);
+                    if (analyzedHash is not null && analyzedHash != hash) throw new IOException("Analyzed region payload changed before capture.");
+                    copiedBytes = checked(copiedBytes + length);
                     segments.Add(new(offset, length, name, outputOffset, hash));
                 }
             }
@@ -128,9 +159,12 @@ public static class WorldCapture
             }
 
         // Recheck bytes and inventory after all dependencies have been read. This is not a game snapshot.
-        var verification = ScratchArchive.VerifySource(source, scratch, token);
-        if (!verification.Success || !inventory.SequenceEqual(source.GetInventory(token).OrderBy(f => f.RelativePath, StringComparer.Ordinal)))
-            throw new IOException("Changing source view: " + string.Join(", ", verification.Errors.Take(8)));
+        if (!verifiedInventory)
+        {
+            var verification = ScratchArchive.VerifySource(source, scratch, token);
+            if (!verification.Success || !inventory.SequenceEqual(source.GetInventory(token).OrderBy(f => f.RelativePath, StringComparer.Ordinal)))
+                throw new IOException("Changing source view: " + string.Join(", ", verification.Errors.Take(8)));
+        }
         var orphan = inventory.Count(f => f.RelativePath.EndsWith(".mcc", StringComparison.OrdinalIgnoreCase) && !referencedExternal.Contains(f.RelativePath));
         var summary = new CaptureSummary(inventory.Length, regions.Count, bytes, present, comparable, opaque,
             missing, orphan, unclassified, RegionCodec.BufferBudget, timer.Elapsed.TotalSeconds);
@@ -147,29 +181,5 @@ public static class WorldCapture
     { using var stream = scratch.OpenRead(path); return SemanticStreams.Hash(stream, token); }
 
     internal static bool TryAddress(string path, string[] worlds, out RegionAddress? address)
-    {
-        address = null;
-        if (!path.EndsWith(".mca", StringComparison.Ordinal) || !WorldPaths.TryRegionName(path, out var region)) return false;
-        var world = worlds.FirstOrDefault(w => w.Length == 0 || path.StartsWith(w + "/", StringComparison.Ordinal)) ?? "";
-        var relative = world.Length == 0 ? path : path[(world.Length + 1)..];
-        var parts = relative.Split('/');
-        if (parts.Length < 2) return false;
-        var component = parts[^2] switch
-        {
-            "region" => ChunkComponentKind.Terrain,
-            "entities" => ChunkComponentKind.Entities,
-            "poi" => ChunkComponentKind.Poi,
-            _ => (ChunkComponentKind)(-1)
-        };
-        if ((int)component < 0) return false;
-        var dimensionPath = string.Join('/', parts[..^2]);
-        string dimension;
-        if (dimensionPath == "") dimension = "minecraft:overworld";
-        else if (dimensionPath == "DIM-1") dimension = "minecraft:the_nether";
-        else if (dimensionPath == "DIM1") dimension = "minecraft:the_end";
-        else if (parts.Length >= 5 && parts[0] == "dimensions") dimension = parts[1] + ":" + string.Join('/', parts[2..^2]);
-        else return false;
-        address = new(world.Length == 0 ? "." : world, dimension, region.X, region.Z, component);
-        return true;
-    }
+        => MinecraftPathGrammar.TryRegionAddress(path, worlds, out address);
 }

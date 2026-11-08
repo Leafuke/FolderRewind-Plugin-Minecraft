@@ -113,6 +113,9 @@ public sealed partial class V3VerticalSliceTests
         links.Junctions([(alias, source)]);
         var fixture = Activate();
         var (config, folder) = Snapshots(alias);
+        Assert.IsTrue(MinecraftRegionBackupScope.TryBuild(alias, Path.Combine(alias, "world"),
+            new Dictionary<string, string> { ["regions"] = "0,0" }, out var rules, out var scopeError), scopeError);
+        CollectionAssert.Contains(rules.ToArray(), "world/region/r.0.0.mca");
         await using var lease = await fixture.Plugin.AcquireAsync(new(config, folder, ConsistencyIntent.Require), fixture.Invocation);
         Assert.IsTrue(File.Exists(Path.Combine(lease.SourcePath, "world", "level.dat")));
         Assert.IsTrue(File.Exists(Path.Combine(lease.SourcePath, "world_nether", "DIM-1", "region", "r.0.0.mca")));

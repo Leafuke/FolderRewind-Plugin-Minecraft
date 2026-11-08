@@ -8,6 +8,8 @@
   <Project Path="MineRewind.World/MineRewind.World.csproj" />
   <Project Path="MineRewind.World.Tests/MineRewind.World.Tests.csproj" />
   <Project Path="tools/MineRewind.WorldProbe/MineRewind.WorldProbe.csproj" />
+  <Project Path="tools/MineRewind.RestoreProbe/MineRewind.RestoreProbe.csproj" />
+  <Project Path="tools/MineRewind.Pack/MineRewind.Pack.csproj" />
   <Project Path="MineRewind/MineRewind.csproj">
     <Platform Solution="*|x64" Project="x64" />
   </Project>

@@ -137,7 +137,7 @@ internal static class SemanticStreams
         }
         finally { ArrayPool<byte>.Shared.Return(buffer, clearArray: true); }
     }
-    public static string Copy(Stream source, Stream target, long length, CancellationToken token)
+    public static string Copy(Stream source, Stream target, long length, CancellationToken token, IncrementalHash? fileHash = null)
     {
         using var hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
         var buffer = ArrayPool<byte>.Shared.Rent(BufferSize);
@@ -148,7 +148,7 @@ internal static class SemanticStreams
                 token.ThrowIfCancellationRequested();
                 var read = source.Read(buffer, 0, (int)Math.Min(BufferSize, length));
                 if (read == 0) throw new EndOfStreamException();
-                target.Write(buffer, 0, read); hash.AppendData(buffer, 0, read); length -= read;
+                target.Write(buffer, 0, read); hash.AppendData(buffer, 0, read); fileHash?.AppendData(buffer, 0, read); length -= read;
             }
             return Convert.ToHexString(hash.GetHashAndReset());
         }

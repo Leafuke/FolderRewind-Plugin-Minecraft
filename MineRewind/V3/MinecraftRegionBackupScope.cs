@@ -1,5 +1,6 @@
 using System.Globalization;
 using System.Text;
+using MineRewind.World;
 
 namespace MineRewind;
 
@@ -179,15 +180,18 @@ internal static class MinecraftRegionBackupScope
         out string errorCode)
     {
         var result = new Dictionary<MinecraftDimension, DimensionRoot>();
+        WorldLayoutFacts facts;
+        try { facts = WorldLayoutReader.Read(source, world); }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException)
+        { roots = result; return Fail("dimension_layout_unavailable", out errorCode); }
         foreach (var dimension in dimensions)
         {
-            var candidates = GetDimensionCandidates(world, dimension)
-                .Where(value => Directory.Exists(value.Path))
-                .GroupBy(value => Normalize(value.Path), StringComparer.OrdinalIgnoreCase)
-                .Select(group => group.First())
-                .ToArray();
-            var outside = candidates.Any(value => !IsInside(value.Path, source));
-            candidates = candidates.Where(value => IsInside(value.Path, source)).ToArray();
+            var id = dimension switch { MinecraftDimension.Overworld => MinecraftPathGrammar.Overworld,
+                MinecraftDimension.Nether => MinecraftPathGrammar.Nether, _ => MinecraftPathGrammar.End };
+            var candidates = facts.Dimensions.Where(d => d.Id == id)
+                .Select(d => new DimensionRoot(Path.GetFullPath(Path.Combine(source, d.RelativeRoot)),
+                    d.Family == WorldLayoutFamily.Namespaced ? LayoutFamily.Post26 : LayoutFamily.Legacy)).ToArray();
+            var outside = facts.Issues.Any(i => i.Code == "dimension_outside_source" && i.DimensionId == id);
             if (candidates.Length == 0)
             {
                 roots = new Dictionary<MinecraftDimension, DimensionRoot>();
@@ -208,36 +212,6 @@ internal static class MinecraftRegionBackupScope
         }
         roots = result;
         return Succeed(out errorCode);
-    }
-
-    private static IEnumerable<DimensionRoot> GetDimensionCandidates(string world, MinecraftDimension dimension)
-    {
-        var post26 = Path.Combine(world, "dimensions", "minecraft", dimension switch
-        {
-            MinecraftDimension.Overworld => "overworld",
-            MinecraftDimension.Nether => "the_nether",
-            _ => "the_end"
-        });
-        if (Directory.Exists(post26)) yield return new(post26, LayoutFamily.Post26);
-
-        if (dimension == MinecraftDimension.Overworld)
-        {
-            var hasLegacy = Directory.Exists(Path.Combine(world, "region"))
-                            || Directory.Exists(Path.Combine(world, "entities"))
-                            || Directory.Exists(Path.Combine(world, "poi"));
-            if (hasLegacy || !Directory.Exists(post26)) yield return new(world, LayoutFamily.Legacy);
-            yield break;
-        }
-
-        var child = dimension == MinecraftDimension.Nether ? "DIM-1" : "DIM1";
-        var vanilla = Path.Combine(world, child);
-        if (Directory.Exists(vanilla)) yield return new(vanilla, LayoutFamily.Legacy);
-        var parent = Path.GetDirectoryName(world);
-        var name = Path.GetFileName(world);
-        if (string.IsNullOrWhiteSpace(parent) || string.IsNullOrWhiteSpace(name)) yield break;
-        var suffix = dimension == MinecraftDimension.Nether ? "_nether" : "_the_end";
-        var paper = Path.Combine(parent, name + suffix, child);
-        if (Directory.Exists(paper)) yield return new(paper, LayoutFamily.Legacy);
     }
 
     private static bool TryNormalizeContainedPath(string source, string world, out string normalizedSource, out string normalizedWorld)

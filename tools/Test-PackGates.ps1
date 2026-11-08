@@ -30,6 +30,9 @@ function Run-Pack([string]$name, [bool]$success) {
 }
 Run-Pack 'valid' $true
 $script:validHash = (Get-FileHash -LiteralPath $output).Hash
+if ($Development) {
+    $switch = 'false'; Run-Pack 'development-without-opt-in' $false; $switch = 'true'
+}
 $manifestPath = Join-Path $staging 'manifest.json'; $original = [IO.File]::ReadAllBytes($manifestPath)
 foreach ($case in @('product-version','prerelease','api','architecture')) {
     $manifest = [Text.Encoding]::UTF8.GetString($original) | ConvertFrom-Json
@@ -59,3 +62,5 @@ foreach ($properties in @(@('/p:Version=1.10.99'), @('/p:PluginApiPackageVersion
 }
 $results | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $root 'results.json')
 Write-Output "Passed $($results.Count) package/build gate checks. Evidence: $root"
+# The last native invocation above deliberately fails. Do not leak that expected exit status to callers.
+$global:LASTEXITCODE = 0

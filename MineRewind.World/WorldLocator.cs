@@ -55,12 +55,7 @@ public static class WorldLocator
             foreach (var rawLine in lines)
             {
                 token.ThrowIfCancellationRequested();
-                var line = rawLine.Trim();
-                if (line.Length == 0 || line.StartsWith('#') || line.StartsWith('!')) continue;
-                var separator = line.IndexOf('=');
-                if (separator < 0 || !string.Equals(line[..separator].Trim(), "level-name", StringComparison.OrdinalIgnoreCase)) continue;
-                var value = line[(separator + 1)..].Trim();
-                levelName = value.Length == 0 ? null : value;
+                if (!MinecraftPathGrammar.TryLevelName(rawLine, out levelName)) continue;
                 return true;
             }
             return true;

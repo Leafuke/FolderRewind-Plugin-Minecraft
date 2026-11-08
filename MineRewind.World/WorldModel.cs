@@ -1,5 +1,3 @@
-using System.Globalization;
-
 namespace MineRewind.World;
 
 public readonly record struct RegionKey(int X, int Z);
@@ -62,14 +60,5 @@ public static class WorldPaths
     }
 
     public static bool TryRegionName(string path, out RegionKey key)
-    {
-        key = default;
-        var parts = Path.GetFileName(path).Split('.');
-        if (parts.Length != 4 || parts[0] != "r" || parts[3] != "mca"
-            || !int.TryParse(parts[1], NumberStyles.Integer, CultureInfo.InvariantCulture, out var x)
-            || !int.TryParse(parts[2], NumberStyles.Integer, CultureInfo.InvariantCulture, out var z)
-            || Math.Abs((long)x) > 58_594 || Math.Abs((long)z) > 58_594) return false;
-        key = new(x, z);
-        return true;
-    }
+        => MinecraftPathGrammar.TryRegionName(path, out key);
 }

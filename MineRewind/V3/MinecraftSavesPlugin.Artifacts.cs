@@ -22,6 +22,7 @@ public sealed partial class MinecraftSavesPlugin : IBackupArtifactTransformerCap
         var parent = await context.HostServices.TemporaryStorage.CreateDirectoryAsync(token);
         var root = Path.Combine(parent, "full-" + Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(root);
+        Exception? failure = null;
         try
         {
             var inventory = await request.ArtifactRead.ListFilesAsync(request.Primary.Content, token);
@@ -32,14 +33,18 @@ public sealed partial class MinecraftSavesPlugin : IBackupArtifactTransformerCap
             var estimatedBytes = checked(inventory.Sum(f => f.Length) + regionCount * 1024L * 1024 + inventory.Count * 4096L);
             if (inventory.Any(f => f.Length < 0) || estimatedFiles > 100_000 || estimatedBytes > FullQuota)
                 throw new IOException("Estimated Full representation exceeds the staging budget.");
-            var source = new DirectorySemanticScratch(Path.Combine(root, "source"), true);
-            await CopyInputAsync(request.ArtifactRead, request.Primary.Content, source, token);
-            if (!Directory.EnumerateFiles(source.Root, "level.dat", SearchOption.AllDirectories).Any())
+            var source = new ArtifactWorldSource(request.ArtifactRead, request.Primary.Content, inventory, token);
+            if (!inventory.Any(f => f.RelativePath == "level.dat" || f.RelativePath.EndsWith("/level.dat", StringComparison.Ordinal)))
                 throw new InvalidDataException("No Java world exists in the captured boundary.");
-            var scratch = new DirectorySemanticScratch(Path.Combine(root, "scratch"), true);
+            var scratch = new BudgetedSemanticScratch(new DirectorySemanticScratch(Path.Combine(root, "scratch"), true), estimatedBytes);
             request.Progress.Report(new(0.2, "capture", "Encoding lossless world representation"));
-            var captured = WorldCapture.Capture(new DirectoryWorldSource(source.Root), scratch, request.Folder.FolderId.ToString("D"), token);
-            var files = WorldFullFormat.PrepareExport(scratch, token);
+            ScratchCompletion captured; IReadOnlyList<string> files;
+            using (await context.HostServices.TemporaryStorage.ReserveAsync(root, estimatedBytes, token))
+            {
+                captured = WorldCapture.CaptureVerified(source, scratch, request.Folder.FolderId.ToString("D"), token);
+                files = WorldFullFormat.PrepareExport(scratch, token);
+            }
+            // Scratch is now occupied disk space. Staging reserves its own outstanding writes.
             var allocation = await request.Staging.CreateArtifactAsync(token);
             foreach (var file in files)
             {
@@ -51,13 +56,14 @@ public sealed partial class MinecraftSavesPlugin : IBackupArtifactTransformerCap
             request.Progress.Report(new(1, "sealed", "Lossless world representation prepared"));
             var diagnostics = captured.Summary.FullyComparable ? Array.Empty<PluginDiagnostic>() :
                 new[] { new PluginDiagnostic("minerewind.full.semantic_coverage_limited", DiagnosticSeverity.Warning, "ArtifactTransform",
-                    PluginIdentity, new Dictionary<string, string> { ["opaqueRegions"] = captured.Summary.OpaqueRegions.ToString() }) };
+                    PluginIdentity, new Dictionary<string, string> { ["opaqueRegions"] = captured.Summary.OpaqueRegions.ToString(System.Globalization.CultureInfo.InvariantCulture) }) };
             return new(diagnostics.Length == 0 ? OperationOutcome.Success : OperationOutcome.SuccessWithWarnings,
                 new(request.ExpectedGraphRevision,
                     [new(allocation.ArtifactId, allocation.Staging, new(MineRewindOwnerId, "minecraft-world-full"), 1,
                         RestoreStrategyId, ArtifactCompleteness.Complete, CoreCaptureMode.Full, [])], allocation.ArtifactId), diagnostics);
         }
-        finally { if (Directory.Exists(root)) Directory.Delete(root, true); }
+        catch (Exception error) { failure = error; throw; }
+        finally { DeleteTemporaryArtifactWork(root, failure); }
     }
 
     public async ValueTask<RestoreMaterializationResult> MaterializeAsync(RestoreMaterializationRequest request, PluginInvocationContext context)
@@ -84,19 +90,33 @@ public sealed partial class MinecraftSavesPlugin : IBackupArtifactTransformerCap
         var parent = await context.HostServices.TemporaryStorage.CreateDirectoryAsync(token);
         var root = Path.Combine(parent, "materialize-" + Guid.NewGuid().ToString("N"));
         var input = new DirectorySemanticScratch(root, true);
+        Exception? failure = null;
         try
         {
-            await CopyInputAsync(request.ArtifactRead, artifact.Content, input, token);
+            var inventory = await request.ArtifactRead.ListFilesAsync(artifact.Content, token);
+            if (inventory.Count > 100_000 || inventory.Any(file => file.Length < 0) || inventory.Sum(file => file.Length) > FullQuota)
+                throw new IOException("Artifact input quota exceeded.");
+            var bytes = checked(inventory.Sum(file => file.Length) + inventory.Count * 4096L);
+            using (await context.HostServices.TemporaryStorage.ReserveAsync(root, bytes, token))
+                await CopyInputAsync(request.ArtifactRead, artifact.Content, input, token, inventory);
             WorldFullFormat.Materialize(input, new MaterializationSink(request.Workspace, token), request.Folder.FolderId.ToString("D"), token,
                 new SemanticArchiveReadLimits(request.MaximumOutputBytes));
             return new(OperationOutcome.Success, []);
         }
-        finally { if (Directory.Exists(root)) Directory.Delete(root, true); }
+        catch (Exception error) { failure = error; throw; }
+        finally { DeleteTemporaryArtifactWork(root, failure); }
     }
 
-    private static async Task CopyInputAsync(IArtifactReadService read, ArtifactContentHandle handle, ISemanticScratch destination, CancellationToken token)
+    private static void DeleteTemporaryArtifactWork(string root, Exception? failure)
     {
-        var files = await read.ListFilesAsync(handle, token);
+        try { if (Directory.Exists(root)) Directory.Delete(root, true); }
+        catch (Exception cleanup) when (failure is not null) { failure.Data["TemporaryArtifactCleanupError"] = cleanup; }
+    }
+
+    private static async Task CopyInputAsync(IArtifactReadService read, ArtifactContentHandle handle, DirectorySemanticScratch destination, CancellationToken token,
+        IReadOnlyList<ArtifactFileEntry>? inventory = null)
+    {
+        var files = inventory ?? await read.ListFilesAsync(handle, token);
         if (files.Count > 100_000 || files.Any(f => f.Length < 0) || files.Sum(f => f.Length) > FullQuota)
             throw new IOException("Artifact input quota exceeded.");
         long total = 0; var buffer = new byte[65536];

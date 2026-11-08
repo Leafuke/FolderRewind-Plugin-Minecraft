@@ -16,7 +16,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-dotnet@v4
         with:
-          dotnet-version: 10.0.x
+          global-json-file: global.json
       - name: Resolve and validate release version
         shell: pwsh
         run: |
@@ -30,43 +30,9 @@ jobs:
             }
           }
           "PLUGIN_VERSION=$manifestVersion" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-      - name: Verify exact contract snapshot
+      - name: Build, test and validate exact package
         shell: pwsh
-        run: ./tools/Verify-Contract.ps1
-      - name: Restore
-        run: dotnet restore FolderRewind-Plugin-Minecraft.slnx -p:Platform=x64 --configfile NuGet.Config --no-http-cache
-      - name: Build
-        run: dotnet build FolderRewind-Plugin-Minecraft.slnx --no-restore -c Release -p:Platform=x64
-      - name: Test
-        run: dotnet test MineRewind.Tests/MineRewind.Tests.csproj --no-restore --no-build -c Release -p:Platform=x64 --filter "TestCategory!=PerformanceBenchmark" --logger trx --results-directory artifacts/test-results
-      - name: Test World
-        run: dotnet test MineRewind.World.Tests/MineRewind.World.Tests.csproj --no-restore --no-build -c Release --filter "TestCategory!=PerformanceBenchmark" --logger trx --results-directory artifacts/test-results
-      - name: Pack .frplugin
-        run: dotnet msbuild MineRewind/MineRewind.csproj /t:PackFrPlugin /p:Configuration=Release
-      - name: Reject bundled Abstractions
-        shell: pwsh
-        run: |
-          Add-Type -AssemblyName System.IO.Compression.FileSystem
-          $package = Get-ChildItem artifacts/*.frplugin | Select-Object -First 1
-          $zip = [IO.Compression.ZipFile]::OpenRead($package.FullName)
-          try {
-            if ($zip.Entries.FullName -match '(^|/)FolderRewind.Plugin.Abstractions.dll$') { throw 'Abstractions DLL is bundled.' }
-            $reader = [IO.StreamReader]::new($zip.GetEntry('manifest.json').Open())
-            try { $manifest = $reader.ReadToEnd() | ConvertFrom-Json } finally { $reader.Dispose() }
-            if ($manifest.architectures -contains 'any') {
-              $memory = [IO.MemoryStream]::new()
-              $entry = $zip.GetEntry($manifest.entryAssembly).Open()
-              try { $entry.CopyTo($memory) } finally { $entry.Dispose() }
-              $memory.Position = 0
-              $pe = [System.Reflection.PortableExecutable.PEReader]::new($memory)
-              try {
-                if ($pe.PEHeaders.CoffHeader.Machine -ne [System.Reflection.PortableExecutable.Machine]::I386 -or
-                    ($pe.PEHeaders.CorHeader.Flags -band [System.Reflection.PortableExecutable.CorFlags]::Requires32Bit)) {
-                  throw 'A plugin declaring any architecture must have a portable entry assembly.'
-                }
-              } finally { $pe.Dispose(); $memory.Dispose() }
-            }
-          } finally { $zip.Dispose() }
+        run: ./tools/Build-Plugin.ps1 -EvidenceDirectory artifacts/test-results
       - uses: actions/upload-artifact@v4
         with:
           name: MineRewind-frplugin
