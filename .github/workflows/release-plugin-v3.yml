@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
   pull_request:
   push:
-    branches: [master, main, 1.9.x]
+    branches: [master, main, 1.9.x, 1.11.x]
 
 permissions:
   contents: read
@@ -30,7 +30,32 @@ jobs:
             }
           }
           "PLUGIN_VERSION=$manifestVersion" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-      - name: Build, test and validate exact package
+      - name: Resolve pinned development contract on 1.11.x
+        id: contract
+        shell: pwsh
+        env:
+          BRANCH: ${{ github.base_ref || github.ref_name }}
+        run: |
+          if ($env:BRANCH -ceq '1.11.x' -and (Test-Path contracts/development-host.txt)) {
+            $commit = (Get-Content contracts/development-host.txt -Raw).Trim()
+            if ($commit -cnotmatch '^[a-f0-9]{40}$') { throw 'Expected a full Host SDK source commit.' }
+            "commit=$commit" >> $env:GITHUB_OUTPUT
+          }
+      - uses: actions/checkout@v4
+        if: steps.contract.outputs.commit != ''
+        with:
+          repository: Leafuke/FolderRewind
+          ref: ${{ steps.contract.outputs.commit }}
+          path: candidate-host
+      - name: Build against exact development SDK
+        if: steps.contract.outputs.commit != ''
+        shell: pwsh
+        run: |
+          ./candidate-host/scripts/release/New-DevelopmentPluginContract.ps1 -OutputDirectory artifacts/sdk
+          ./tools/Build-Plugin.ps1 -Development -Provenance artifacts/sdk/contract.candidate.json `
+            -NuGetConfig artifacts/sdk/NuGet.Config -PackageCache artifacts/sdk/cache -EvidenceDirectory artifacts/test-results
+      - name: Build, test and validate published contract
+        if: steps.contract.outputs.commit == ''
         shell: pwsh
         run: ./tools/Build-Plugin.ps1 -EvidenceDirectory artifacts/test-results
       - uses: actions/upload-artifact@v4

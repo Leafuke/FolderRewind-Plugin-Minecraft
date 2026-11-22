@@ -52,6 +52,7 @@ try {
             -Provenance $Provenance -Development:$Development -EvidenceDirectory (Join-Path $evidence 'pack-gates')
     }
     [ordered]@{
+        pluginCommit=(& git rev-parse HEAD); pluginSourceDirty=[bool](& git status --porcelain -- MineRewind MineRewind.World tools Directory.Build.props Directory.Packages.props global.json)
         development=$Development.IsPresent; sdk=(& dotnet --version); configuration=$Configuration
         package=[IO.Path]::GetFullPath($PackageOutput); sha256=(Get-FileHash -LiteralPath $PackageOutput).Hash.ToLowerInvariant()
         nugetConfig=$NuGetConfig; nugetConfigSha256=(Get-FileHash -LiteralPath $NuGetConfig).Hash.ToLowerInvariant()
