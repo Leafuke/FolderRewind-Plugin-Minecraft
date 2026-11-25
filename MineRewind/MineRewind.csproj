@@ -9,7 +9,7 @@
     <GenerateDependencyFile>false</GenerateDependencyFile>
     <CopyLocalLockFileAssemblies>true</CopyLocalLockFileAssemblies>
     <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
-    <Version>1.11.0</Version>
+    <Version>1.11.1</Version>
     <PluginApiPackageVersion Condition="'$(PluginApiPackageVersion)'==''">3.20.0</PluginApiPackageVersion>
     <ContractProvenance Condition="'$(ContractProvenance)'==''">$(MSBuildProjectDirectory)\..\contracts\source-manifest.json</ContractProvenance>
     <AllowDevelopmentContract Condition="'$(AllowDevelopmentContract)'==''">false</AllowDevelopmentContract>
