@@ -44,7 +44,7 @@ public sealed partial class MinecraftSavesPlugin
         var worlds = affectedFolders.SelectMany((folder, index) => observations[index].Worlds
             .Select(world => new CoordinatedWorld(folder, world.Path))).DistinctBy(world => world.WorldPath, StringComparer.OrdinalIgnoreCase).ToArray();
         var safetyViolation = false;
-        request.RegisterMutationSafetyCheck?.Invoke(token =>
+        ValueTask<IReadOnlyList<PluginDiagnostic>> CheckMutationSafety(CancellationToken token)
         {
             var current = affectedFolders.Select(f => MinecraftWorldPathResolver.Observe(f.Path, token)).ToArray();
             IReadOnlyList<PluginDiagnostic> issues;
@@ -56,8 +56,12 @@ public sealed partial class MinecraftSavesPlugin
                     : Diagnostic("minerewind.restore_world_still_occupied", DiagnosticSeverity.Error, "RestoreCoordinator")).ToArray();
             if (issues.Count != 0) safetyViolation = true;
             return ValueTask.FromResult(issues);
-        });
-        if (worlds.Length == 0) return new(await request.ContinueMutationAsync(context.OperationCancellation), diagnostics);
+        }
+        request.RegisterMutationSafetyCheck?.Invoke(CheckMutationSafety);
+        if (worlds.Length == 0)
+            return context.CorrelatedSteps is null
+                ? new(await request.ContinueMutationAsync(context.OperationCancellation), diagnostics)
+                : new(OperationOutcome.Blocked, [Diagnostic("minerewind.world_identity_unresolved", DiagnosticSeverity.Error, "RestoreCoordinator")]);
         var states = worlds.Select(world => (World: world, Probe: ProbeWorldLock(world.WorldPath))).ToArray();
         var unknown = states.Where(item => item.Probe.State == WorldLockState.Unknown).ToArray();
         if (unknown.Length > 0) return new(OperationOutcome.Blocked,
@@ -66,6 +70,9 @@ public sealed partial class MinecraftSavesPlugin
         if (active.Length > 1) return new(OperationOutcome.Blocked,
             [Diagnostic("minerewind.restore_multiple_active_worlds", DiagnosticSeverity.Error, "RestoreCoordinator")]);
         var selected = active.Length == 1 ? active[0].World : worlds[0];
+        if (context.CorrelatedSteps is { } steps)
+            return await CoordinateBoundRestoreAsync(request, context, steps, selected, active.Length == 1,
+                CheckMutationSafety, () => safetyViolation).ConfigureAwait(false);
         request = request with { Folders = [selected.Folder] };
         var worldWasActive = active.Length == 1;
         var signalGateHeld = false; var prepared = false; var safeToRejoin = false; var cancellationReported = false;

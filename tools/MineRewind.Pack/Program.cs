@@ -97,7 +97,7 @@ static void ValidatePackage(string source, JsonElement manifest, string sdk, str
     var api = manifest.GetProperty("pluginApi");
     var apiVersion = $"{api.GetProperty("major").GetInt32()}.{api.GetProperty("minor").GetInt32()}";
     var sdkVersion = apiVersion + ".0";
-    if (apiVersion != "3.19" || Field("apiVersion") != apiVersion || Field("version") != sdkVersion
+    if (apiVersion != "3.20" || Field("apiVersion") != apiVersion || Field("version") != sdkVersion
         || Field("packageId") != "FolderRewind.Plugin.Abstractions" || Field("assemblyVersion") != "3.0.0.0"
         || !Regex.IsMatch(Field("sourceCommit"), "^[0-9a-fA-F]{40}$") || !Regex.IsMatch(Field("sourceDigestSha256"), "^[0-9a-fA-F]{64}$")
         || contract.GetProperty("sources").GetArrayLength() == 0) throw new InvalidDataException("SDK API or provenance differs.");

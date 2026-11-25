@@ -10,7 +10,7 @@
     <CopyLocalLockFileAssemblies>true</CopyLocalLockFileAssemblies>
     <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
     <Version>1.11.0</Version>
-    <PluginApiPackageVersion Condition="'$(PluginApiPackageVersion)'==''">3.19.0</PluginApiPackageVersion>
+    <PluginApiPackageVersion Condition="'$(PluginApiPackageVersion)'==''">3.20.0</PluginApiPackageVersion>
     <ContractProvenance Condition="'$(ContractProvenance)'==''">$(MSBuildProjectDirectory)\..\contracts\source-manifest.json</ContractProvenance>
     <AllowDevelopmentContract Condition="'$(AllowDevelopmentContract)'==''">false</AllowDevelopmentContract>
     <PluginRestoreConfig Condition="'$(PluginRestoreConfig)'==''">$(MSBuildProjectDirectory)\..\NuGet.Config</PluginRestoreConfig>

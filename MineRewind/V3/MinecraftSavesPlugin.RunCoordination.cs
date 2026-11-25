@@ -21,6 +21,8 @@ public sealed partial class MinecraftSavesPlugin : IBackupRunCoordinationCapabil
             || request.Sources.Select(s => s.Folder.FolderId).Distinct().Count() != request.Sources.Count
             || request.Sources.Any(s => !request.Config.Folders.Any(f => f.FolderId == s.Folder.FolderId)))
             throw new ArgumentException("Invalid backup run Sources.");
+        if (context.CorrelatedSteps is { } steps)
+            return new CorrelatedBackupRun(this, request, steps);
         lock (_runGate) _preparingRuns++;
         try
         {
@@ -98,7 +100,7 @@ public sealed partial class MinecraftSavesPlugin : IBackupRunCoordinationCapabil
                     && context.HostServices.KnotLink.IsAvailable && !owner._coordinationNeedsReset;
         }
 
-        private static WorldObservation Observe(BackupCoordinationSource source, CancellationToken token)
+        internal static WorldObservation Observe(BackupCoordinationSource source, CancellationToken token)
         {
             var observation = MinecraftWorldPathResolver.Observe(source.Folder.Path, token);
             try
